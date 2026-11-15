@@ -1,0 +1,423 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 2 · ~6 pages</div>
+<h1>Activation Functions Deep Dive</h1>
+<div class="tags"><span class="tag">activation-functions</span><span class="tag">relu</span><span class="tag">sigmoid</span><span class="tag">tanh</span><span class="tag">gradient-vanishing</span><span class="tag">dead-neurons</span><span class="tag">security</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Activation functions are the non-linearity that makes neural networks powerful.
+Without them, a 100-layer network would be mathematically equivalent to a
+single linear layer - completely useless.
+
+This section covers every major activation function: sigmoid (smooth but
+vanishing gradients), tanh (zero-centered sigmoid), ReLU (fast but dead
+neurons), Leaky ReLU (fixes dead neurons), and modern alternatives (Swish,
+GELU, Mish).
+
+You&#x27;ll implement all activation functions and their derivatives, benchmark
+performance, and understand the security implications - activation patterns
+leak model internals, gradient saturation affects robustness, and dead
+neurons create evasion opportunities.
+
+By the end, you&#x27;ll know exactly which activation to use for any architecture.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand why activation functions are critical (non-linearity)</li><li>Know the gradient vanishing problem and its causes</li><li>Grasp the dead neuron problem in ReLU</li><li>Understand zero-centering and why it matters</li><li>Connect activation choices to training dynamics</li><li>Recognize security implications of activation patterns</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement all major activation functions and derivatives</li><li>Visualize activation curves and gradient behaviors</li><li>Benchmark computational performance differences</li><li>Build activation function library for reuse</li><li>Choose appropriate activation for given architecture</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Activation patterns reveal model structure to attackers</li><li>Gradient saturation zones affect adversarial robustness</li><li>Dead neurons can be exploited for evasion attacks</li><li>Activation-based fingerprinting of model architecture</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 0201 completed (perceptron, multi-layer networks)</li><li>Basic calculus (derivatives, chain rule)</li><li>Understanding of gradient descent</li></ul>
+<h2 class="sh1">Why Nonlinearity</h2>
+<h3 class="sh2">The Collapse Proof</h3>
+<p class="prose">Claim from the overview: a 100-layer network without activations equals
+one linear layer. Don&#x27;t take that on faith - it&#x27;s three lines of algebra.
+
+Layer 1: h = W₁x + b₁
+Layer 2: y = W₂h + b₂ = W₂(W₁x + b₁) + b₂ = (W₂W₁)x + (W₂b₁ + b₂)
+
+Define W&#x27; = W₂W₁ and b&#x27; = W₂b₁ + b₂. Then y = W&#x27;x + b&#x27;.
+
+Two layers collapsed into one. By induction, any stack of linear layers
+collapses into a single linear transformation. Depth bought you nothing.</p>
+<h3 class="sh2">Numpy Demonstration</h3>
+<pre class="code"><code>import numpy as np
+rng = np.random.default_rng(0)
+
+# Three &quot;layers&quot; without activation
+W1, W2, W3 = rng.normal(size=(4, 3)), rng.normal(size=(4, 4)), rng.normal(size=(2, 4))
+x = rng.normal(size=(3,))
+
+# Forward pass through three layers
+deep_output = W3 @ (W2 @ (W1 @ x))
+
+# The &quot;equivalent&quot; single layer
+W_collapsed = W3 @ W2 @ W1
+shallow_output = W_collapsed @ x
+
+print(np.allclose(deep_output, shallow_output))   # True
+
+# Insert one non-linearity and the collapse breaks:
+deep_nonlinear = W3 @ np.maximum(0, W2 @ np.maximum(0, W1 @ x))
+print(np.allclose(deep_nonlinear, shallow_output))  # False</code></pre>
+<h3 class="sh2">What Nonlinearity Buys</h3>
+<p class="prose">Linear models draw straight decision boundaries. Real problems - and
+real attacks - are not linearly separable: &quot;high entropy AND small
+payload AND rare destination&quot; is a carved, curved region of feature
+space. Non-linear activations let each layer bend the space, and
+stacked layers compose bends into arbitrarily complex boundaries.
+
+Every capability this book builds - and every attack it studies - exists
+because of this bending. Adversarial examples (Chapter 4) are precisely
+the art of finding points where the bent boundary sits somewhere the
+designer didn&#x27;t expect.</p>
+<h2 class="sh1">Sigmoid</h2>
+<h3 class="sh2">Definition</h3>
+<p class="prose">σ(x) = 1 / (1 + e⁻ˣ)
+
+Squashes any real number into (0, 1). Historically the default; today a
+special-purpose tool.
+
+Derivative (elegant - reuses the forward value):
+σ&#x27;(x) = σ(x) · (1 - σ(x))</p>
+<h3 class="sh2">Implementation</h3>
+<pre class="code"><code>def sigmoid(x):
+    # Numerically stable: never exponentiate a large positive number
+    out = np.empty_like(x, dtype=float)
+    pos = x &gt;= 0
+    out[pos] = 1.0 / (1.0 + np.exp(-x[pos]))
+    exp_x = np.exp(x[~pos])
+    out[~pos] = exp_x / (1.0 + exp_x)
+    return out
+
+def sigmoid_derivative(x):
+    s = sigmoid(x)
+    return s * (1.0 - s)
+
+# Naive version overflows: np.exp(-(-1000)) = inf. The stable version
+# is not pedantry - malformed extreme inputs are exactly what
+# adversarial traffic looks like.</code></pre>
+<h3 class="sh2">Vanishing Gradient Problem</h3>
+<p class="prose">σ&#x27;(x) has maximum value 0.25 (at x=0) and decays to ~0 for |x| &gt; 5.
+
+Backpropagation multiplies derivatives layer by layer (chain rule).
+With sigmoid everywhere, each layer multiplies the gradient by at most
+0.25:
+
+10 layers: gradient scaled by at most 0.25¹⁰ ≈ 1e-6
+
+Early layers receive effectively zero gradient. They stop learning.
+This is the vanishing gradient problem, and it is why deep sigmoid
+networks were untrainable for decades.
+
+# See it directly:
+x = np.array([-10., -5., -2., 0., 2., 5., 10.])
+print(sigmoid_derivative(x))
+# [4.5e-05, 6.6e-03, 0.105, 0.25, 0.105, 6.6e-03, 4.5e-05]
+# Outside [-5, 5]: the neuron is saturated - gradient ~0, learning ~0</p>
+<h3 class="sh2">Additional Weakness Not Zero Centered</h3>
+<p class="prose">Sigmoid outputs are always positive (0 to 1). Every neuron in the next
+layer receives all-positive inputs, which forces its weight gradients
+to share one sign per step - the whole weight vector zigzags instead of
+moving diagonally. Slower convergence. Fixed by tanh.</p>
+<h3 class="sh2">Where Sigmoid Still Belongs</h3>
+<p class="prose">Output layer of binary classifiers - &quot;probability this event is
+malicious&quot; - where (0,1) output is exactly what you want.
+Hidden layers: essentially never, in modern practice.</p>
+<h2 class="sh1">Tanh</h2>
+<h3 class="sh2">Definition</h3>
+<p class="prose">tanh(x) = (eˣ - e⁻ˣ) / (eˣ + e⁻ˣ) = 2·σ(2x) - 1
+
+A rescaled sigmoid: output range (-1, 1), zero-centered.
+
+Derivative: tanh&#x27;(x) = 1 - tanh²(x), maximum 1.0 at x=0.</p>
+<h3 class="sh2">Implementation</h3>
+<pre class="code"><code>def tanh(x):
+    return np.tanh(x)   # NumPy&#x27;s is already numerically stable
+
+def tanh_derivative(x):
+    t = np.tanh(x)
+    return 1.0 - t * t</code></pre>
+<h3 class="sh2">What It Fixes And What It Doesnt</h3>
+<p class="prose">Fixes: zero-centering. Outputs average around 0, so downstream
+gradients can move in any direction. Max derivative is 1.0 instead of
+0.25 - a 4x better gradient per layer than sigmoid.
+
+Doesn&#x27;t fix: saturation. tanh&#x27;(x) still collapses to ~0 for |x| &gt; 3.
+Deep tanh networks still vanish, just more slowly. tanh is a better
+sigmoid, not a solution.
+
+Where it survives today: RNN/LSTM gates (Chapter 2 later sections) and
+anywhere a bounded, zero-centered output is structurally required.</p>
+<h2 class="sh1">Relu</h2>
+<h3 class="sh2">Definition</h3>
+<p class="prose">ReLU(x) = max(0, x)
+
+Derivative: 1 if x &gt; 0, else 0.
+
+That&#x27;s it. The function that made deep learning work is one max().</p>
+<h3 class="sh2">Implementation</h3>
+<pre class="code"><code>def relu(x):
+    return np.maximum(0.0, x)
+
+def relu_derivative(x):
+    return (x &gt; 0).astype(float)</code></pre>
+<h3 class="sh2">Why It Won</h3>
+<p class="prose">1. No saturation for positive inputs: derivative is exactly 1, no matter
+   how deep the network. Gradients flow undiminished through active
+   paths - vanishing gradient solved (for half the input space).
+2. Cheap: max(0,x) vs exponentials. Matters at billions of activations.
+3. Sparsity: ~half the neurons output exact zero for any input. Sparse
+   representations are efficient and, empirically, generalize well.</p>
+<h3 class="sh2">Dead Neuron Problem</h3>
+<pre class="code"><code>The price: for x &lt; 0, gradient is exactly 0. Not small - zero.
+
+If a neuron&#x27;s weights update such that its pre-activation is negative
+for EVERY training input, its gradient is zero on every input, so its
+weights never update again. The neuron is dead - permanently outputting
+zero, permanently unlearnable. A large learning rate spike can kill
+whole layers this way.
+
+# Detecting dead neurons in a trained layer:
+def dead_neuron_fraction(W, b, X):
+    &quot;&quot;&quot;Fraction of neurons that never activate across dataset X.&quot;&quot;&quot;
+    pre_activation = X @ W.T + b            # (n_samples, n_neurons)
+    ever_active = (pre_activation &gt; 0).any(axis=0)
+    return 1.0 - ever_active.mean()
+
+# In production models 10-40% dead neurons is common. Mostly harmless
+# capacity waste - but see security_implications: dead regions are
+# blind spots, and blind spots are evasion real estate.</code></pre>
+<h2 class="sh1">Leaky Relu</h2>
+<h3 class="sh2">Definition</h3>
+<p class="prose">LeakyReLU(x) = x if x &gt; 0, else αx        (α typically 0.01)
+
+Derivative: 1 if x &gt; 0, else α.
+
+The fix is direct: negative inputs get a small but NON-ZERO slope, so
+no neuron can ever fully die - there is always gradient to recover.</p>
+<h3 class="sh2">Implementation</h3>
+<pre class="code"><code>def leaky_relu(x, alpha=0.01):
+    return np.where(x &gt; 0, x, alpha * x)
+
+def leaky_relu_derivative(x, alpha=0.01):
+    return np.where(x &gt; 0, 1.0, alpha)</code></pre>
+<h3 class="sh2">Variants</h3>
+<p class="prose">PReLU: α becomes a learned parameter per neuron - the network chooses
+       its own leak. Slightly better accuracy, slightly more to tune.
+ELU:   smooth exponential curve for x &lt; 0: α(eˣ - 1). Zero-centered-ish
+       outputs, smooth gradient, costs an exponential.
+
+Practical truth: on most problems the differences are small. Leaky ReLU
+with α=0.01 is the pragmatic default when dead neurons are a concern.</p>
+<h2 class="sh1">Modern Activations</h2>
+<h3 class="sh2">Common Idea</h3>
+<p class="prose">All three are smooth, non-monotonic-or-nearly, self-gated curves:
+the input gates itself. They behave like ReLU for large |x| but curve
+smoothly through zero - no gradient discontinuity, a small dip below
+zero for slightly-negative inputs.</p>
+<h3 class="sh2">Definitions And Implementations</h3>
+<pre class="code"><code>def swish(x, beta=1.0):
+    &quot;&quot;&quot;Swish / SiLU: x · sigmoid(βx). Used in EfficientNet, many LLMs
+    (as SiLU/SwiGLU variants).&quot;&quot;&quot;
+    return x * sigmoid(beta * x)
+
+def gelu(x):
+    &quot;&quot;&quot;GELU: x · Φ(x), Gaussian CDF gate. THE transformer activation -
+    BERT, GPT-2, and most of what Chapter 3 builds. Tanh approximation
+    below is what production frameworks actually compute.&quot;&quot;&quot;
+    c = np.sqrt(2.0 / np.pi)
+    return 0.5 * x * (1.0 + np.tanh(c * (x + 0.044715 * x**3)))
+
+def mish(x):
+    &quot;&quot;&quot;Mish: x · tanh(softplus(x)). Popular in object detection (YOLO
+    family). Smoothest of the three, most expensive.&quot;&quot;&quot;
+    softplus = np.log1p(np.exp(-np.abs(x))) + np.maximum(x, 0)  # stable
+    return x * np.tanh(softplus)</code></pre>
+<h3 class="sh2">Why Transformers Use Gelu</h3>
+<p class="prose">Matters for this book: when Chapter 3 builds transformers, GELU is the
+activation inside every feed-forward block. Its smooth probabilistic
+gating (&quot;keep input x with probability Φ(x)&quot;) plays well with the
+pre-norm residual streams transformers use. When you later probe or
+attack a transformer, the smooth-everywhere gradient of GELU is part of
+why gradient-based adversarial methods work so cleanly against them.</p>
+<h3 class="sh2">Derivatives Note</h3>
+<pre class="code"><code>All three have smooth derivatives computable in closed form; in
+practice frameworks autodiff them. For our NumPy builds, numerical
+differentiation is fine for verification:
+
+def numerical_derivative(f, x, eps=1e-5):
+    return (f(x + eps) - f(x - eps)) / (2 * eps)
+
+# Verify every implementation in this section:
+x = np.linspace(-4, 4, 9)
+assert np.allclose(numerical_derivative(sigmoid, x),
+                   sigmoid_derivative(x), atol=1e-6)</code></pre>
+<h2 class="sh1">Benchmarks</h2>
+<h3 class="sh2">Performance Comparison</h3>
+<pre class="code"><code>import time
+
+def benchmark(fn, x, repeats=100):
+    start = time.perf_counter()
+    for _ in range(repeats):
+        fn(x)
+    return (time.perf_counter() - start) / repeats * 1000  # ms
+
+x = np.random.default_rng(1).normal(size=(1000, 1000))
+
+for name, fn in [(&quot;relu&quot;, relu), (&quot;leaky_relu&quot;, leaky_relu),
+                 (&quot;tanh&quot;, tanh), (&quot;sigmoid&quot;, sigmoid),
+                 (&quot;swish&quot;, swish), (&quot;gelu&quot;, gelu), (&quot;mish&quot;, mish)]:
+    print(f&quot;{name:12s} {benchmark(fn, x):6.3f} ms&quot;)
+
+# Representative results (1M activations, CPU, relative ordering is
+# what matters - absolute numbers vary by machine):
+#   relu          ~0.9 ms     baseline
+#   leaky_relu    ~1.8 ms     2x relu
+#   tanh          ~7 ms
+#   sigmoid       ~10 ms
+#   swish         ~11 ms
+#   gelu          ~14 ms
+#   mish          ~25 ms
+
+# Reading: ReLU-family is roughly an order of magnitude cheaper than
+# smooth functions. In a detection pipeline scoring millions of events,
+# activation choice is a real latency/cost decision, not a style one.</code></pre>
+<h2 class="sh1">Choosing Activations</h2>
+<h3 class="sh2">Decision Guide</h3>
+<p class="prose">Hidden layers, feed-forward / CNN:
+  Default: ReLU. Dead neurons observed or feared: Leaky ReLU.
+  Chasing last-percent accuracy with compute to spare: Swish/GELU.
+Transformers:
+  GELU (or SwiGLU-family). This is the ecosystem standard; deviate
+  only with a reason.
+RNN / LSTM internals:
+  tanh + sigmoid gates, by architecture design.
+Output layer:
+  Binary classification: sigmoid.
+  Multi-class: softmax (next sections).
+  Regression: none (linear output).
+Latency-critical inference (inline detection scoring):
+  ReLU-family. The benchmark above is the argument.</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Activation Fingerprinting</h3>
+<p class="prose">Each activation leaves a signature in model outputs. ReLU networks are
+piecewise-linear: outputs are exactly linear within regions of input
+space, with sharp kinks between regions. Smooth activations (GELU,
+Swish) produce smoothly curving outputs everywhere.
+
+An attacker with only query access can probe along a line in input
+space and finite-difference the outputs: kinks =&gt; ReLU family;
+everywhere-smooth curvature =&gt; GELU/Swish family. Combined with output
+dimensionality and latency measurements, this narrows the architecture
+family - reconnaissance for the model extraction attacks of Chapter 4,
+no weights required.</p>
+<h3 class="sh2">Saturation And Adversarial Robustness</h3>
+<p class="prose">Gradient-based attacks (FGSM, PGD - Chapter 4) need gradients to climb.
+Saturated sigmoid/tanh regions have near-zero gradients, which sounds
+defensive - and spawned a real defense proposal era. It fails: this is
+gradient MASKING, not robustness. The adversarial examples still exist;
+the gradient just doesn&#x27;t point at them. Attackers route around it with
+transfer attacks (craft on a substitute model) or gradient-free search.
+
+Lesson that generalizes far beyond activations: hiding the gradient is
+obscurity, not security. If the decision boundary is broken, making it
+harder to see doesn&#x27;t make it harder to cross.</p>
+<h3 class="sh2">Dead Neurons As Evasion Surface</h3>
+<pre class="code"><code>Dead and rarely-active neurons define input-space regions the model has
+effectively never learned about. Behavior there is whatever random
+initialization left behind - unlearned, untested, unmonitored.
+
+An adversary who can map which feature patterns route through dead
+regions (via querying, or via a stolen/substitute model) gets inputs
+the model processes with a fraction of its capacity. For a malware
+classifier: craft samples whose feature combinations activate the
+sparsest paths.
+
+Defensive counterpart - dead-neuron auditing belongs in model
+validation:
+
+# Flag neurons active on &lt;0.1% of a representative dataset
+def audit_rare_neurons(pre_activations, threshold=0.001):
+    active_rate = (pre_activations &gt; 0).mean(axis=0)
+    return np.where(active_rate &lt; threshold)[0]
+
+A model with 40% near-dead capacity isn&#x27;t just wasteful - it has 40%
+of its structure unaccounted for by training. Ship that to production
+and you&#x27;re deploying behavior nobody selected.</code></pre>
+<h3 class="sh2">Detection Context</h3>
+<p class="prose">For the detection systems this book builds toward (Chapters 5+), the
+three findings above become requirements:
+
+1. Assume architecture is recoverable by probing - never let &quot;attacker
+   doesn&#x27;t know our model&quot; carry security weight.
+2. Never accept a robustness claim that reduces to gradient masking -
+   evaluate with transfer and gradient-free attacks.
+3. Audit activation liveness before deployment - dead capacity is
+   unvalidated attack surface.</p>
+<h2 class="sh1">Practical Implementation</h2>
+<h3 class="sh2">Description</h3>
+<p class="prose">The reusable library this chapter&#x27;s remaining sections build on: every
+activation paired with its derivative, verified numerically, behind one
+interface. Section 0203 plugs these into forward propagation; 0204 uses
+the derivatives in backprop.</p>
+<h3 class="sh2">Activation Library</h3>
+<pre class="code"><code>class Activation:
+    &quot;&quot;&quot;One activation function + its derivative behind one interface.&quot;&quot;&quot;
+    
+    def __init__(self, fn, dfn, name):
+        self.fn, self.dfn, self.name = fn, dfn, name
+    
+    def __call__(self, x):
+        return self.fn(x)
+    
+    def gradient(self, x):
+        return self.dfn(x)
+    
+    def verify(self, x=None, atol=1e-5):
+        &quot;&quot;&quot;Trust nothing - check analytic gradient against numerical.
+        Grid deliberately excludes x=0: at the ReLU-family kink the
+        analytic derivative is one-sided while the numerical one
+        averages both sides - they legitimately disagree there.&quot;&quot;&quot;
+        if x is None:
+            x = np.linspace(-4, 4, 100)   # 100 points: 0 not on grid
+        numeric = (self.fn(x + 1e-5) - self.fn(x - 1e-5)) / 2e-5
+        ok = np.allclose(self.dfn(x), numeric, atol=atol)
+        print(f&quot;{self.name:12s} gradient check: {&#x27;PASS&#x27; if ok else &#x27;FAIL&#x27;}&quot;)
+        return ok
+
+
+ACTIVATIONS = {
+    &quot;sigmoid&quot;:    Activation(sigmoid, sigmoid_derivative, &quot;sigmoid&quot;),
+    &quot;tanh&quot;:       Activation(tanh, tanh_derivative, &quot;tanh&quot;),
+    &quot;relu&quot;:       Activation(relu, relu_derivative, &quot;relu&quot;),
+    &quot;leaky_relu&quot;: Activation(leaky_relu, leaky_relu_derivative, &quot;leaky_relu&quot;),
+}
+
+# Verify the entire library in one pass:
+for act in ACTIVATIONS.values():
+    act.verify()
+
+# sigmoid      gradient check: PASS
+# tanh         gradient check: PASS
+# relu         gradient check: PASS
+# leaky_relu   gradient check: PASS
+# (all pass because the grid excludes the x=0 kink - see verify docstring)
+
+# This verify-everything habit is not academic. In Chapter 4 you will
+# meet attacks that exploit the gap between what a defender THINKS
+# their model computes and what it actually computes. Closing that gap
+# for your own code starts here.</code></pre>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Without non-linear activations, any deep network collapses to a single linear layer</li><li>Sigmoid and tanh saturate - derivatives vanish for large |x|, killing gradients in deep networks</li><li>ReLU solved vanishing gradients for positive inputs at the price of dead neurons</li><li>Leaky ReLU keeps a small negative-side slope so neurons can always recover</li><li>Modern smooth activations (Swish, GELU, Mish) trade compute for smoothness; GELU is the transformer standard</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement every major activation and its derivative in NumPy, numerically stable</li><li>Verify analytic gradients against numerical differentiation - always</li><li>Benchmark activation cost: ReLU-family is ~10x cheaper than smooth functions</li><li>Detect dead neurons in trained layers and audit rarely-active capacity</li><li>Choose activations by architecture: ReLU-family for FF/CNN, GELU for transformers, gates for RNNs, sigmoid/softmax at outputs</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Activation choice is observable from outside - piecewise-linear vs smooth outputs fingerprint the architecture</li><li>Saturation is gradient masking, not robustness - broken boundaries stay broken when hidden</li><li>Dead neurons are unlearned, unvalidated regions - blind spots an adversary can route through</li><li>Audit activation liveness before deployment; unaccounted capacity is unaccounted behavior</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Non-linearity is the entire reason deep networks work - and the reason their boundaries can be attacked.</li><li>Default: ReLU. Transformers: GELU. Problems with dying neurons: Leaky ReLU. Outputs: sigmoid/softmax.</li><li>If a robustness story depends on the attacker not seeing gradients, it is not a robustness story.</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section (0203): forward propagation - wiring these activations into full network layers</li><li>Then (0204): backpropagation - where every derivative implemented here gets used</li><li>Security connection: Chapter 4 adversarial attacks exploit exactly the gradient behaviors studied here</li></ul>
+</article>

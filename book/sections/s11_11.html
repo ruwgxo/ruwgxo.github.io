@@ -1,0 +1,1005 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 11 · Section 11 · ~6 pages</div>
+<h1>OWASP LLM Top 10 Detection Coverage Matrix</h1>
+</header>
+<div class="box objectives"><div class="box-label">By the end of this section</div><ul>
+<li>Name all ten OWASP LLM Top 10 categories and classify each as: detectable at runtime, detectable at build-time only, or out-of-scope for technical detection</li><li>Map the seven gateway tracks to their relevant OWASP LLM categories and score coverage using the three-tier model</li><li>Explain why LLM02 (Insecure Output Handling) and LLM06 (Sensitive Information Disclosure) are the most common gaps in gateway-first architectures</li><li>Distinguish training-time vulnerabilities (LLM03, LLM05) from runtime-detectable vulnerabilities and articulate why runtime rules cannot close training-time gaps</li><li>Produce the OWASP LLM coverage matrix for a detection programme and present it to a non-technical audience</li><li>Map each OWASP coverage gap to the chapter-level remediation that closes it</li></ul></div>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">OWASP LLM Top 10 is a vulnerability catalogue, not a detection specification — auditing the seven-track gateway against all ten categories reveals four categories with strong coverage, three with partial coverage, and three that are structural gaps requiring output-side monitoring, supply chain controls, or out-of-scope trust calibration that no detection rule can address.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">The ATLAS coverage heat map from Section 11.05 measures detection coverage against
+adversarial ML techniques. But a CISO or compliance team asking &quot;are we covered
+against the OWASP LLM Top 10?&quot; is working from a different taxonomy — one that
+security practitioners, procurement teams, and auditors are far more likely to
+reference than ATLAS technique IDs.
+
+This section bridges the gap. It audits the seven-track gateway against each of
+the ten OWASP LLM vulnerability categories in turn, scores coverage using the
+same three-tier model from Section 11.05, identifies the specific detection tracks
+responsible for coverage, names the residual gaps, and maps each gap to the chapter
+and section that closes it. The output is a single matrix that answers the CISO
+question precisely and that can be presented alongside the ATLAS heat map without
+needing to explain the ATLAS taxonomy first.
+
+The audit also surfaces three structural properties of the OWASP LLM Top 10 that
+detection engineers must understand: several categories are training-time or build-time
+concerns where runtime detection is structurally impossible; one category (LLM09) is
+a trust miscalibration problem outside the scope of technical detection entirely; and
+the most common gap in gateway-first architectures — output-side coverage — is
+confirmed as a gap in the current gateway, pointing to the output validation layer
+that Chapter 14 builds.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 11.11 is the compliance-layer coverage audit. It applies the measurement machinery from Sections 11.04 and 11.05 to the OWASP LLM taxonomy rather than the ATLAS taxonomy, producing a complementary coverage view aimed at the business and compliance audience. Sections 11.12 and 11.13 return to the technical detection engineering track.</p>
+<h2 class="sh1">Prerequisites</h2>
+<h3 class="sh2">Required</h3>
+<ul class="blist"><li>Section 11.05: three-tier coverage scoring (0/1/2); gap prioritisation framework</li><li>Section 11.04: ATLAS-to-OWASP mapping; owasp.llm.NN tag format in Sigma rules</li><li>Chapters 6–10: awareness of what each of the seven tracks detects</li></ul>
+<h3 class="sh2">Helpful</h3>
+<ul class="blist"><li>OWASP LLM Top 10 v1.1 (the numbering used in this matrix; Section 5.3 maps it to the 2025 edition): owasp.org/www-project-top-10-for-large-language-model-applications</li><li>Chapter 14 preview: output validation layer; PII scanner; agency scope monitor</li><li>Chapter 15 preview: sensitive information disclosure; membership inference; privacy controls</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1 Owasp As Catalogue</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">OWASP LLM Top 10 as a Vulnerability Catalogue, Not a Detection Specification</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The OWASP LLM Top 10 is a vulnerability catalogue. It lists ten categories of
+vulnerability that LLM-based applications are susceptible to, with descriptions,
+attack scenarios, and mitigation guidance. It does not specify detection rules,
+log fields, thresholds, or monitoring architectures. The catalogue says &quot;prompt
+injection is a vulnerability in LLM applications&quot; — it does not say &quot;fire a rule
+when cosine similarity to the known-bad embedding centroid exceeds 0.85.&quot;
+
+This distinction matters for detection engineers because each OWASP LLM category
+requires a bespoke detection approach, and some categories have no viable runtime
+detection approach at all:
+
+Runtime-detectable categories: LLM01 (Prompt Injection), LLM04 (Model Denial of
+Service), LLM07 (Insecure Plugin Design), LLM10 (Model Theft). These produce
+observable signals in the inference API logs that detection rules can match against.
+The seven-track gateway has meaningful coverage of all four.
+
+Build-time or training-time detectable only: LLM03 (Training Data Poisoning),
+LLM05 (Supply Chain Vulnerabilities). These vulnerabilities are introduced before
+the model reaches the inference gateway. By the time a request arrives at the
+gateway, the poisoning has already happened. Runtime detection can catch some
+downstream effects of poisoning (model behaving strangely on specific inputs)
+but cannot detect the poisoning event itself. These categories require build-time
+controls: dataset auditing, model provenance verification, and reproducible
+training pipelines.
+
+Partial runtime detectability: LLM02 (Insecure Output Handling), LLM06 (Sensitive
+Information Disclosure), LLM08 (Excessive Agency). Each of these has a runtime-
+detectable component — the output that contains the vulnerability is observable
+after inference — but the current gateway is input-side only. The gateway inspects
+the prompt before inference; it does not inspect the model response after inference.
+Building an output validation layer (Chapter 14) is the remediation for all three.
+
+Out of scope for technical detection: LLM09 (Overreliance). This category is about
+user trust miscalibration — users treating model outputs as factually reliable
+without appropriate scepticism. No detection rule can observe user trust. This is
+a UX, training, and documentation concern, not a detection engineering concern.</p>
+<h3 class="sh2">Part 2 Llm01</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">LLM01 — Prompt Injection: Strong Coverage with Residual L3 Gap</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">LLM01 Prompt Injection covers both direct injection (adversarial instructions
+embedded in the user prompt) and indirect injection (adversarial instructions
+embedded in content retrieved from external sources and passed to the model as
+context). It is the highest-profile OWASP LLM vulnerability and the one the
+seven-track gateway addresses most directly.
+
+Gateway coverage: strong partial (score 1 moving toward 2 with Chapter 12).
+
+Tracks covering LLM01: Track 1 (injection and jailbreak keywords at L1, the
+centroid-similarity gate at L2, the injection and semantic jailbreak classifiers at
+L3), Track 2 (perplexity, L2, catches optimised adversarial suffixes), Track 3 (shot
+count, L1, catches many-shot jailbreaks), and Tracks 4 and 5 (per-session trajectory
+and coherence scoring, L4, catch multi-turn erosion and payload splitting).
+
+Direct injection coverage: strong. Track 1&#x27;s keyword rule blocks known-prefix direct
+injection; its centroid gate catches semantically similar variants that evade the
+keywords; its classifiers catch role-switch jailbreaks that are a form of direct
+injection. Residual gap: highly obfuscated direct injection (encoded, fragmented, or
+novel framing) that falls outside the classifiers&#x27; training data evades all of these.
+Chapter 12 intent classifier closes this gap.
+
+Indirect injection coverage: weak. Indirect injection arrives via retrieved context
+(RAG pipeline outputs, tool call results, web content injected into the system
+prompt). The gateway operates on the prompt as it arrives from the application;
+it does not have visibility into which parts of the prompt were retrieved from
+external sources versus authored by the user. Distinguishing user-authored prompt
+content from retrieved content requires the application to tag retrieved spans
+in the prompt metadata — a field the gateway can then inspect separately. Without
+that tagging, indirect injection is detectable only if the injected instruction
+matches Track 1&#x27;s keyword or centroid patterns, which is not reliable against a targeted
+adversary who has crafted the injected content to evade detection.
+
+Indirect injection is the most significant residual gap in LLM01 coverage and is
+not fully closed by any Chapter 12 or 13 deliverable — it requires application-
+level architectural changes (source tagging in prompt metadata) that are beyond
+the detection framework scope.</p>
+<h3 class="sh2">Part 3 Llm02 Llm06</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">LLM02 and LLM06 — The Output-Side Gap</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">LLM02 Insecure Output Handling covers vulnerabilities arising from downstream
+processing of model outputs without sanitisation: XSS via unsanitised LLM output
+in web contexts, code injection via model-generated code executed without sandbox,
+command injection via model-generated shell commands passed to an OS interface,
+and SQL injection via model-generated queries passed to a database.
+
+LLM06 Sensitive Information Disclosure covers the model inadvertently reproducing
+training data or confidential context: PII from training data appearing in model
+responses, confidential system prompt content reflected in user-facing output,
+and membership inference-style disclosure where model response patterns reveal
+whether specific data was in the training set.
+
+Both categories share the same structural gap: the seven-track gateway is input-side
+only. It inspects the prompt before inference and makes a block/flag/pass decision.
+After inference, the model response flows directly to the application with no
+gateway inspection. The gateway never sees the output.
+
+For LLM02: a model that generates a response containing a JavaScript payload does
+not produce any detectable signal at the prompt level. The adversary&#x27;&#x27;s injection
+that caused the unsafe output generation may have been subtle enough to evade input-
+side detection; the output itself is the evidence that detection failed.
+
+For LLM06: a model that reproduces PII from its training data or reflects system
+prompt content does not produce any detectable signal at the prompt level either —
+the disclosure is in the response, not the request.
+
+The remediation for both is an output validation layer: a post-inference inspection
+stage that runs Sigma rules and Python detectors against the model response before
+returning it to the application. Chapter 14 builds this output validation layer.
+It includes a PII scanner (regex plus NER-based), a code injection pattern matcher,
+a system prompt reflection detector, and a response entropy monitor. Until Chapter 14
+is integrated, LLM02 and LLM06 remain at score 0 for the gateway — honest, documented,
+and addressed in the roadmap.</p>
+<h3 class="sh2">Part 4 Llm03 Llm05</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">LLM03 and LLM05 — Training-Time and Supply Chain Gaps</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">LLM03 Training Data Poisoning covers the corruption of training or fine-tuning
+data to induce model misbehaviour: backdoor insertion via trigger-label manipulation,
+targeted capability degradation by poisoning specific output classes, and broad
+model corruption via large-scale label noise injection.
+
+LLM05 Supply Chain Vulnerabilities covers compromises in the model development
+and deployment pipeline: compromised pre-trained base models from public model
+hubs, poisoned training datasets from public data repositories, vulnerable ML
+framework dependencies (compromised libraries), and hardware-level compromises
+in model training infrastructure.
+
+Both categories are training-time or build-time concerns. By the time a model
+reaches the inference gateway, a supply chain compromise has already occurred. The
+gateway cannot inspect model weights, training history, or provenance metadata
+from the inference API — it sees only the prompt and the response.
+
+LLM03 runtime coverage: the Chapter 8 poisoning monitor (upstream of the gateway,
+not one of its seven tracks) provides L1 coverage of the training data ingestion
+process — anomalous label distributions in training API calls. But this detection
+covers the training pipeline, not the inference gateway. The model in production at
+inference time may already be poisoned; the poisoning monitor cannot detect that
+fact from inference traffic alone. The score for LLM03
+at the inference gateway is 0 for the poisoned-model-in-production scenario,
+with a partial score only for the training-pipeline monitoring component.
+
+LLM05 runtime coverage: none. Supply chain verification — checking model file
+hashes against known-good registries, verifying that model weights match the
+expected provenance, validating ML framework dependency integrity — is a build-time
+and deployment-time control. No inference-time Sigma rule can detect a compromised
+pre-trained model by observing query-response pairs alone (without a baseline
+of expected behaviour for every possible input, which is not tractable).
+
+The remediation for LLM03 is build-time: dataset auditing, reproducible training
+pipelines with audit logs, and differential privacy training to limit the influence
+of any single training example. The remediation for LLM05 is supply chain security:
+model hash verification at deployment, software composition analysis for ML
+dependencies, and model provenance metadata enforced by the deployment pipeline.
+Chapter 8 covers these controls; they are not detection rules but preventive controls.</p>
+<h3 class="sh2">Part 5 Llm04 Llm07 Llm08 Llm10</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">LLM04, LLM07, LLM08, LLM10 — Partial and Specific Coverage</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">LLM04 Model Denial of Service covers resource exhaustion attacks against LLM
+inference: excessively long prompts consuming token budget, recursive self-referential
+prompts causing model overthinking, and high-volume API abuse flooding the inference
+infrastructure. Gateway coverage: partial (score 1). Track 6 rate detection catches
+high-volume API abuse from a single session. Token budget monitoring is partially
+implemented via the token_count field. Residual gap: coordinated low-and-slow DoS
+from many users below the per-user rate threshold — a distributed denial pattern
+that Track 6&#x27;&#x27;s per-user rate limiter cannot see.
+
+LLM07 Insecure Plugin Design covers vulnerabilities arising when LLM applications
+call external tools, APIs, or plugins with adversarially influenced parameters:
+prompt injection via tool output (indirect injection where the tool result contains
+adversarial instructions), over-privileged tool permissions, and insufficient
+validation of tool input/output. Gateway coverage: partial (score 1). Track 1 (and
+Track 3, which runs on the assembled context) catches injection patterns in prompt
+context including tool outputs, if the
+tool output is included in the prompt text that the gateway inspects. Residual gap:
+tool outputs that are processed by the application directly without passing through
+the gateway prompt — common in agentic architectures where the application routes
+tool outputs to model context without re-inspection.
+
+LLM08 Excessive Agency covers LLM-based agents that take autonomous actions beyond
+their intended scope: executing system commands, modifying files, calling APIs, or
+making financial transactions based on model outputs without sufficient authorisation.
+Gateway coverage: none (score 0). Excessive agency is an output-side and action-side
+concern. The gateway inspects the prompt; it does not inspect what downstream
+systems do with model outputs. No input-side detection rule can observe excessive
+agency — it requires monitoring of the actions the model causes, not the prompts
+that prompt it. Chapter 14 previews a scope monitor that tracks tool call permissions
+against a defined scope policy; until then, LLM08 is an acknowledged gap.
+
+LLM10 Model Theft covers extraction of model weights, functionality, or proprietary
+training data through systematic API querying: black-box model extraction (Track 6),
+knowledge distillation attacks, and membership inference. Gateway coverage: good
+(score 1, approaching 2). Track 6 covers systematic API-based extraction via query
+rate and variance monitoring, and the Section 9.12 output watermark supports
+post-hoc ownership claims against a distilled surrogate. The gap is distributed
+extraction across unlinked accounts
+(Chapter 13 remediation) and membership inference patterns (future track). LLM10
+is the best-covered OWASP LLM category in the gateway after LLM01.</p>
+<h3 class="sh2">Part 6 Llm09</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">LLM09 — Overreliance: Out of Technical Detection Scope</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">LLM09 Overreliance covers users treating LLM outputs as authoritative facts without
+appropriate scepticism: accepting hallucinated citations as real, relying on model
+legal or medical advice without expert review, and trusting model-generated code
+without security testing. The vulnerability is user behaviour and product design,
+not a technical attack vector.
+
+No detection rule can observe user trust. A Sigma rule cannot fire on &quot;user believed
+the model output without verification.&quot; An FPR metric cannot be computed for a signal
+that does not exist in any log field. LLM09 is outside the scope of detection
+engineering entirely.
+
+The mitigations for LLM09 are product design controls: disclaimer labels on model
+outputs, confidence score display in the UI, application-level output validation for
+high-stakes use cases (medical, legal, financial), and user training on appropriate
+LLM use patterns. These controls reduce user overreliance without producing any
+detectable signal in gateway logs.
+
+In the coverage matrix, LLM09 receives the same notation as intentional ATLAS gaps:
+it is not scored 0 (which implies an actionable gap) but is flagged as &quot;out of
+scope for technical detection — addressed by product design controls.&quot; This prevents
+it from appearing in the detection engineering backlog alongside genuinely actionable
+gaps.</p>
+<h3 class="sh2">Part 7 Gap Roadmap</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">Gap Closure Roadmap: OWASP LLM Gaps to Chapter Remediations</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The OWASP LLM coverage matrix produces six actionable gaps (excluding LLM09 which
+is out of scope and LLM03/LLM05 which are build-time-only). Ordered by priority:
+
+Gap 1: LLM01 indirect injection (score 0 for indirect injection component).
+Requires application-level source tagging in prompt metadata. Not fully closed
+by any single chapter deliverable — requires architectural collaboration with the
+application team. Detection engineering contribution: a Sigma rule for the
+retrieved_context field once source tagging is implemented (Section 11.10
+workflow applies when the field becomes available).
+
+Gap 2: LLM02 Insecure Output Handling (score 0). Chapter 14 output validation
+layer: post-inference Sigma rules for code injection patterns, XSS payload
+patterns in response text, and command injection patterns in shell-executable
+response fields.
+
+Gap 3: LLM06 Sensitive Information Disclosure (score 0). Chapter 14 output
+validation layer: PII scanner (regex plus NER), system prompt reflection detector,
+response entropy monitor for training data reconstruction patterns. Chapter 15
+adds membership inference monitoring.
+
+Gap 4: LLM08 Excessive Agency (score 0). Chapter 14 scope monitor: tracks tool
+call permissions against a defined scope policy, fires when a model-caused action
+exceeds the scope defined in the system prompt or the application policy document.
+
+Gap 5: LLM04 distributed DoS (partial, score 1). Chapter 13 cross-user correlation
+adds fleet-level request volume monitoring that catches low-and-slow distributed
+denial from many users below the per-user threshold.
+
+Gap 6: LLM10 distributed extraction (partial, score 1). Chapter 13 cross-user
+correlation, same deliverable as Gap 5.
+
+LLM07 indirect injection via tool output (partial, score 1): closed when the
+application-level source tagging from Gap 1 is implemented. No standalone chapter
+deliverable can close this gap independently.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1 Owasp Coverage Matrix</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">OWASP LLM Top 10 — Seven-Track Gateway Coverage Matrix</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">All ten OWASP LLM categories scored against the current seven-track gateway with Sigma tags and remediation chapter</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>OWASP Category</li><li>Score</li><li>Tracks</li><li>Sigma Tag</li><li>ATLAS Link</li><li>Residual Gap</li><li>Remediation</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>LLM01 Prompt Injection</li><li>1</li><li>Tracks 1-5</li><li>owasp.llm.01</li><li>AML.T0051, AML.T0054</li><li>Indirect injection; obfuscated direct injection</li><li>Ch12 intent classifier (direct); app-level source tagging (indirect)</li></ul>
+<ul class="blist"><li>LLM02 Insecure Output Handling</li><li>0</li><li>None (output-side gap)</li><li>owasp.llm.02</li><li>—</li><li>No output inspection in current gateway</li><li>Ch14 output validation layer</li></ul>
+<ul class="blist"><li>LLM03 Training Data Poisoning</li><li>1*</li><li>Chapter 8 monitor (training pipeline only; not a gateway track)</li><li>owasp.llm.03</li><li>AML.T0020</li><li>Poisoned-model-in-production undetectable at inference time</li><li>Build-time: dataset audit, reproducible training, DP-SGD (Ch8)</li></ul>
+<ul class="blist"><li>LLM04 Model Denial of Service</li><li>1</li><li>Track 6 (rate), token_count field</li><li>owasp.llm.04</li><li>AML.T0040</li><li>Distributed low-and-slow DoS below per-user rate threshold</li><li>Ch13 cross-user fleet-level rate monitor</li></ul>
+<ul class="blist"><li>LLM05 Supply Chain Vulnerabilities</li><li>0*</li><li>None (build-time only)</li><li>owasp.llm.05</li><li>AML.T0010, AML.T0018</li><li>No runtime detection possible; supply chain verified at build time</li><li>Build-time: model hash verification, SCA for ML deps (Ch8)</li></ul>
+<ul class="blist"><li>LLM06 Sensitive Information Disclosure</li><li>0</li><li>None (output-side gap)</li><li>owasp.llm.06</li><li>AML.T0024.000, AML.T0024</li><li>No output PII scanner; response not inspected by gateway</li><li>Ch14 PII scanner + system prompt reflection detector; Ch15 membership inference monitor</li></ul>
+<ul class="blist"><li>LLM07 Insecure Plugin Design</li><li>1</li><li>Tracks 1, 3 (if tool output reaches prompt)</li><li>owasp.llm.07</li><li>AML.T0051</li><li>Tool outputs routed directly to model context without gateway re-inspection</li><li>App-level: route all tool outputs through gateway prompt inspection</li></ul>
+<ul class="blist"><li>LLM08 Excessive Agency</li><li>0</li><li>None (action-side gap)</li><li>owasp.llm.08</li><li>—</li><li>No action-side monitoring; gateway inspects prompts, not model-caused actions</li><li>Ch14 scope and permission monitor for agentic tool calls</li></ul>
+<ul class="blist"><li>LLM09 Overreliance</li><li>N/A</li><li>N/A — out of scope</li><li>owasp.llm.09</li><li>—</li><li>User trust miscalibration; not a technical detection concern</li><li>Product design: disclaimers, confidence display, user training</li></ul>
+<ul class="blist"><li>LLM10 Model Theft</li><li>1</li><li>Track 6; output watermarking (9.12)</li><li>owasp.llm.10</li><li>AML.T0040</li><li>Distributed multi-account extraction; membership inference patterns</li><li>Ch13 cross-user correlation; future track for membership inference</li></ul>
+<h3 class="sh2">Table 2 Coverage Summary</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">OWASP LLM Top 10 Coverage Summary Statistics</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Aggregate coverage statistics across all ten categories</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Coverage Tier</li><li>Count</li><li>Categories</li><li>Notes</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Score 2 — Full</li><li>0</li><li>None</li><li>No category is fully covered at end of Chapter 11</li></ul>
+<ul class="blist"><li>Score 1 — Partial</li><li>4</li><li>LLM01, LLM04, LLM07, LLM10</li><li>All four have named residual gaps with chapter remediations</li></ul>
+<ul class="blist"><li>Score 1* — Build-time partial</li><li>1</li><li>LLM03</li><li>Training-pipeline monitoring only; inference-time score is 0</li></ul>
+<ul class="blist"><li>Score 0 — Actionable gap</li><li>3</li><li>LLM02, LLM06, LLM08</li><li>All three are output-side or action-side gaps; Chapter 14 addresses all three</li></ul>
+<ul class="blist"><li>Score 0* — Build-time only</li><li>1</li><li>LLM05</li><li>No runtime detection possible; remediated by build-time controls</li></ul>
+<ul class="blist"><li>Out of scope</li><li>1</li><li>LLM09</li><li>User trust calibration; not addressable by technical detection</li></ul>
+<h3 class="sh2">Table 3 Owasp Atlas Crosswalk</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">OWASP LLM to ATLAS Technique Crosswalk</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps each OWASP LLM category to its nearest ATLAS technique(s) for heat map cross-referencing</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>OWASP Category</li><li>ATLAS Technique(s)</li><li>Crosswalk Notes</li><li>Sigma Tags Required</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>LLM01 Prompt Injection</li><li>AML.T0051, AML.T0054</li><li>Direct mapping; LLM01 is the OWASP expression of ATLAS prompt injection techniques</li><li>atlas.aml.t0051, owasp.llm.01</li></ul>
+<ul class="blist"><li>LLM02 Insecure Output Handling</li><li>—</li><li>No ATLAS technique maps directly; output handling is application-layer; closest is T1059 (code execution via model output)</li><li>owasp.llm.02</li></ul>
+<ul class="blist"><li>LLM03 Training Data Poisoning</li><li>AML.T0020, AML.T0019</li><li>Direct mapping to ATLAS training-time attack techniques</li><li>atlas.aml.t0020, owasp.llm.03</li></ul>
+<ul class="blist"><li>LLM04 Model Denial of Service</li><li>AML.T0040</li><li>Partial: AML.T0040 covers API access; DoS-specific ATLAS technique is AML.T0034</li><li>atlas.aml.t0040, owasp.llm.04</li></ul>
+<ul class="blist"><li>LLM05 Supply Chain Vulnerabilities</li><li>AML.T0010, AML.T0018</li><li>ATLAS supply chain compromise techniques; build-time only</li><li>owasp.llm.05</li></ul>
+<ul class="blist"><li>LLM06 Sensitive Information Disclosure</li><li>AML.T0024.000, AML.T0024</li><li>Membership inference and model inversion are the ATLAS expressions of training data disclosure</li><li>atlas.aml.t0024.000, owasp.llm.06</li></ul>
+<ul class="blist"><li>LLM07 Insecure Plugin Design</li><li>AML.T0051</li><li>Indirect injection via plugin output is a form of AML.T0051 prompt injection</li><li>atlas.aml.t0051, owasp.llm.07</li></ul>
+<ul class="blist"><li>LLM08 Excessive Agency</li><li>—</li><li>No direct ATLAS technique; closest is impact-phase techniques in ATT&amp;CK (T1059, T1106)</li><li>owasp.llm.08</li></ul>
+<ul class="blist"><li>LLM09 Overreliance</li><li>—</li><li>Out of scope for ATLAS and ATT&amp;CK; UX/product concern</li><li>owasp.llm.09 (informational only)</li></ul>
+<ul class="blist"><li>LLM10 Model Theft</li><li>AML.T0040</li><li>AML.T0040 (inference API access) is the ATLAS expression of model theft via API queries</li><li>atlas.aml.t0040, owasp.llm.10</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Id</h3>
+<p class="prose">D11.11.1</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">owasp_llm_coverage_matrix.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Programmatic OWASP LLM Top 10 coverage matrix for the seven-track gateway. Scores each category using the three-tier model, distinguishes actionable from build-time and out-of-scope gaps, and produces a formatted matrix suitable for CISO reporting. Also reads owasp.llm.NN tags from deployed Sigma rules to determine which rules contribute to each category.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Python Version</h3>
+<p class="prose">3.12</p>
+<h3 class="sh3">Dependencies</h3>
+<ul class="blist"><li>dataclasses (stdlib)</li></ul>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>#!/usr/bin/env python3
+&#x27;&#x27;&#x27;owasp_llm_coverage_matrix.py
+OWASP LLM Top 10 coverage matrix for the seven-track gateway.
+Scores each category (0/1/2), distinguishes gap types, and produces
+a CISO-ready formatted matrix and a detection backlog for actionable gaps.
+Chapter 11, Section 11.11 — AI Security Mastery
+Author: Raghav Dinesh | github: ruwgxo
+
+Usage:
+  python3 owasp_llm_coverage_matrix.py
+  python3 owasp_llm_coverage_matrix.py --backlog
+  python3 owasp_llm_coverage_matrix.py --ciso-report
+&#x27;&#x27;&#x27;
+
+from __future__ import annotations
+import argparse
+import sys
+from dataclasses import dataclass, field
+from enum import Enum
+
+# ---------------------------------------------------------------------------
+# Enumerations
+# ---------------------------------------------------------------------------
+
+class GapType(Enum):
+    ACTIONABLE = &#x27;actionable&#x27;           # evidence exists; detection rule not yet built
+    BUILD_TIME_ONLY = &#x27;build_time_only&#x27; # training/supply-chain; no runtime detection possible
+    OUT_OF_SCOPE = &#x27;out_of_scope&#x27;       # user behaviour / product design; not detectable
+
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class OWASPCategory:
+    category_id: str              # e.g. &#x27;LLM01&#x27;
+    name: str
+    score: int                    # 0, 1, 2, or -1 for out-of-scope
+    gap_type: GapType | None      # None if score == 2
+    gateway_tracks: list[int]     # which tracks contribute
+    sigma_tags: list[str]         # owasp.llm.NN tags this category uses
+    atlas_techniques: list[str]   # linked ATLAS techniques
+    residual_gap: str
+    remediation_chapter: str
+    remediation_detail: str
+    build_time_note: str = &#x27;&#x27;     # for BUILD_TIME_ONLY categories
+
+# ---------------------------------------------------------------------------
+# Registry
+# ---------------------------------------------------------------------------
+
+OWASP_CATEGORIES: list[OWASPCategory] = [
+
+    OWASPCategory(
+        category_id=&#x27;LLM01&#x27;,
+        name=&#x27;Prompt Injection&#x27;,
+        score=1,
+        gap_type=GapType.ACTIONABLE,
+        gateway_tracks=[1, 2, 3, 4, 5],
+        sigma_tags=[&#x27;owasp.llm.01&#x27;],
+        atlas_techniques=[&#x27;AML.T0051&#x27;, &#x27;AML.T0054&#x27;],
+        residual_gap=(
+            &#x27;Indirect injection via retrieved context not detectable without &#x27;
+            &#x27;application-level source tagging. Obfuscated direct injection &#x27;
+            &#x27;evades L1 and L2 — L3 intent classifier gap.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 12 (direct); Application architecture (indirect)&#x27;,
+        remediation_detail=&#x27;Ch12 S12.04 intent classifier closes obfuscated direct gap. &#x27;
+                           &#x27;Indirect requires app-level prompt source tagging field.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM02&#x27;,
+        name=&#x27;Insecure Output Handling&#x27;,
+        score=0,
+        gap_type=GapType.ACTIONABLE,
+        gateway_tracks=[],
+        sigma_tags=[&#x27;owasp.llm.02&#x27;],
+        atlas_techniques=[],
+        residual_gap=(
+            &#x27;Gateway is input-side only. No post-inference output inspection. &#x27;
+            &#x27;XSS, code injection, command injection in model responses are undetected.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 14&#x27;,
+        remediation_detail=&#x27;Ch14 output validation layer: code injection Sigma rules, &#x27;
+                           &#x27;XSS pattern matcher, command injection detector on response text.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM03&#x27;,
+        name=&#x27;Training Data Poisoning&#x27;,
+        score=0,
+        gap_type=GapType.BUILD_TIME_ONLY,
+        gateway_tracks=[],   # Chapter 8 monitor is upstream, not a gateway track
+        sigma_tags=[&#x27;owasp.llm.03&#x27;],
+        atlas_techniques=[&#x27;AML.T0020&#x27;, &#x27;AML.T0019&#x27;],
+        residual_gap=(
+            &#x27;The Chapter 8 monitor covers training pipeline anomalies but cannot detect a &#x27;
+            &#x27;poisoned model already deployed to inference. Runtime detection of &#x27;
+            &#x27;poisoning effects requires per-input baseline of expected model &#x27;
+            &#x27;behaviour — not tractable at scale.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 8 (build-time controls)&#x27;,
+        remediation_detail=&#x27;Dataset audit, reproducible training, DP-SGD, backdoor detection &#x27;
+                           &#x27;at model evaluation time. Not a runtime detection problem.&#x27;,
+        build_time_note=&#x27;Chapter 8 training-pipeline monitoring scores 1* at the pipeline; &#x27;
+                        &#x27;inference-gateway score is 0.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM04&#x27;,
+        name=&#x27;Model Denial of Service&#x27;,
+        score=1,
+        gap_type=GapType.ACTIONABLE,
+        gateway_tracks=[6],
+        sigma_tags=[&#x27;owasp.llm.04&#x27;],
+        atlas_techniques=[&#x27;AML.T0040&#x27;],
+        residual_gap=(
+            &#x27;Per-user rate detection catches single-user DoS. Distributed &#x27;
+            &#x27;low-and-slow DoS from many users each below the per-user threshold &#x27;
+            &#x27;is undetected.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 13&#x27;,
+        remediation_detail=&#x27;Ch13 S13.03 cross-user fleet-level request volume monitor &#x27;
+                           &#x27;catches distributed DoS pattern across user population.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM05&#x27;,
+        name=&#x27;Supply Chain Vulnerabilities&#x27;,
+        score=0,
+        gap_type=GapType.BUILD_TIME_ONLY,
+        gateway_tracks=[],
+        sigma_tags=[&#x27;owasp.llm.05&#x27;],
+        atlas_techniques=[&#x27;AML.T0010&#x27;, &#x27;AML.T0018&#x27;],
+        residual_gap=(
+            &#x27;No runtime detection possible. Compromised pre-trained models, &#x27;
+            &#x27;poisoned public datasets, and vulnerable ML framework dependencies &#x27;
+            &#x27;must be verified at build time, not at inference time.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 8 (build-time) + DevSecOps pipeline&#x27;,
+        remediation_detail=&#x27;Model hash verification at deployment, SCA for ML framework &#x27;
+                           &#x27;dependencies, model provenance metadata enforced by CI/CD.&#x27;,
+        build_time_note=&#x27;Entirely build-time and supply-chain concern; gateway score is 0 and correct.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM06&#x27;,
+        name=&#x27;Sensitive Information Disclosure&#x27;,
+        score=0,
+        gap_type=GapType.ACTIONABLE,
+        gateway_tracks=[],
+        sigma_tags=[&#x27;owasp.llm.06&#x27;],
+        atlas_techniques=[&#x27;AML.T0024.000&#x27;, &#x27;AML.T0024&#x27;],
+        residual_gap=(
+            &#x27;Gateway is input-side only. PII in model responses, training data &#x27;
+            &#x27;reproduction, and system prompt reflection are undetected. &#x27;
+            &#x27;Response content never inspected.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 14 + Chapter 15&#x27;,
+        remediation_detail=&#x27;Ch14: PII scanner (regex + NER), system prompt reflection detector. &#x27;
+                           &#x27;Ch15: membership inference monitoring, model inversion pattern detection.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM07&#x27;,
+        name=&#x27;Insecure Plugin Design&#x27;,
+        score=1,
+        gap_type=GapType.ACTIONABLE,
+        gateway_tracks=[1, 3],
+        sigma_tags=[&#x27;owasp.llm.07&#x27;],
+        atlas_techniques=[&#x27;AML.T0051&#x27;],
+        residual_gap=(
+            &#x27;Tracks 1 and 3 catch injection patterns in prompt context if tool &#x27;
+            &#x27;output reaches the gateway. Tool outputs routed directly to model &#x27;
+            &#x27;context by the application without gateway re-inspection are invisible.&#x27;
+        ),
+        remediation_chapter=&#x27;Application architecture&#x27;,
+        remediation_detail=&#x27;Route all plugin/tool outputs through gateway prompt &#x27;
+                           &#x27;inspection before model context injection. &#x27;
+                           &#x27;No standalone detection deliverable can close this gap.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM08&#x27;,
+        name=&#x27;Excessive Agency&#x27;,
+        score=0,
+        gap_type=GapType.ACTIONABLE,
+        gateway_tracks=[],
+        sigma_tags=[&#x27;owasp.llm.08&#x27;],
+        atlas_techniques=[],
+        residual_gap=(
+            &#x27;Gateway inspects prompts; it does not inspect model-caused actions. &#x27;
+            &#x27;Tool calls, system commands, API calls triggered by model outputs &#x27;
+            &#x27;are invisible to the current gateway.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 14&#x27;,
+        remediation_detail=&#x27;Ch14 scope and permission monitor: tracks tool call permissions &#x27;
+                           &#x27;against defined scope policy; fires when model-caused action &#x27;
+                           &#x27;exceeds defined scope.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM09&#x27;,
+        name=&#x27;Overreliance&#x27;,
+        score=-1,
+        gap_type=GapType.OUT_OF_SCOPE,
+        gateway_tracks=[],
+        sigma_tags=[&#x27;owasp.llm.09&#x27;],
+        atlas_techniques=[],
+        residual_gap=&#x27;User trust miscalibration is not a technical detection concern.&#x27;,
+        remediation_chapter=&#x27;Product design&#x27;,
+        remediation_detail=&#x27;Disclaimers, confidence score display, high-stakes output &#x27;
+                           &#x27;validation (medical, legal, financial), user training programmes.&#x27;,
+    ),
+
+    OWASPCategory(
+        category_id=&#x27;LLM10&#x27;,
+        name=&#x27;Model Theft&#x27;,
+        score=1,
+        gap_type=GapType.ACTIONABLE,
+        gateway_tracks=[6],
+        sigma_tags=[&#x27;owasp.llm.10&#x27;],
+        atlas_techniques=[&#x27;AML.T0040&#x27;],
+        residual_gap=(
+            &#x27;Per-user and correlated-account extraction detected. Extraction across &#x27;
+            &#x27;unlinked accounts and membership inference patterns undetected.&#x27;
+        ),
+        remediation_chapter=&#x27;Chapter 13&#x27;,
+        remediation_detail=&#x27;Ch13 S13.03 cross-user correlation closes distributed &#x27;
+                           &#x27;extraction gap. Future track for membership inference &#x27;
+                           &#x27;confidence pattern monitoring.&#x27;,
+    ),
+]
+
+# ---------------------------------------------------------------------------
+# Scoring helpers
+# ---------------------------------------------------------------------------
+
+def score_label(score: int, gap_type: GapType | None) -&gt; str:
+    if score == -1:
+        return &#x27;N/A (scope)&#x27;
+    if score == 2:
+        return &#x27;2 — Full&#x27;
+    if score == 1:
+        if gap_type == GapType.BUILD_TIME_ONLY:
+            return &#x27;1* — Pipeline&#x27;
+        return &#x27;1 — Partial&#x27;
+    if score == 0:
+        if gap_type == GapType.BUILD_TIME_ONLY:
+            return &#x27;0* — Build-time&#x27;
+        return &#x27;0 — Gap&#x27;
+    return &#x27;?&#x27;
+
+def score_symbol(score: int, gap_type: GapType | None) -&gt; str:
+    if score == -1:
+        return &#x27;◈&#x27;
+    if score == 2:
+        return &#x27;✓&#x27;
+    if score == 1:
+        return &#x27;◑&#x27;
+    return &#x27;✗&#x27;
+
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
+
+def print_matrix(categories: list[OWASPCategory]) -&gt; None:
+    full = sum(1 for c in categories if c.score == 2)
+    partial = sum(1 for c in categories if c.score == 1)
+    none_act = sum(1 for c in categories if c.score == 0 and c.gap_type == GapType.ACTIONABLE)
+    none_bt = sum(1 for c in categories if c.gap_type == GapType.BUILD_TIME_ONLY)
+    oos = sum(1 for c in categories if c.gap_type == GapType.OUT_OF_SCOPE)
+
+    print(&#x27;\nOWASP LLM Top 10 — Detection Coverage Matrix&#x27;)
+    print(f&#x27;Seven-Track Gateway | Post-Section 11.11 State&#x27;)
+    print(f&#x27;Full: {full}  Partial: {partial}  Gap (actionable): {none_act}  &#x27;
+          f&#x27;Build-time: {none_bt}  Out-of-scope: {oos}\n&#x27;)
+    print(f&#x27;{&quot;Category&quot;:&lt;8} {&quot;Name&quot;:&lt;35} {&quot;Score&quot;:&lt;18} {&quot;Sym&quot;:&lt;4} {&quot;Tracks&quot;:&lt;18} Residual Gap (short)&#x27;)
+    print(&#x27;-&#x27; * 120)
+    for c in categories:
+        label = score_label(c.score, c.gap_type)
+        sym = score_symbol(c.score, c.gap_type)
+        tracks_str = &#x27;, &#x27;.join(f&#x27;T{t}&#x27; for t in c.gateway_tracks) or &#x27;—&#x27;
+        gap_short = (c.residual_gap[:42] + &#x27;...&#x27;) if len(c.residual_gap) &gt; 42 else c.residual_gap
+        print(f&#x27;{c.category_id:&lt;8} {c.name:&lt;35} {label:&lt;18} {sym:&lt;4} {tracks_str:&lt;18} {gap_short}&#x27;)
+
+def print_backlog(categories: list[OWASPCategory]) -&gt; None:
+    actionable = [c for c in categories if c.gap_type == GapType.ACTIONABLE and c.score &lt; 2]
+    print(&#x27;\nOWASP LLM Actionable Detection Backlog&#x27;)
+    print(f&#x27;Gaps requiring detection engineering work: {len(actionable)}\n&#x27;)
+    for c in sorted(actionable, key=lambda x: x.score):
+        print(f&#x27;  {c.category_id} — {c.name} (score: {c.score})&#x27;)
+        print(f&#x27;    Gap:         {c.residual_gap[:90]}&#x27;)
+        print(f&#x27;    Remediation: {c.remediation_detail[:90]}&#x27;)
+        print(f&#x27;    Chapter:     {c.remediation_chapter}&#x27;)
+
+def print_ciso_report(categories: list[OWASPCategory]) -&gt; None:
+    print(&#x27;\n== OWASP LLM Top 10 Coverage — Executive Summary ==\n&#x27;)
+    print(&#x27;Category Coverage:&#x27;)
+    for c in categories:
+        label = score_label(c.score, c.gap_type)
+        sym = score_symbol(c.score, c.gap_type)
+        print(f&#x27;  {sym} {c.category_id} {c.name:&lt;35} [{label}]&#x27;)
+    print()
+    actionable = [c for c in categories if c.gap_type == GapType.ACTIONABLE and c.score == 0]
+    if actionable:
+        print(f&#x27;Priority gaps requiring investment ({len(actionable)} categories at score 0):&#x27;)
+        for c in actionable:
+            print(f&#x27;  {c.category_id} — {c.name}: {c.remediation_chapter}&#x27;)
+    print()
+    print(&#x27;Key findings:&#x27;)
+    print(&#x27;  • Input-side detection is strong for LLM01 and LLM10.&#x27;)
+    print(&#x27;  • Output-side monitoring (LLM02, LLM06, LLM08) is the primary investment area.&#x27;)
+    print(&#x27;  • LLM03 and LLM05 are build-time controls, not runtime detection problems.&#x27;)
+    print(&#x27;  • LLM09 is a product design concern outside detection engineering scope.&#x27;)
+    print(&#x27;  • Chapter 14 output validation layer addresses three score-0 categories simultaneously.&#x27;)
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -&gt; int:
+    parser = argparse.ArgumentParser(description=&#x27;OWASP LLM coverage matrix&#x27;)
+    parser.add_argument(&#x27;--backlog&#x27;, action=&#x27;store_true&#x27;,
+                        help=&#x27;Print actionable detection backlog only&#x27;)
+    parser.add_argument(&#x27;--ciso-report&#x27;, action=&#x27;store_true&#x27;,
+                        help=&#x27;Print executive summary for CISO presentation&#x27;)
+    args = parser.parse_args()
+
+    if args.backlog:
+        print_backlog(OWASP_CATEGORIES)
+        return 0
+    if args.ciso_report:
+        print_ciso_report(OWASP_CATEGORIES)
+        return 0
+    print_matrix(OWASP_CATEGORIES)
+    return 0
+
+if __name__ == &#x27;__main__&#x27;:
+    sys.exit(main())</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Id</h3>
+<p class="prose">D11.11.2</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">owasp_gap_closure_roadmap.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps each OWASP LLM coverage gap to the specific Chapter 12–15 deliverable that closes it, with effort estimate, dependency chain, and a combined view showing which chapters close the most OWASP categories simultaneously. Designed for sprint planning and investment prioritisation.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Python Version</h3>
+<p class="prose">3.12</p>
+<h3 class="sh3">Dependencies</h3>
+<ul class="blist"><li>dataclasses (stdlib)</li></ul>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>#!/usr/bin/env python3
+&#x27;&#x27;&#x27;owasp_gap_closure_roadmap.py
+Maps OWASP LLM Top 10 coverage gaps to chapter-level remediations.
+Shows which chapter closes the most OWASP categories simultaneously.
+Chapter 11, Section 11.11 — AI Security Mastery
+Author: Raghav Dinesh | github: ruwgxo
+
+Usage:
+  python3 owasp_gap_closure_roadmap.py
+  python3 owasp_gap_closure_roadmap.py --chapter 14
+&#x27;&#x27;&#x27;
+
+from __future__ import annotations
+import argparse
+import sys
+from dataclasses import dataclass, field
+
+# ---------------------------------------------------------------------------
+# Roadmap data model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ChapterRoadmapItem:
+    chapter: int
+    section: str
+    deliverable: str
+    owasp_gaps_closed: list[str]        # e.g. [&#x27;LLM02&#x27;, &#x27;LLM06&#x27;, &#x27;LLM08&#x27;]
+    score_improvements: dict[str, str]  # category_id -&gt; &#x27;score X → Y&#x27;
+    effort_days: int
+    dependency: str = &#x27;&#x27;
+    notes: str = &#x27;&#x27;
+
+# ---------------------------------------------------------------------------
+# Roadmap registry
+# ---------------------------------------------------------------------------
+
+ROADMAP: list[ChapterRoadmapItem] = [
+
+    ChapterRoadmapItem(
+        chapter=12,
+        section=&#x27;S12.04&#x27;,
+        deliverable=&#x27;intent_classifier.py — LLM prompt intent classification&#x27;,
+        owasp_gaps_closed=[&#x27;LLM01&#x27;],
+        score_improvements={&#x27;LLM01&#x27;: &#x27;score 1 → score 2 (direct injection fully covered)&#x27;},
+        effort_days=10,
+        notes=&#x27;Closes obfuscated direct injection gap. Indirect injection gap (app architecture) remains.&#x27;,
+    ),
+
+    ChapterRoadmapItem(
+        chapter=13,
+        section=&#x27;S13.03&#x27;,
+        deliverable=&#x27;cross_user_correlation.py — fleet-level session correlation&#x27;,
+        owasp_gaps_closed=[&#x27;LLM04&#x27;, &#x27;LLM10&#x27;],
+        score_improvements={
+            &#x27;LLM04&#x27;: &#x27;score 1 → score 2 (distributed DoS now detected)&#x27;,
+            &#x27;LLM10&#x27;: &#x27;score 1 → score 2 (distributed extraction now detected)&#x27;,
+        },
+        effort_days=12,
+        dependency=&#x27;Chapter 13 session infrastructure&#x27;,
+        notes=&#x27;Single deliverable closes two OWASP gaps by adding fleet-level visibility.&#x27;,
+    ),
+
+    ChapterRoadmapItem(
+        chapter=14,
+        section=&#x27;S14.02–S14.05&#x27;,
+        deliverable=&#x27;output_validation_layer.py — post-inference output inspection&#x27;,
+        owasp_gaps_closed=[&#x27;LLM02&#x27;, &#x27;LLM06&#x27;, &#x27;LLM08&#x27;],
+        score_improvements={
+            &#x27;LLM02&#x27;: &#x27;score 0 → score 1 (XSS, code injection, command injection in responses)&#x27;,
+            &#x27;LLM06&#x27;: &#x27;score 0 → score 1 (PII scanner, system prompt reflection detector)&#x27;,
+            &#x27;LLM08&#x27;: &#x27;score 0 → score 1 (tool call scope monitor)&#x27;,
+        },
+        effort_days=20,
+        dependency=&#x27;Chapter 14 post-inference hook infrastructure&#x27;,
+        notes=&#x27;Highest-leverage chapter: closes three score-0 gaps with one architectural addition. &#x27;
+              &#x27;All three categories move to score 1; score 2 requires further calibration.&#x27;,
+    ),
+
+    ChapterRoadmapItem(
+        chapter=15,
+        section=&#x27;S15.03&#x27;,
+        deliverable=&#x27;membership_inference_monitor.py — output confidence pattern analysis&#x27;,
+        owasp_gaps_closed=[&#x27;LLM06&#x27;],
+        score_improvements={
+            &#x27;LLM06&#x27;: &#x27;score 1 → score 2 (membership inference patterns now detected)&#x27;,
+        },
+        effort_days=8,
+        dependency=&#x27;Chapter 14 output validation layer (score 1 baseline for LLM06)&#x27;,
+        notes=&#x27;Completes LLM06 coverage after Chapter 14 establishes the output inspection pipeline.&#x27;,
+    ),
+
+]
+
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
+
+def print_full_roadmap(roadmap: list[ChapterRoadmapItem]) -&gt; None:
+    total_days = sum(r.effort_days for r in roadmap)
+    total_gaps = sum(len(r.owasp_gaps_closed) for r in roadmap)
+    print(&#x27;\nOWASP LLM Gap Closure Roadmap — Chapters 12–15&#x27;)
+    print(f&#x27;Total gaps addressable: {total_gaps} improvements across {len(roadmap)} deliverables&#x27;)
+    print(f&#x27;Total estimated effort: {total_days} engineer-days\n&#x27;)
+
+    print(f&#x27;{&quot;Ch&quot;:&lt;5} {&quot;Section&quot;:&lt;12} {&quot;OWASP Gaps Closed&quot;:&lt;25} {&quot;Score Improvements&quot;:&lt;45} {&quot;Days&quot;:&lt;6} Dependency&#x27;)
+    print(&#x27;-&#x27; * 130)
+    for r in sorted(roadmap, key=lambda x: x.chapter):
+        gaps_str = &#x27;, &#x27;.join(r.owasp_gaps_closed)
+        improv_str = &#x27;; &#x27;.join(r.score_improvements.values())
+        improv_short = (improv_str[:42] + &#x27;...&#x27;) if len(improv_str) &gt; 42 else improv_str
+        dep_short = (r.dependency[:30] + &#x27;...&#x27;) if len(r.dependency) &gt; 30 else r.dependency
+        print(f&#x27;{r.chapter:&lt;5} {r.section:&lt;12} {gaps_str:&lt;25} {improv_short:&lt;45} {r.effort_days:&lt;6} {dep_short}&#x27;)
+
+    print()
+    print(&#x27;End-state coverage after Chapters 12–15:&#x27;)
+    final_scores: dict[str, int] = {
+        &#x27;LLM01&#x27;: 2, &#x27;LLM02&#x27;: 1, &#x27;LLM03&#x27;: 0, &#x27;LLM04&#x27;: 2,
+        &#x27;LLM05&#x27;: 0, &#x27;LLM06&#x27;: 2, &#x27;LLM07&#x27;: 1, &#x27;LLM08&#x27;: 1,
+        &#x27;LLM09&#x27;: -1, &#x27;LLM10&#x27;: 2,
+    }
+    score_labels = {2: &#x27;✓ Full&#x27;, 1: &#x27;◑ Partial&#x27;, 0: &#x27;✗ Gap&#x27;, -1: &#x27;◈ OOS&#x27;}
+    for cat_id, score in final_scores.items():
+        print(f&#x27;  {cat_id}: {score_labels[score]}&#x27;)
+
+def print_chapter_detail(roadmap: list[ChapterRoadmapItem], chapter: int) -&gt; None:
+    items = [r for r in roadmap if r.chapter == chapter]
+    if not items:
+        print(f&#x27;No roadmap items for Chapter {chapter}.&#x27;)
+        return
+    print(f&#x27;\nChapter {chapter} — OWASP Gap Closures:&#x27;)
+    for r in items:
+        print(f&#x27;  Deliverable: {r.deliverable}&#x27;)
+        print(f&#x27;  OWASP gaps:  {&quot;, &quot;.join(r.owasp_gaps_closed)}&#x27;)
+        for cat, improv in r.score_improvements.items():
+            print(f&#x27;    {cat}: {improv}&#x27;)
+        print(f&#x27;  Effort:      {r.effort_days} engineer-days&#x27;)
+        if r.dependency:
+            print(f&#x27;  Depends on:  {r.dependency}&#x27;)
+        if r.notes:
+            print(f&#x27;  Notes:       {r.notes}&#x27;)
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -&gt; int:
+    parser = argparse.ArgumentParser(description=&#x27;OWASP LLM gap closure roadmap&#x27;)
+    parser.add_argument(&#x27;--chapter&#x27;, type=int, choices=[12, 13, 14, 15],
+                        help=&#x27;Show detail for a specific chapter&#x27;)
+    args = parser.parse_args()
+
+    if args.chapter:
+        print_chapter_detail(ROADMAP, args.chapter)
+        return 0
+    print_full_roadmap(ROADMAP)
+    return 0
+
+if __name__ == &#x27;__main__&#x27;:
+    sys.exit(main())</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.11.1</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Treating OWASP LLM score 0 for LLM03 and LLM05 as a detection engineering failure</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The matrix shows two zero-score categories. In a coverage measurement context, score 0 reads as a failure. Programme stakeholders ask why the detection team has not addressed these categories.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">LLM03 (Training Data Poisoning) and LLM05 (Supply Chain Vulnerabilities) are build-time concerns. No runtime detection rule can detect a poisoned model or a compromised ML dependency at inference time. Adding them to the detection backlog generates work that cannot be completed and erodes confidence in the programme&#x27;&#x27;s engineering judgement.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Distinguish build-time from runtime gaps explicitly in every presentation of the matrix. Use the &quot;0* — Build-time&quot; notation (not a plain &quot;0&quot;) and include a one- sentence explanation in the CISO report: &quot;These categories are addressed by build-time controls (dataset auditing, model provenance verification) — not by runtime detection rules.&quot; Point to Chapter 8 for the implemented controls.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.11.2</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Declaring LLM01 fully covered (score 2) after deploying Tracks 1 to 5</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Five tracks covering prompt injection looks comprehensive. Keyword rules, a centroid gate, two classifiers, perplexity, shot counting and multi-turn scoring together seem to address all injection variants.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">Indirect injection — adversarial instructions embedded in tool outputs, RAG retrieved context, or web content injected into the system prompt — is not detected by any of the input-side tracks unless the injected content happens to match Track 1&#x27;s keyword or centroid patterns. A targeted adversary crafting indirect injection content specifically to evade those patterns will succeed. Declaring LLM01 fully covered misrepresents the coverage posture and delays the application-architecture work needed to close the indirect injection gap.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Maintain LLM01 at score 1 until both direct injection and indirect injection are covered. Score the direct and indirect components separately in the OWASP notes field if the matrix tooling supports sub-category scoring.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.11.3</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Assuming that input-side gateway coverage addresses LLM02, LLM06, and LLM08</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The gateway blocks bad prompts. Practitioners assume that blocking the bad input also prevents the bad output. In many cases this is true — if the injection is blocked, the unsafe output is not generated. But it is not universally true.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">Sophisticated injection attacks that evade input-side detection will produce unsafe outputs (LLM02) or disclosure outputs (LLM06) that the gateway never sees. Agentic systems may cause excessive agency actions (LLM08) in response to prompts that passed all input-side checks but were subtly adversarial. The output-side gap is the gap that produces the highest-consequence incidents: the attack that passed all gateway checks and then exfiltrated PII or executed arbitrary code.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Treat the output-side gap as a first-class programme priority. The three score-0 actionable categories (LLM02, LLM06, LLM08) all require the Chapter 14 output validation layer. Present this to leadership as: &quot;The current gateway protects the model from bad inputs; we do not yet protect downstream systems from bad outputs. Chapter 14 builds that protection.&quot;</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.11.4</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Including LLM09 in the detection engineering backlog and assigning resource to close it</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">LLM09 appears on the list of ten vulnerabilities. It has a score in the matrix. Programme managers who are not deeply familiar with the categories include it in the detection backlog and ask for a detection engineering sprint to address it.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">LLM09 (Overreliance) is a user behaviour and product design concern. No detection rule can observe user trust. Assigning detection engineering resource to LLM09 diverts effort from the three actionable score-0 categories (LLM02, LLM06, LLM08) that have viable detection approaches and produce measurable coverage improvements.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">In every presentation of the OWASP matrix, explicitly label LLM09 as &quot;Out of scope for technical detection — addressed by product design team.&quot; Route LLM09 to the product engineering backlog, not the detection engineering backlog. The owasp_llm_coverage_matrix.py --ciso-report output includes this routing explicitly.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.11.5</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Reporting OWASP LLM coverage without the ATLAS coverage heat map in the same report</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">OWASP LLM Top 10 is more accessible to non-technical stakeholders than ATLAS technique IDs. Programmes may default to OWASP-only reporting for the CISO audience and ATLAS-only reporting for the detection team, creating two separate coverage pictures that are never reconciled.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">The OWASP matrix and the ATLAS heat map are complementary, not alternative, coverage views. A programme with full OWASP LLM01 coverage may still have ATLAS gaps in specific injection sub-techniques. A programme with ATLAS AML.T0051 coverage at score 2 may still score LLM01 at score 1 because indirect injection is not addressed. Reporting only one view gives an incomplete picture regardless of the audience.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Present both views in the quarterly programme review: the ATLAS heat map for the detection team and the OWASP matrix for the CISO and compliance audience. Show the crosswalk table (table_3_owasp_atlas_crosswalk) to any stakeholder who asks how the two taxonomies relate. The owasp_llm_coverage_matrix.py --ciso-report output is designed to accompany the Navigator heat map, not replace it.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">What You Learned</h3>
+<p class="prose">OWASP LLM Top 10 is a vulnerability catalogue that requires a bespoke detection
+approach per category and contains three structural non-detection categories:
+build-time-only (LLM03, LLM05), output-side-only (LLM02, LLM06, LLM08), and
+out-of-scope (LLM09). The seven-track gateway achieves score 1 on four categories
+(LLM01, LLM04, LLM07, LLM10), score 0 on three actionable categories (LLM02,
+LLM06, LLM08), build-time-only status for two categories (LLM03, LLM05), and
+out-of-scope status for one (LLM09). The most significant programme gap is the
+output-side: the gateway is input-side only and Chapter 14 is the remediation for
+all three output-side score-0 categories simultaneously. The OWASP matrix and the
+ATLAS heat map are complementary views; both are required for a complete coverage
+picture.</p>
+<h3 class="sh2">Key Terms</h3>
+<h3 class="sh3">Term</h3>
+<p class="prose">OWASP LLM Top 10</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">A vulnerability catalogue of the ten most significant security risks in LLM-based applications. Not a detection specification: each category requires bespoke detection approaches; some are not detectable at runtime at all.</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">Build-time-only gap</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">An OWASP or ATLAS coverage gap where the vulnerability is introduced before inference and cannot be detected by runtime rules. Addressed by build-time controls (dataset auditing, model provenance verification, supply chain security). Distinct from actionable gaps where runtime detection is viable but not yet built.</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">Output-side gap</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">An OWASP coverage gap where the detectable signal is in the model response, not the request. The seven-track gateway is input-side only; output-side gaps require a post-inference output validation layer (Chapter 14).</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">Indirect injection</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">A form of LLM01 prompt injection where adversarial instructions are embedded in content retrieved from external sources (RAG outputs, tool call results, web content) and injected into the model context. Not detectable by input-side rules unless application-level source tagging identifies retrieved spans in the prompt.</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">OWASP-ATLAS crosswalk</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">A mapping between OWASP LLM Top 10 categories and MITRE ATLAS technique IDs. Enables detection rules tagged with owasp.llm.NN to also carry the correct atlas.aml.tXXXX tag, ensuring both coverage matrices read the same rule set.</p>
+<h2 class="sh1">Preview Section 11 12</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Threat Hunting for AI Systems: Proactive Detection</p>
+<h3 class="sh2">Teaser</h3>
+<p class="prose">Section 11.12 extends the detection programme beyond reactive rule-based detection
+to proactive threat hunting: structured, hypothesis-driven analysis of production
+logs to find novel attack patterns that no deployed rule captures. It introduces
+five AI-specific hunting hypotheses (embedding cluster anomalies, session entropy
+outliers, coordinated query timing patterns, system prompt drift across sessions,
+and cross-user semantic similarity spikes), the data sources and analysis methods
+for each, and the pivot chain that converts a confirmed hunt finding into a Sigma
+rule via the Section 11.10 workflow. The threat_hunting_playbook.py deliverable
+encodes all five hypotheses as executable hunting procedures.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">III</p>
+<h3 class="sh2">Chapter</h3>
+<p class="prose">11</p>
+<h3 class="sh2">Section</h3>
+<p class="prose">11</p>
+<h3 class="sh2">Section Id</h3>
+<p class="prose">11.11</p>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>owasp-llm-top-10</li><li>coverage-matrix</li><li>llm01-prompt-injection</li><li>llm02-output-handling</li><li>llm03-training-poisoning</li><li>llm04-denial-of-service</li><li>llm05-supply-chain</li><li>llm06-information-disclosure</li><li>llm07-plugin-design</li><li>llm08-excessive-agency</li><li>llm09-overreliance</li><li>llm10-model-theft</li><li>output-side-gap</li><li>chapter-11</li><li>part-3</li></ul>
+<h3 class="sh2">Atlas Anchors</h3>
+<ul class="blist"><li>LLM01 = AML.T0051 (Prompt Injection) + AML.T0054 (Role-play Jailbreak)</li><li>LLM03 = AML.T0020 (Poison Training Data) + AML.T0018 (Backdoor ML Model)</li><li>LLM10 = AML.T0040 (ML Model Inference API Access)</li><li>LLM06 = AML.T0024.000 (Membership Inference) + AML.T0024.001 (Invert ML Model)</li><li>LLM05 = AML.T0010 (Compromise ML Software) + AML.T0019 (Poison Public Data)</li></ul>
+<h3 class="sh2">Word Count Estimate</h3>
+<p class="prose">4400</p>
+<h3 class="sh2">Deliverables Count</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Common Mistakes Count</h3>
+<p class="prose">5</p>
+</article>

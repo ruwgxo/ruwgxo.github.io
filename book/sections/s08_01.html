@@ -1,0 +1,878 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 8 · Section 1 · ~6 pages</div>
+<h1>Section 8.1: Training-Time vs Inference-Time Attacks - Threat Model Transition</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Training-Time vs Inference-Time Attacks: Threat Model Transition</p>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The threat model for training-time attacks differs from inference-time attacks across
+every axis that determines defensive architecture -- adversary access, blast radius,
+detection timescale, latency budget, and economic structure. The Ch6/Ch7 real-time
+classifier pattern does not transfer. Offline auditing with release-cycle SLAs does.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapter 8 cannot start by listing poisoning attacks. It has to start by explaining
+why poisoning attacks need a different defensive architecture than Chapters 6 and 7
+built. Most practitioners entering AI security come through the inference-time door:
+prompt injection, jailbreaks, API abuse. They build fluency with five-track ensembles
+and 50ms P99 latency budgets. Then training-time threats arrive and the entire
+mental model has to shift -- not the techniques, the threat model itself.
+
+This section performs that shift explicitly. It establishes the eight dimensions
+on which training-time and inference-time threat models differ, maps the adversary
+access ladder that distinguishes who can do what, and quantifies the blast radius
+asymmetry that makes training-time attacks economically rational at scales where
+individual injection attempts are not. By the end of this section you understand
+why Sections 8.2 through 8.16 build offline auditing pipelines rather than extending
+the API gateway classifier from Section 6.17.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">This is the opening section of Chapter 8. It establishes the threat-model framework
+that every subsequent section assumes. Sections 8.2 through 8.11 analyse specific
+attack families; each of them references this threat model to position the attack
+on the adversary access ladder. Sections 8.12 through 8.15 build detection and
+defence; each of them references this threat model to justify the offline architecture.
+Section 8.16 synthesises. You will return to Section 8.1 more than any other section
+in Chapter 8 -- it is the scaffolding, not the content.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 6 Section 6.17: production injection classifier architecture (the inference-time pattern this section contrasts with)</li><li>Chapter 7 Section 7.14: jailbreak detection ensemble (the second inference-time pattern)</li><li>Chapter 5 Section 5.4: OWASP LLM03 framework overview (extended into attack-family depth across Ch8)</li><li>Chapter 5 Section 5.7-5.8: MITRE ATLAS tactic and technique framework (AML.T0020/T0018/T0031 introduced here)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1 The Fundamental Distinction</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Fundamental Distinction: When the Adversary Operates</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Every attack in Chapters 6 and 7 shares a structural property: the adversary
+operates at inference time, against a model whose weights are already fixed.
+The attack vector is the input. The defence is a classifier that inspects the
+input before it reaches the model. The architectural question is: can you decide,
+in under 100 milliseconds, whether this specific input is adversarial, without
+refusing too many legitimate ones? That question has a technical answer, which
+Sections 6.17 and 7.14 built.
+
+Every attack in Chapter 8 violates this structural property. The adversary does
+not control the runtime input. The adversary controls something upstream of runtime
+-- training data, model weights, a fine-tuning adapter, a preference annotation
+pair, a gradient update in a federated round. By the time a user sends a query to
+the deployed system, the attack has already happened. The weights are what they
+are. The poisoned behaviour is encoded. The backdoor is installed. The runtime
+input triggering the attacker-chosen output may itself be entirely benign -- a
+user asking an unremarkable question that happens to match a trigger condition
+the attacker engineered into the model weeks or months earlier.
+
+This is not a defence strategy variant. It is a different threat model. The
+adversary operates in a different timeframe, against different artifacts, with
+different access requirements, and produces different observable signals. The
+defender needs different tools, running in different infrastructure, with different
+SLAs. Refusing to accept this and attempting to retrofit the Chapter 6 and 7
+architecture onto training-time threats is the most common -- and most expensive
+-- failure mode for organisations beginning AI security programmes.
+
+The shift can be stated compactly: Chapters 6 and 7 build detection at the
+serving layer. Chapter 8 builds detection at the artifact layer. Serving-layer
+detection asks &#x27;is this request adversarial&#x27;. Artifact-layer detection asks &#x27;is
+this model, dataset, or adapter adversarial&#x27;. The first question is answered at
+sub-100ms latencies on live traffic. The second question is answered in batch
+audit runs that take hours and gate release, not runtime. These are different
+disciplines with overlapping skill requirements but non-overlapping operational
+architectures.</p>
+<h3 class="sh2">Part 2 Inference Time Recap</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Inference-Time Threat Model Recap</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The inference-time threat model that Chapters 6 and 7 assumed can be stated as
+five properties. The adversary controls the runtime input, and only the runtime
+input -- system prompts, training data, model weights, and deployment infrastructure
+are all outside the adversary&#x27;s reach. The model is a black box from the adversary&#x27;s
+perspective in the API-access case, or a white box that cannot be modified in
+the open-weight case; either way, weight modification is off the table. The
+attack effect is scoped to the conversation or session -- a successful injection
+or jailbreak produces attacker-chosen behaviour for one user interaction, and
+the next request arrives against the same unperturbed model. Detection must
+happen before the model processes the input, because once the model has processed
+it, the attack has either succeeded or failed and subsequent observation cannot
+prevent it. And latency is the binding constraint -- users notice 500ms of added
+latency on API calls, so real-time detection must run in tens of milliseconds,
+not seconds.
+
+Each of these properties directly drove an architectural choice in the Section
+6.17 and 7.14 detectors. The classifier runs on the input, not on model internals,
+because input is what the adversary controls. The classifier runs synchronously
+in the request path, because the detection must happen before processing. The
+classifier is lightweight (distilled language model, feature-engineered gradient-
+boosted trees, perplexity analyser) because the latency budget demands it. The
+classifier is calibrated for false positive rate against a distribution of real
+user traffic, because false positives manifest as refused requests against
+legitimate users. And the classifier is placed at the API gateway, because that
+is the chokepoint at which every request passes before reaching the model.
+
+All five properties fail to hold in the training-time threat model. The adversary
+controls something other than the runtime input. The model weights are a function
+of the attack, not a constant against which the attack operates. The attack effect
+persists across every future inference, not just the current one. Detection cannot
+happen before processing because there is no processing to happen before --
+the attack has already concluded by the time any user-visible event occurs. And
+the latency budget does not apply because there is no user waiting for a response
+-- the audit runs in a pipeline, not in a request.</p>
+<h3 class="sh2">Part 3 Training Time Threat Model</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Training-Time Threat Model: The Inversion</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The training-time threat model inverts every property of the inference-time
+model. Each inversion has direct architectural consequences for Chapter 8 defences.
+
+First, the adversary controls pre-runtime artifacts. These artifacts vary by
+attack class. In classical data poisoning, it is training samples -- a fraction
+of the supervised dataset used to fit the model. In backdoor attacks, it is
+training samples plus the trigger design. In RLHF preference contamination, it
+is preference annotation pairs submitted during the alignment phase. In LoRA
+adapter poisoning, it is adapter weights distributed post-training. In pre-
+training contamination, it is web-scale corpus entries ingested during the
+pre-training phase. In federated learning attacks, it is gradient updates
+submitted during distributed training rounds. The common property is not what
+the adversary controls but when -- before any user interacts with the deployed
+model.
+
+Second, the attack effect is encoded in the model weights after training, and
+persists across every subsequent inference. A successful poisoning does not
+compromise one conversation; it compromises every conversation until the model
+is retrained from a clean dataset or replaced. This is not a quantitative
+difference from inference-time attacks; it is a categorical one. An injection
+attack is a single event with a single victim. A poisoning attack is an event
+whose victims are every user of the poisoned model for as long as the model
+remains deployed -- typically weeks to months for production deployments,
+longer for models distributed via pre-trained weight releases.
+
+Third, there is no synchronous detection window. The attack occurred at time
+T, when the adversary contributed poisoned data or published a poisoned adapter.
+The observable effect manifests at time T+N, where N is the interval between
+attack and the first triggering user query. N may be days, weeks, or months.
+During the interval, the attack is invisible unless explicitly probed for. The
+detection architecture must therefore probe, not wait for triggers to arrive.
+
+Fourth, the detection signal space is different. At inference time, the signal
+is the input text and the conversation history -- the classifier has a bounded,
+well-defined input with known distributional properties from benign user traffic.
+At training time, the signal is orders of magnitude larger and more varied:
+training datasets measured in gigabytes to terabytes, model weights measured in
+billions of parameters, adapter deltas, preference pair streams, gradient trajectories,
+activation patterns across sample distributions. Each signal source requires a
+different analysis technique. No single classifier architecture covers the space.
+
+Fifth, the latency budget is replaced by a throughput budget. The auditing pipeline
+must complete within a release cycle -- for many production systems, this is the
+time between model training runs, typically days to weeks. A spectral-signatures
+analysis across a model&#x27;s activations on a validation set may take hours. A
+behavioural diff test against a candidate adapter may take tens of minutes. An
+activation clustering analysis may take most of a day on a large model. These
+latencies are unacceptable at serving time and perfectly acceptable at audit time.
+The architecture shift is from low-latency synchronous inspection to high-throughput
+asynchronous auditing.
+
+The practical implication is that the auditing pipeline runs in CI/CD
+infrastructure, not in the API gateway. It gates releases, not requests. It
+produces artifacts (audit reports, detection findings, provenance attestations)
+that accompany models through the deployment pipeline, rather than verdicts
+that accompany individual requests. It integrates with model registries, not
+with API gateways. And its operational metrics are detection coverage across
+known attack families and drift monitoring over time -- not per-request FPR
+against live user traffic.</p>
+<h3 class="sh2">Part 4 Attacker Access Ladder</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Attacker Access Ladder: Who Can Do What</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The training-time threat model is not a single threat model but a family of
+them, differentiated by what level of access the adversary has to the ML pipeline.
+It is useful to organise this family as a ladder, where each rung grants
+strictly more capability than the rung below. The ladder applies to any
+organisation training or deploying models, from a small team fine-tuning an
+open-weight model to a frontier lab conducting foundation-model pre-training.
+
+Rung 1 is the end user. End users send runtime inputs to a deployed model and
+observe the outputs. They have no pre-runtime access. This is the Chapter 6
+and 7 threat model. Injection and jailbreak attacks live here. Poisoning
+attacks do not -- an end user cannot inject a poisoned training sample by
+sending an API request, unless the deployment explicitly feeds runtime inputs
+back into a future training cycle (which a small but growing class of deployments
+does, and which represents a distinct threat class explored briefly in Section
+8.7 in the context of continuous learning pipelines).
+
+Rung 2 is the dataset contributor. A dataset contributor can submit content
+that becomes part of a training corpus. This rung includes: users who contribute
+to public corpora such as Wikipedia, Stack Overflow, or Reddit that are crawled
+for LLM pre-training; annotators participating in RLHF preference collection;
+developers publishing code to GitHub that enters code-LLM training sets;
+researchers releasing datasets that become part of public benchmark suites.
+The distinguishing property of rung 2 is that the adversary controls a bounded
+fraction of training inputs but not the training process itself, and in most
+cases the adversary does not know in advance whether their specific contribution
+will be ingested into a particular model&#x27;s training run. The attacks at this
+rung are probabilistic at the attack level (will my poisoned sample be selected)
+and deterministic at the effect level (once ingested, the effect is predictable).
+
+Rung 3 is the pipeline operator. A pipeline operator has direct control over
+the training pipeline -- training scripts, hyperparameter configurations,
+data preprocessing code, model initialisation. This rung includes: insider
+ML engineers at an organisation conducting fine-tuning; contractors or third-
+party services operating training infrastructure; attackers who have compromised
+CI/CD systems used for training runs. The distinguishing property is deterministic
+control over a single training run -- the adversary does not depend on their
+contribution being selected, because the adversary IS the selector. Gradient
+manipulation attacks, training objective modifications, and targeted backdoor
+insertions via training code modification live at this rung.
+
+Rung 4 is the model publisher. A model publisher distributes trained models
+or adapters that other organisations will incorporate into their systems.
+This rung includes: individuals and organisations publishing models on
+HuggingFace, PyPI, or other distribution channels; vendors selling pre-trained
+models as products; open-source project maintainers releasing model checkpoints.
+The distinguishing property is that the adversary&#x27;s attack artifact is
+distributed to downstream consumers, who then integrate it into their own
+deployments. The attack is one-to-many -- one malicious model download can
+compromise every downstream deployment that ingests it. Supply chain attacks
+in the strict sense (malicious HuggingFace models, poisoned LoRA adapters,
+typosquatting) live at this rung. The 2023-2024 incidents where researchers
+demonstrated pickle-based code execution via torch.load() on crafted model
+files are rung-4 attacks.
+
+Rung 5 is the pre-training participant. A pre-training participant has influence
+over the foundation model pre-training process itself, which is the largest
+amortisation surface in the field. This rung is narrowly populated -- frontier
+model training is conducted by a small number of organisations, each with
+limited and heavily vetted personnel access. Adversaries reach this rung
+primarily through insider threats or nation-state level compromise of training
+infrastructure. The distinguishing property is effect propagation across every
+model derived from the poisoned foundation -- a poisoning at this rung affects
+not just one deployment but the entire ecosystem that fine-tunes on or distils
+from the compromised foundation model. No such attack has been publicly documented
+in production frontier model training to date; the threat is prospective. But
+its theoretical blast radius is so large that defensive investment is justified
+even in the absence of documented incidents.
+
+The ladder is useful as a threat modelling tool because most organisations
+underestimate the rungs their actual threat model should include. A fine-tuning
+pipeline that downloads base models from HuggingFace is exposed to rung 4. A
+pipeline that also uses community-curated instruction-tuning datasets is exposed
+to rung 2 as well. A pipeline that runs training on shared cloud infrastructure
+is exposed to rung 3 if that infrastructure is compromised. And a pipeline that
+fine-tunes on top of a major foundation model is exposed to rung 5 via the
+inherited properties of the foundation. The threat model is the union of rung
+exposures, not a single rung.</p>
+<h3 class="sh2">Part 5 Blast Radius Asymmetry</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Blast Radius Asymmetry: The Amortised Cost Structure</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The economic asymmetry between inference-time and training-time attacks is
+what makes the latter disproportionately dangerous at the level of overall
+AI security programme investment. It is also what makes them easier to justify
+as an attacker&#x27;s investment target.
+
+An inference-time attack produces its effect once, against one user, in one
+conversation. The attacker incurs a cost per attack (prompt crafting, potentially
+API usage fees for testing, possibly the cost of automating mass injection
+attempts). The attacker&#x27;s return is bounded by what a single successful
+interaction can deliver -- one user&#x27;s data leaked, one user&#x27;s request rerouted,
+one piece of harmful content surfaced. To scale, the attacker must repeat the
+attack. Each repetition incurs the cost again. The economic structure is linear.
+
+A training-time attack produces its effect across every subsequent inference
+against the poisoned model, for as long as that model remains deployed. The
+attacker incurs a cost once -- one successful poisoning of a training dataset,
+one malicious adapter uploaded, one crafted backdoor inserted. The attacker&#x27;s
+return is bounded by the total volume of inferences the poisoned model processes
+during its deployment lifetime. For a production LLM processing millions of
+requests per day over a deployment window measured in months, this is hundreds
+of millions of potentially affected inferences from a single attack.
+
+The ratio is not a slightly larger number. It is typically six to nine orders
+of magnitude. Consider a modest production LLM deployment processing one million
+inferences per day, with the poisoned model active for ninety days between
+successful poisoning and detection-and-remediation. That is ninety million
+inferences affected by a single successful poisoning event. Even if the attacker&#x27;s
+trigger condition activates on only one in ten thousand of those inferences
+(a conservative estimate for a well-targeted backdoor), nine thousand users
+experience the attacker-chosen behaviour. From a single attack. With attacker
+cost that may have been measured in hours of work.
+
+This asymmetry is not an abstract property. It is the reason training-time
+attacks merit a dedicated defensive architecture even when no incident has been
+observed in a specific deployment. Inference-time attacks exhibit continuous
+pressure -- you see them in your telemetry daily. Training-time attacks exhibit
+absent-until-catastrophic dynamics -- you see nothing, then you see a single
+incident with nine thousand affected users. The investment justification is the
+expected-value calculation, not the incident history. An organisation with no
+documented training-time security programme is not running a lower risk than
+one with such a programme; it is running the same risk without the visibility
+to quantify it.
+
+The implication for detection architecture is that the auditing pipeline must
+be proactive. It runs before deployment, not after incident reports. It tests
+for poisoning across the attack family catalogue, not against observed indicators.
+It produces findings on schedule, not in response to triggers. This is the
+same discipline as static application security testing in traditional software
+security -- scanning for vulnerabilities before deployment, not triaging exploits
+after they are used. Chapter 8 Section 8.15 builds this pipeline; Section 8.1
+establishes why it must be proactive in the first place.</p>
+<h3 class="sh2">Part 6 Detection Timescale Reference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection Timescale Reference: What Each Control Catches and When</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Detection timescale is the operational constraint that most directly differentiates
+inference-time and training-time control architectures. A complete AI security
+programme deploys controls across the full timescale spectrum -- but understanding
+the spectrum is what makes the investment placement rational.
+
+At the sub-100-millisecond timescale, controls operate on individual requests.
+These are the Chapter 6 and 7 classifiers: injection detection, jailbreak detection,
+output filtering for sensitive data. They run synchronously in the request path.
+They catch inference-time attacks before the model responds. They do not catch
+training-time attacks at all -- the attack has already occurred before the
+classifier observes its first request.
+
+At the minute-to-hour timescale, controls operate on sessions and short-window
+aggregates. These are behavioural analysis controls: rate-based detection of
+API abuse, multi-turn injection detection via conversation trajectory analysis,
+anomalous usage patterns indicating model extraction attempts. These controls
+bridge inference-time and training-time in one specific sense: they can detect
+training data extraction attempts (Chapter 9 territory) by observing patterns
+in query streams. They do not detect poisoning directly.
+
+At the hour-to-day timescale, controls operate on training artifacts. This is
+where Chapter 8 detection lives. Dataset auditing pipelines scan incoming
+training data for anomalies. Activation-level auditing runs spectral signatures
+and clustering analyses on trained models against validation data. Trigger
+scanning tests candidate models for known backdoor patterns. These controls
+run in batch mode, produce audit reports, and gate model releases. They catch
+training-time attacks that passed upstream controls.
+
+At the day-to-week timescale, controls operate on supply chain and provenance.
+Model artifact scanning (pickle exploits, safetensors validation, model card
+linting) runs against new model downloads. Adapter integrity verification runs
+against new adapters before merging. Dataset provenance audits verify SBOM
+claims against actual content. These controls catch rung-4 attacks -- malicious
+models, poisoned adapters, typosquatted packages -- before they are incorporated
+into training pipelines.
+
+At the week-to-month timescale, controls operate on foundation model selection
+and behavioural drift monitoring. Periodic behavioural regression tests verify
+that deployed models continue to refuse known harmful requests, respond
+consistently on canonical benchmarks, and exhibit expected characteristics.
+Drift against baselines indicates either model degradation (benign causes) or
+possible post-deployment compromise via adapter swap or similar rung-4 attacks.
+
+The full control portfolio covers all five timescales. An AI security programme
+that operates only at the sub-100-millisecond timescale is blind to every
+training-time attack family in Chapter 8. An organisation that deploys the
+Chapter 6 and 7 classifiers but does not audit training data, scan model
+artifacts, or verify adapter provenance has covered approximately one rung
+of the five-rung adversary access ladder. The blast radius asymmetry means
+the uncovered rungs represent the majority of the actual risk exposure.</p>
+<h3 class="sh2">Part 7 Owasp Llm03 Scope Analysis</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">OWASP LLM03 Scope: What the Framework Covers and What It Understates</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">OWASP LLM03 (Training Data Poisoning) is one of ten framework items in the
+OWASP LLM Top 10. As a framework item, it performs the function of framework
+items generally -- it raises awareness, provides a common vocabulary for risk
+communication, and anchors compliance conversations. As a technical reference,
+it understates the scope of the underlying technique space by a significant
+margin.
+
+The framework item, as written, covers the case of poisoning training data to
+influence model behaviour. This is the primary case and the correct starting
+point. What the framework does not make explicit -- and what practitioners
+therefore frequently miss -- is the breadth of what &#x27;training data&#x27; encompasses
+in modern LLM development. The training process for a deployed LLM typically
+involves four stages: pre-training on web-scale corpora, supervised fine-tuning
+on curated instruction-response pairs, preference learning via RLHF or RLAIF,
+and task-specific fine-tuning for deployment contexts. Each of these stages
+consumes different data at different scales, and each is independently
+poisonable. The framework item addresses this implicitly but does not map the
+stages; Chapter 8 maps them explicitly across Sections 8.7, 8.8, and 8.9.
+
+The framework item also addresses data poisoning but not the closely related
+technique of model poisoning -- the case where the attacker delivers a poisoned
+model artifact directly rather than poisoning data that is used to train a model.
+From OWASP&#x27;s framework-item perspective, this arguably falls under LLM05 (Supply
+Chain Vulnerabilities) rather than LLM03. From an ATLAS perspective, this is
+AML.T0018.000 (Poison ML Model). From a practitioner perspective, this is a technical
+taxonomy distinction that does not change the defensive architecture -- the
+same dataset auditor, artifact scanner, and behavioural diff tester catch both
+data-layer and model-layer poisoning, regardless of which OWASP framework item
+they are mapped to. Chapter 8 treats both classes together for this reason.
+
+The framework item does not explicitly address backdoor attacks as a distinct
+sub-class, though they are a primary mechanism by which training data poisoning
+is operationalised in the wild. From an ATLAS perspective, this is AML.T0018
+(Backdoor ML Model), which is a separate technique from AML.T0020 (Poison
+Training Data) specifically because the defensive controls differ -- backdoor
+detection requires trigger scanning and activation analysis primitives that
+are not needed for general data poisoning. Chapter 8 Section 8.5 treats
+backdoors as a distinct sub-class for this reason.
+
+Adapter-based attacks, federated learning poisoning, and RLHF preference
+contamination are absent from the OWASP LLM03 framework item as currently
+written. They are present in the ATLAS taxonomy at varying levels of specificity.
+Chapter 8 Sections 8.8, 8.9, and 8.14 treat them explicitly because they
+represent the majority of the documented training-time attack surface in 2024-
+2026 production deployments -- they are the attacks practitioners need detection
+coverage for, regardless of whether the framework item enumerates them.
+
+The practical implication is that OWASP LLM03, as a framework item, is a
+necessary but insufficient reference. It establishes the existence of the
+training-time threat class and provides a label that regulators, auditors,
+and executives recognise. It does not provide the technical taxonomy needed
+to architect detection coverage. For that, the ATLAS technique space (AML.T0020,
+AML.T0018, AML.T0031, plus supporting techniques in AML.T0019 data perturbation
+and AML.T0043 ML model inference-time attacks) is the operational reference.
+Chapter 8 uses OWASP LLM03 for communication and ATLAS for implementation.</p>
+<h3 class="sh2">Part 8 Why Training Time Is Neglected</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why Training-Time Attacks Are the Most Neglected Attack Surface</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A consistent pattern across organisations beginning AI security programmes is
+that inference-time controls get built first, training-time controls get deferred,
+and the deferral extends indefinitely until an incident forces the issue. The
+pattern has several causes, and understanding them is useful for positioning
+training-time security investment against the pressures that typically deprioritise
+it.
+
+Inference-time attacks are visible. Every prompt injection attempt leaves traces
+in API logs, whether it succeeds or fails. Every jailbreak produces observable
+outputs. Every API abuse pattern manifests in rate-limiting telemetry. The
+Chapter 6 and 7 detectors are justified by the continuous pressure of these
+observable events. Training-time attacks are invisible by design. A successful
+backdoor produces no anomalous activity until its trigger fires. A clean-label
+poisoning leaves the training data looking entirely normal and the trained model
+passing standard evaluation. The only way to see training-time attacks is to
+go looking for them. Organisations that do not have the tooling to look, do not
+see, and do not budget for what they do not see.
+
+Inference-time controls integrate into existing security infrastructure. An API
+gateway classifier is architecturally similar to a WAF. It operates on the same
+HTTP traffic, fits into the same deployment pattern, and produces the same kind
+of alerts for the same kind of SOC. Training-time controls are architecturally
+foreign to traditional security operations. They are batch jobs in CI/CD
+pipelines. They produce artifacts rather than alerts. They gate releases rather
+than requests. The skills required overlap with data engineering and ML engineering
+more than with traditional SOC operations. Organisations with mature traditional
+security programmes can deploy Chapter 6 and 7 controls as extensions of what
+they already do. Deploying Chapter 8 controls requires new organisational
+capability, often new hires, and always new workflows.
+
+Compliance pressure has not yet caught up. Most AI regulatory frameworks in
+force as of early 2026 reference training data provenance and documentation but
+do not mandate specific detection controls for training-time attacks. The EU
+AI Act is the partial exception -- its documentation requirements for high-risk
+AI systems effectively mandate dataset SBOM discipline, which is the upstream
+half of training-time defence. Enforcement of these provisions is still ramping.
+Organisations optimising for compliance minimums rather than threat-model coverage
+therefore underinvest in training-time controls relative to their actual risk
+exposure. This will change over the 2026-2028 window as enforcement matures;
+Chapter 8 is positioned to prepare organisations for that shift.
+
+Research visibility has been asymmetric. Prompt injection and jailbreaking have
+received sustained academic attention, popular press coverage, and adversarial
+community attention, generating a steady flow of observable attack examples that
+justify detection investment. Training-time attacks have received substantial
+academic attention but less popular visibility -- the attacks are harder to
+demonstrate in a tweet, harder to reproduce in a CTF challenge, and harder to
+attribute when they do occur. The result is that practitioner awareness lags
+the research state of the art by a larger margin for training-time attacks than
+for inference-time attacks. Chapter 8 aims to close this gap by making the
+attacks reproducible and the defences deployable for practitioners who have
+mastered Chapters 6 and 7.
+
+The cumulative effect of these factors is that training-time security is the
+most systematically underinvested area of AI security programmes as of the
+chapter&#x27;s writing. The inverse implication is that it is the highest-leverage
+investment area for organisations that want to move ahead of the compliance-
+minimum curve, before either the regulatory mandate arrives or the first high-
+profile training-time incident reshapes the industry&#x27;s attention.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Comparison Matrix Training Vs Inference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Threat Model Comparison Matrix: Training-Time vs Inference-Time Across Eight Dimensions</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">This matrix is the one-page reference for distinguishing which threat model a
+given attack belongs to and therefore which defensive architecture applies.
+Use it in threat modelling sessions when scoping AI security programme investment
+across the full attack surface.</p>
+<h3 class="sh3">Dimensions</h3>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">When adversary operates</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">At runtime, during active user session</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Pre-runtime, during data collection, training, or artifact distribution</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Detection runs synchronously in request path (inference) vs asynchronously in CI/CD (training)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">What adversary controls</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">User input text, retrieved context (indirect), conversation history (multi-turn)</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Training samples, preference pairs, adapter weights, pre-trained model artifacts, gradient updates</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Defence inspects input data (inference) vs defence inspects artifacts (training)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">Persistence of effect</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">Scoped to one conversation or session; next request arrives against unperturbed model</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Persistent in model weights; affects every subsequent inference until retrain or replacement</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Per-request FPR calibration (inference) vs per-release audit coverage (training)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">Detection timescale</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">Sub-100ms P99 for synchronous classification</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Hours-to-weeks for batch audits and provenance verification</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Lightweight real-time classifiers (inference) vs heavy offline analysis pipelines (training)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">Detection architecture location</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">API gateway, request path, serving layer</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">CI/CD pipelines, model registry, dataset intake stages</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Gateway integration (inference) vs pipeline integration (training)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">Latency budget</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">Tens of milliseconds; user-facing, binding</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Hours to days per audit; release-cycle bounded, not user-facing</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Distilled classifiers and engineered features (inference) vs full-precision analysis (training)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">Blast radius per successful attack</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">One conversation, one user, one interaction</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Every future inference against poisoned model across deployment lifetime</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Per-incident severity is bounded (inference) vs per-incident severity scales with deployment volume (training)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">Adversary economic model</p>
+<h4 class="sh3">Inference Time</h4>
+<p class="prose">Linear cost; each attack attempt incurs cost; return is bounded per attempt</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Amortised cost; one successful attack covers millions of future inferences; return scales with deployment</p>
+<h4 class="sh3">Architectural Consequence</h4>
+<p class="prose">Expected-value threshold for detection investment is higher per-incident for training attacks, justifying heavier upfront investment</p>
+<h3 class="sh2">Attacker Access Ladder Reference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Attacker Access Ladder: Five Rungs from End User to Pre-Training Participant</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Use this ladder to position any adversary scenario in the threat model. The
+rung determines which attack families are accessible, which controls apply,
+and which detection architecture catches the resulting attacks.</p>
+<h3 class="sh3">Rungs</h3>
+<h4 class="sh3">Rung</h4>
+<p class="prose">1</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">End user</p>
+<h4 class="sh3">Access</h4>
+<p class="prose">Runtime input only</p>
+<h4 class="sh3">Attack Families Enabled</h4>
+<ul class="blist"><li>Prompt injection (direct, indirect, multi-turn)</li><li>Jailbreak (social engineering, token-level, many-shot)</li><li>API abuse (rate-based, extraction probing)</li></ul>
+<h4 class="sh3">Defences Applicable</h4>
+<ul class="blist"><li>Chapter 6 Section 6.17 injection classifier</li><li>Chapter 7 Section 7.14 jailbreak ensemble</li><li>Output filtering and PII scanning (Chapter 11 preview)</li></ul>
+<h4 class="sh3">Typical Adversaries</h4>
+<p class="prose">External users, compromised accounts, automated abuse tools</p>
+<h4 class="sh3">Documented Incidents</h4>
+<p class="prose">Bing Chat Sydney, GitHub Copilot indirect injection, GPT plugin confused deputy</p>
+<h4 class="sh3">Rung</h4>
+<p class="prose">2</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Dataset contributor</p>
+<h4 class="sh3">Access</h4>
+<p class="prose">Contribute content to training corpora</p>
+<h4 class="sh3">Attack Families Enabled</h4>
+<ul class="blist"><li>Public corpus contamination (Common Crawl, Wikipedia, GitHub)</li><li>Instruction-tuning dataset poisoning</li><li>RLHF preference pair contamination (annotator access)</li><li>Clean-label data poisoning at the submission layer</li></ul>
+<h4 class="sh3">Defences Applicable</h4>
+<ul class="blist"><li>Section 8.11 dataset provenance auditing</li><li>Section 8.7 instruction-tuning consistency auditing</li><li>Section 8.8 preference annotation anomaly detection</li><li>Section 8.13 robust training and DP-SGD</li></ul>
+<h4 class="sh3">Typical Adversaries</h4>
+<p class="prose">Public contributors, crowdworkers, researchers with dataset influence</p>
+<h4 class="sh3">Documented Incidents</h4>
+<p class="prose">Prospective; research demonstrations published, no public production incidents attributed yet</p>
+<h4 class="sh3">Rung</h4>
+<p class="prose">3</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Pipeline operator</p>
+<h4 class="sh3">Access</h4>
+<p class="prose">Training pipeline code, hyperparameters, preprocessing, model initialisation</p>
+<h4 class="sh3">Attack Families Enabled</h4>
+<ul class="blist"><li>Training objective manipulation</li><li>Gradient manipulation during training loops</li><li>Targeted backdoor insertion via training code</li><li>Federated learning gradient poisoning (in distributed pipelines)</li></ul>
+<h4 class="sh3">Defences Applicable</h4>
+<ul class="blist"><li>Section 8.12 activation-level auditing of trained models</li><li>Section 8.14 gradient anomaly detection in federated settings</li><li>Section 8.15 behavioural diff testing before release</li><li>Standard infrastructure controls (IAM, code review, signed builds)</li></ul>
+<h4 class="sh3">Typical Adversaries</h4>
+<p class="prose">Insiders, compromised CI/CD, third-party training service providers</p>
+<h4 class="sh3">Documented Incidents</h4>
+<p class="prose">Rare public attribution; threat model overlaps with general infrastructure compromise</p>
+<h4 class="sh3">Rung</h4>
+<p class="prose">4</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Model publisher</p>
+<h4 class="sh3">Access</h4>
+<p class="prose">Distribute models or adapters to downstream consumers</p>
+<h4 class="sh3">Attack Families Enabled</h4>
+<ul class="blist"><li>Malicious HuggingFace models (pickle exploits, backdoored weights)</li><li>Poisoned LoRA adapters</li><li>Typosquatting and naming attacks</li><li>Model card deception</li></ul>
+<h4 class="sh3">Defences Applicable</h4>
+<ul class="blist"><li>Section 8.9 LoRA adapter integrity verification</li><li>Section 8.10 HuggingFace artifact scanning</li><li>Chapter 5 Section 5.9 supply chain checklist (operationalised in Section 8.15)</li></ul>
+<h4 class="sh3">Typical Adversaries</h4>
+<p class="prose">Malicious package publishers, compromised maintainer accounts, typosquatting attackers</p>
+<h4 class="sh3">Documented Incidents</h4>
+<p class="prose">Multiple researcher-demonstrated pickle exploits on HuggingFace 2023-2024; ongoing; see Section 8.10 catalog</p>
+<h4 class="sh3">Rung</h4>
+<p class="prose">5</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Pre-training participant</p>
+<h4 class="sh3">Access</h4>
+<p class="prose">Foundation model pre-training process</p>
+<h4 class="sh3">Attack Families Enabled</h4>
+<ul class="blist"><li>Foundation-level backdoors propagating across derived models</li><li>Pre-training corpus contamination at selection-level</li><li>Alignment-layer manipulation at the RLHF infrastructure level</li></ul>
+<h4 class="sh3">Defences Applicable</h4>
+<ul class="blist"><li>Infrastructure-level controls (extremely limited access, strong personnel vetting)</li><li>Behavioural regression testing against foundation model outputs</li><li>Downstream-derived model auditing (partial coverage)</li></ul>
+<h4 class="sh3">Typical Adversaries</h4>
+<p class="prose">Nation-state actors, insider threats at frontier labs</p>
+<h4 class="sh3">Documented Incidents</h4>
+<p class="prose">None publicly attributed in production frontier model training; prospective threat with high theoretical blast radius</p>
+<h3 class="sh2">Owasp Atlas Mapping</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">OWASP LLM03 ↔ ATLAS Taxonomy Cross-Reference</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">OWASP LLM03 is the framework label; ATLAS provides the operational technique
+taxonomy. Use OWASP for stakeholder communication, ATLAS for detection engineering.</p>
+<h3 class="sh3">Mappings</h3>
+<h4 class="sh3">Owasp</h4>
+<p class="prose">LLM03 - Training Data Poisoning (framework item)</p>
+<h4 class="sh3">Atlas Primary</h4>
+<p class="prose">AML.T0020 - Poison Training Data</p>
+<h4 class="sh3">Atlas Related</h4>
+<ul class="blist"><li>AML.T0019 - Publish Poisoned Datasets</li></ul>
+<h4 class="sh3">Chapter 8 Sections</h4>
+<p class="prose">Sections 8.3, 8.4, 8.7, 8.8, 8.11</p>
+<h4 class="sh3">Notes</h4>
+<p class="prose">The canonical framework-to-technique mapping. Covers data-level poisoning at training time.</p>
+<h4 class="sh3">Owasp</h4>
+<p class="prose">LLM03 (extended) - Backdoor installation via training</p>
+<h4 class="sh3">Atlas Primary</h4>
+<p class="prose">AML.T0018 - Backdoor ML Model</p>
+<h4 class="sh3">Atlas Related</h4>
+<ul class="blist"><li>AML.T0020 - Poison Training Data (when delivered via poisoned samples)</li></ul>
+<h4 class="sh3">Chapter 8 Sections</h4>
+<p class="prose">Sections 8.5, 8.6, 8.9</p>
+<h4 class="sh3">Notes</h4>
+<p class="prose">Backdoors are framework-adjacent to LLM03 but distinct in ATLAS because detection primitives differ. Section 8.12 detection primitives.</p>
+<h4 class="sh3">Owasp</h4>
+<p class="prose">LLM05 (overlap) - Supply chain delivery of poisoned models</p>
+<h4 class="sh3">Atlas Primary</h4>
+<p class="prose">AML.T0018.000 - Poison ML Model</p>
+<h4 class="sh3">Atlas Related</h4>
+<ul class="blist"><li>AML.T0010 - ML Supply Chain Compromise</li></ul>
+<h4 class="sh3">Chapter 8 Sections</h4>
+<p class="prose">Sections 8.9, 8.10, 8.15</p>
+<h4 class="sh3">Notes</h4>
+<p class="prose">Framework-level this is LLM05; from Chapter 8 perspective it is poisoning delivery. Section 8.15 auditing pipeline covers both.</p>
+<h4 class="sh3">Owasp</h4>
+<p class="prose">LLM03 (extended) - Gradient-level poisoning in federated settings</p>
+<h4 class="sh3">Atlas Primary</h4>
+<p class="prose">AML.T0018 - Backdoor ML Model (model-replacement variant)</p>
+<h4 class="sh3">Atlas Related</h4>
+<ul class="blist"><li>AML.T0020 - Poison Training Data (gradient as data analogue)</li></ul>
+<h4 class="sh3">Chapter 8 Sections</h4>
+<p class="prose">Section 8.14</p>
+<h4 class="sh3">Notes</h4>
+<p class="prose">Federated learning is a distinct deployment model; ATLAS techniques apply with adapted semantics.</p>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1 Comparison Matrix</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">Eight-dimension threat model comparison matrix</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">One-page reference distinguishing training-time from inference-time attacks</p>
+<h3 class="sh3">Format</h3>
+<p class="prose">Markdown table with eight rows (dimensions) and three columns (inference-time, training-time, architectural consequence)</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Threat modelling sessions, security programme scoping, executive briefings</p>
+<h3 class="sh3">Source</h3>
+<p class="prose">reference_materials.comparison_matrix_training_vs_inference in this section</p>
+<h3 class="sh3">Delivery</h3>
+<p class="prose">Rendered as Markdown for inclusion in chapter; referenced throughout Chapter 8 sections</p>
+<h3 class="sh2">Deliverable 2 Access Ladder</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">Five-rung attacker access ladder reference</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Position any adversary scenario on the capability ladder to determine applicable attack families and defences</p>
+<h3 class="sh3">Format</h3>
+<p class="prose">Structured list with rung number, name, access, enabled families, applicable defences, typical adversaries, documented incidents</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Threat modelling for specific deployments; gap analysis against deployed controls</p>
+<h3 class="sh3">Source</h3>
+<p class="prose">reference_materials.attacker_access_ladder_reference in this section</p>
+<h3 class="sh3">Delivery</h3>
+<p class="prose">Rendered as reference card; feeds Section 8.15 pipeline coverage decisions</p>
+<h3 class="sh2">Deliverable 3 Blast Radius Calculator</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">blast_radius_calculator.py -- tool for quantifying amortised attack cost</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Convert deployment volume assumptions into blast-radius estimates for training-time attacks, for investment justification</p>
+<h3 class="sh3">Inputs</h3>
+<ul class="blist"><li>Average inferences per day (int)</li><li>Expected deployment window between poisoning and detection (days)</li><li>Trigger activation rate for targeted attacks (float between 0 and 1)</li></ul>
+<h3 class="sh3">Outputs</h3>
+<ul class="blist"><li>Total affected inferences</li><li>Total affected users (given activation rate)</li><li>Amortised attacker cost per affected user (given attacker cost input)</li><li>Comparison to equivalent inference-time attack attempt count required for same blast radius</li></ul>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Simple Python script; single file in /code/utilities/blast_radius_calculator.py.
+Uses single quotes throughout per book convention. Pure-stdlib, no dependencies.
+Outputs to stdout in both human-readable and JSON formats (CLI flag controlled).</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Generate per-deployment blast radius estimate; include in threat model documents</p>
+<h3 class="sh2">Deliverable 4 Detection Timescale Reference</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">Detection timescale reference card</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Map controls to timescales so investment decisions reflect full coverage requirements</p>
+<h3 class="sh3">Format</h3>
+<p class="prose">Five-tier reference (sub-100ms, minutes-hours, hours-days, days-weeks, weeks-months) with control class, chapter reference, and catch-miss mapping per tier</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Investment portfolio analysis for AI security programmes; gap identification</p>
+<h3 class="sh3">Source</h3>
+<p class="prose">part_6_detection_timescale_reference prose content</p>
+<h3 class="sh3">Delivery</h3>
+<p class="prose">Rendered as Markdown reference card</p>
+<h3 class="sh2">Deliverable 5 Owasp Scope Analysis</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">OWASP LLM03 scope gap analysis</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Document what OWASP LLM03 framework item covers and what it understates, for stakeholders who use OWASP as primary reference</p>
+<h3 class="sh3">Format</h3>
+<p class="prose">Markdown document with framework-item scope, ATLAS technique mapping, and explicit gap enumeration</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Briefings for stakeholders whose security programmes anchor on OWASP; bridge to ATLAS-based implementation</p>
+<h3 class="sh3">Source</h3>
+<p class="prose">part_7_owasp_llm03_scope_analysis and reference_materials.owasp_atlas_mapping</p>
+<h3 class="sh3">Delivery</h3>
+<p class="prose">Rendered as Markdown document</p>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1 Retrofitting Inference Architecture</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Attempting to extend the Chapter 6/7 API gateway classifier architecture to cover training-time threats</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Organisations that have successfully deployed inference-time detectors assume
+the same pattern extends. It seems reasonable -- if a classifier catches malicious
+runtime inputs, surely a classifier can catch malicious training inputs. The
+fallacy is that the detection signals are fundamentally different: inference-time
+classifiers see one request at a time and decide in milliseconds; training-time
+detection needs to analyse entire datasets, activation patterns across thousands
+of samples, or model weight deltas between versions.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A training-data classifier built on the API gateway pattern will either time out, produce unusable FPR, or miss clean-label and backdoor attacks entirely -- the attacks that require feature-space or activation-space analysis</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Accept that training-time defence is offline batch analysis, and build the auditing pipeline in CI/CD infrastructure (Section 8.15), not in the serving layer</p>
+<h3 class="sh2">Mistake 2 Owasp As Sole Reference</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Scoping training-time defence coverage by OWASP LLM03 framework item alone</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">OWASP is the widely-recognised AI security framework for risk communication.
+Programme scoping documents that enumerate OWASP framework items feel comprehensive.
+The framework item for LLM03 is one paragraph; it fits in a checklist. Teams
+then treat &quot;we have an LLM03 control&quot; as equivalent to &quot;we cover training-time
+threats&quot;, which is not true.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Coverage gaps across backdoor attacks (AML.T0018), model poisoning (AML.T0031), RLHF preference contamination, LoRA adapter attacks, and federated learning poisoning -- all of which are technically distinct from the single LLM03 framework item</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Use OWASP for stakeholder communication and ATLAS for implementation taxonomy. Every Chapter 8 control should map to specific ATLAS techniques, not just to LLM03</p>
+<h3 class="sh2">Mistake 3 Deferring Until Incident</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Deferring training-time security investment until a training-time incident is observed</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Inference-time attacks generate continuous telemetry -- the investment is justified
+by visible pressure. Training-time attacks produce no telemetry until the first
+triggered incident, which may never happen or may happen at catastrophic scale.
+Programme prioritisation based on observed pressure systematically under-weights
+training-time threats.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A production deployment with nine-figure blast-radius exposure that is invisible until the first incident. By the time the incident is observed, its effect may have already propagated to tens of thousands of users and the remediation requires model retraining, not patching</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Justify training-time investment on expected-value calculation using the blast-radius asymmetry, not on incident history. The investment is preventive, like SAST in traditional security</p>
+<h3 class="sh2">Mistake 4 Ignoring Rung 5 For Fine Tuners</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Organisations fine-tuning on foundation models assuming they are isolated from rung-5 (pre-training participant) threats</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Fine-tuners do not conduct pre-training themselves; they inherit foundation model
+properties. The assumption is that pre-training security is the foundation model
+vendor&#x27;&#x27;s problem, and fine-tuners only need to worry about the fine-tuning process
+itself. The fallacy is that foundation model properties -- including any latent
+poisoning -- propagate through fine-tuning to the derived model. If the foundation
+is backdoored, the fine-tuned derivative may be as well.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Detection coverage that assumes clean foundation inputs. Backdoors inherited from the foundation pass the fine-tuning process undetected because the fine-tuner has no baseline against which to measure</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Include behavioural regression testing against foundation models at adoption time, and maintain regression baselines across fine-tuning cycles. Section 8.15 pipeline covers this explicitly</p>
+<h3 class="sh2">Mistake 5 Labelling Everything As Poisoning</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Conflating training-time attacks, supply chain attacks, and model-theft attacks under a single &quot;training security&quot; label</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The distinction between poisoning (Chapter 8), supply chain delivery (Chapter 5
+Section 5.9 and Chapter 8 Section 8.10), and model extraction (Chapter 9) is
+subtle at the framework level but important operationally. Treating them as a
+single category produces controls that partially cover all three and fully cover
+none.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Detection programmes that produce reassuring audit reports across generic &quot;training security&quot; categories but have uncovered gaps at the technique level -- specifically at the boundary cases where one technique class enables another</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Maintain technique-level taxonomy (ATLAS sub-techniques) throughout the programme. Each Chapter 8 section maps to specific ATLAS techniques for exactly this reason</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Training-time attacks operate before runtime, affect every subsequent inference,
+persist in model weights, and are detected by offline auditing of artifacts rather
+than real-time classification of requests. The Ch6/Ch7 API gateway pattern does
+not transfer. The adversary access ladder spans five rungs from end-user to pre-
+training participant, each enabling different attack families. The blast radius
+asymmetry -- six to nine orders of magnitude between inference-time and training-
+time effect -- justifies proactive defensive investment even in the absence of
+observed incidents. OWASP LLM03 anchors stakeholder communication; ATLAS AML.T0020,
+AML.T0018, and AML.T0031 anchor detection engineering. The sections that follow
+build the attack taxonomy (Section 8.2), the attack families (Sections 8.3-8.11),
+the detection primitives (Section 8.12), the defensive training techniques (Section
+8.13), and the production auditing pipeline (Section 8.15) that together constitute
+OWASP LLM03 complete coverage.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Training-time and inference-time are separate threat models with non-overlapping defensive architectures</li><li>Adversary access level (five-rung ladder) determines which attack families are reachable and which controls apply</li><li>Blast radius asymmetry makes training-time attacks economically rational for adversaries at scales where inference-time attacks are not</li><li>Detection is offline batch auditing, not real-time classification; the architecture is CI/CD pipelines and model registries, not API gateways</li><li>OWASP LLM03 framework item understates the technique space; ATLAS provides the operational taxonomy</li><li>Proactive investment is the only effective posture; reactive investment is unavailable because training-time attacks are invisible until triggered</li></ul>
+<h2 class="sh1">Preview Section 02</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Poisoning Taxonomy: Targeted vs Untargeted, Availability vs Integrity</p>
+<h3 class="sh2">Connection</h3>
+<p class="prose">Section 8.1 established that training-time attacks are a coherent threat class.
+Section 8.2 subdivides that class along two orthogonal axes -- attack goal
+(availability vs integrity) and attack scope (targeted vs untargeted) -- producing
+a 2x2 taxonomy that organises every attack in Sections 8.3 through 8.11. The
+budget-effectiveness-detectability tradeoff frontier introduced in Section 8.2
+is the economic model adversaries optimise against, and the defensive-priority
+model defenders optimise against. Each of Sections 8.3-8.9 positions its attack
+family on the taxonomy; each of Sections 8.12-8.13 positions its defence against
+specific taxonomy quadrants.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Section File</h3>
+<p class="prose">section_08_01_training_vs_inference.yaml</p>
+<h3 class="sh2">Chapter</h3>
+<p class="prose">8</p>
+<h3 class="sh2">Section</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Author</h3>
+<p class="prose">Raghav Dinesh</p>
+<h3 class="sh2">Created</h3>
+<p class="prose">2026-04-22</p>
+<h3 class="sh2">Book Version</h3>
+<p class="prose">1.0</p>
+<h3 class="sh2">Estimated Pages</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Estimated Word Count</h3>
+<p class="prose">7200</p>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 5 Section 5.4: OWASP LLM03 framework item (extended here)</li><li>Chapter 5 Section 5.7-5.8: ATLAS taxonomy (AML.T0020/T0018/T0031 introduced here)</li><li>Chapter 5 Section 5.9: AI Supply Chain Security (operationalised across Ch8, specifically Section 8.15)</li><li>Chapter 6 Section 6.17: production injection classifier (contrasted here)</li><li>Chapter 7 Section 7.14: jailbreak detection ensemble (contrasted here)</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 8.2: poisoning taxonomy (immediate next section)</li><li>Section 8.7: instruction-tuning poisoning as stage-specific attack on rung 2/3</li><li>Section 8.9: LoRA adapter attacks as rung-4 threat family</li><li>Section 8.10: HuggingFace pickle exploits as rung-4 canonical attack</li><li>Section 8.14: federated learning gradient poisoning as rung-3 technique</li><li>Section 8.15: production auditing pipeline (architectural answer to training-time threat model)</li><li>Section 8.16: chapter summary (synthesis referencing Section 8.1 threat model throughout)</li></ul>
+</article>

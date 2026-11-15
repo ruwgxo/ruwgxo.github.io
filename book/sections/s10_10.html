@@ -1,0 +1,1222 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 10 · Section 10 · ~6 pages</div>
+<h1>Real-World Incident: Adversarial Examples in Production</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Four documented adversarial example incidents across physical vision, facial recognition, content moderation, and malware detection share one root cause: classifiers deployed without adversarial robustness controls.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Section 10.10 mirrors the role Section 9.9 played in Chapter 9: it grounds the attack
+catalogue in documented production reality before the detection and defence sections build
+the controls that would have prevented each incident. The attacks in Sections 10.3-10.9 are
+not theoretical capabilities waiting for production adversaries to discover -- they are
+documented incidents that have already occurred against commercially deployed systems across
+four distinct security domains. The shared root cause across all four is the same: no
+adversarial input detection, no adversarial training, and no consistency checking. Every
+control built in Sections 10.11-10.15 is directly motivated by a specific gap in one of
+these documented incidents.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 10.10 is the bridge between the attack catalogue (Sections 10.3-10.9) and the
+defence architecture (Sections 10.11-10.15). It establishes that the threat is real before
+the defences are built. The detection opportunity mapping (deliverable 3) provides the
+direct link: for each incident, which Track 7 primitive would have fired.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Sections 10.3-10.9: the complete attack catalogue (each incident maps to one or more of these sections)</li><li>Section 10.8: physical adversarial patches (stop sign and glasses incidents)</li><li>Section 10.9: text adversarial attacks (content moderation incident)</li><li>Section 10.2: adversarial taxonomy (each incident occupies specific taxonomy cells)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">From Academic Papers to Production Systems</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The adversarial ML research field moved rapidly from demonstrating attacks in controlled
+settings (Szegedy et al. 2013, Goodfellow et al. 2014) to demonstrating attacks against
+production-grade deployed systems. The transition matters because it shifts the threat
+from &quot;this is possible in principle&quot; to &quot;this has already happened to systems like yours.&quot;
+
+Section 10.10 documents four incidents where adversarial example techniques from the
+academic literature were demonstrated against commercially deployed or commercially
+representative systems. The incidents span four security domains: physical vision systems
+(autonomous vehicle stop sign detection), biometric access control (facial recognition),
+content moderation (LLM and text safety classifiers), and classical malware detection
+(antivirus PE binary classifiers). The diversity of domains is itself the key lesson:
+adversarial ML is not a risk specific to large language models or to image classifiers --
+it applies wherever a learned classifier operates on inputs that an adversary controls.
+
+Each incident is analysed using the same four-category root cause framework: missing
+adversarial training, missing input-side detection, missing prediction consistency
+checking, and missing complementary non-ML controls. Across all four incidents, the
+same categories are absent. The controls built in Sections 10.11-10.15 directly address
+each root cause. The detection opportunity mapping in deliverable 3 of this section
+shows precisely which Track 7 primitive would have detected each incident, at what
+stage in the inference pipeline, and with what probability.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Incident 1: Stop Sign Attack Against Autonomous Vehicle Detectors</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Eykholt, Evtimov, Fernandes, Li, Rahmati, Xiao, Prakash, Kohno, and Song (2018)
+demonstrated in &quot;Robust Physical Perturbations in the Real World&quot; that black-and-white
+stickers placed on stop signs caused YOLO v2 and Faster RCNN detectors to misclassify
+stop signs as 45 mph speed limit signs at distances up to 30 metres under varied lighting
+and viewing angles. The attack used the Expectation over Transformation (EOT) optimisation
+introduced in Section 10.8.
+
+The attack mechanism: a stop sign with stickers covering approximately 2% of its visible
+surface caused YOLO misclassification rates of 100% in poster-board conditions and 84.8%
+in drive-by tests at posted speed. The stickers were camouflaged as graffiti -- visually
+inconspicuous to human drivers. No API access was required: the attack operated entirely
+in the physical environment before any digital processing.
+
+Root cause analysis. The deployed detectors had no adversarial training on patch-augmented
+images: the training distribution contained no examples of stop signs with adversarially
+optimised sticker patterns. There was no input-side anomaly detection for the camera
+pipeline: no mechanism to flag regions of the captured image with texture statistics
+inconsistent with natural sign surfaces. There was no multi-sensor redundancy: the system
+relied on a single optical camera without supplemental LIDAR or radar confirmation. There
+was no temporal consistency requirement: a sign that was classified inconsistently across
+multiple frames was not flagged.
+
+Detection opportunity: the patch detector from Section 10.8 computes texture anomaly scores
+for localised image regions. The sticker pattern has spatial frequency content inconsistent
+with the natural sign surface -- the anomaly score would flag the sticker region before the
+object classifier produces its output. Temporal consistency checking (the same sign should
+classify consistently across three consecutive frames) would reduce misclassification
+rate to near zero at the cost of one additional frame of latency.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Incident 2: Adversarial Glasses Bypassing Facial Recognition</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Sharif, Bhagavatula, Bauer, and Reiter (2016) demonstrated in &quot;Accessorize to a Crime:
+Real and Stealthy Attacks on State-of-the-Art Face Recognition&quot; that printed adversarial
+patterns on eyeglass frames could cause commercial face recognition systems to
+misidentify the wearer as a different target identity with 100% targeted attack success
+in lab conditions, degrading to 88% in physical wear conditions with lighting variation.
+
+The attack mechanism: the printed pattern on the glasses frames was optimised against a
+face recognition system using gradient descent on the classification loss. Wearing the
+printed glasses caused the system to output a target identity (an impersonation attack)
+or to fail to recognise the wearer (a dodging attack) without raising any liveness or
+anomaly alerts. The physical deployment required no API access: the glasses were worn
+in the normal access control scenario.
+
+Komkov and Petiushko (2021) extended this to hat-based adversarial patches against
+person re-identification models, demonstrating that the attack surface extends to any
+wearable item in the camera&#x27;&#x27;s field of view.
+
+Root cause analysis. The deployed system had no adversarial training on face images
+with adversarial patch accessories -- the training distribution contained real glasses
+frames and natural accessories, not EOT-optimised adversarial patterns. There was no
+spatial anomaly detection for the face region: no mechanism to flag glasses frames
+with unusual texture frequency content. There was no multi-modal verification:
+infrared or 3D depth cameras would be unaffected by optical adversarial patterns
+designed for RGB classifiers.
+
+Detection opportunity: the spatial anomaly detector from Section 10.8 applied to
+the glasses/accessories region of the face image would flag the adversarial pattern
+texture. A paired RGB + infrared capture where the face is classified consistently
+under both modalities would resist any attack optimised for a single spectral range.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Incident 3: Content Moderation Evasion via Adversarial Text</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Jain, Schwarzschild, Wen, Kagklis, Wang, Goldblum, and Goldstein (2023), and separately
+Zou, Wang, Kolter, and Fredrikson (2023), demonstrated universal adversarial suffixes that
+bypass LLM safety alignment and content moderation classifiers. Zou et al. found that
+fixed adversarial suffixes appended to harmful prompts caused aligned LLMs (GPT-4, Claude,
+Llama 2) to produce content that their safety training was designed to prevent. The
+suffixes were found via an automated optimisation process analogous to the universal
+trigger search in Section 10.9.
+
+The attack mechanism: an adversarial suffix of approximately 20 tokens, appended to a
+harmful user prompt, caused the model to begin its response with an affirmative pattern
+that bypassed the safety classifier&#x27;&#x27;s detection threshold. The suffix was transferable
+across models: a suffix found against one model transferred to others at significant
+rates, indicating shared structural vulnerabilities in safety classifier training.
+
+Earlier work by Garg and Ramakrishnan (2020) demonstrated that BERT-based hate speech
+and sentiment classifiers could be evaded at 70-88% rates using TextFooler-style
+synonym substitution, with adversarial examples that were rated as natural by human
+evaluators at 79% agreement rates.
+
+Root cause analysis. The safety classifiers in deployed LLMs had no adversarial training
+against suffix-based attacks: the RLHF safety training optimised against human red-team
+prompts and natural harmful content, not against gradient-optimised adversarial suffixes.
+There was no semantic consistency checking: the same request paraphrased without the
+adversarial suffix would be classified as harmful, but the system did not run consistency
+checks before responding. There was no per-request adversarial suffix detection.
+
+Detection opportunity: the semantic consistency check from Section 10.12 extended to
+text (back-translation or paraphrase with BERT) would catch adversarial suffix attacks --
+the harmful prompt without the suffix classifies differently from the harmful prompt with
+the suffix, and the check flags this inconsistency. Universal adversarial triggers that
+are removed or modified by paraphrase lose their adversarial property.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Incident 4: Adversarial Malware Evading Antivirus ML Classifiers</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Grosse, Papernot, Manoharan, Backes, and McDaniel (2017) demonstrated adversarial
+perturbations to Android malware feature vectors that caused an ML-based malware
+classifier to misclassify malicious applications as benign. The attack operated in
+feature space (modifying Android manifest features) under an L0 constraint: only
+features that could be added to the malware without removing its core malicious
+functionality were modified.
+
+Demetrio, Biggio, Lagorio, Roli, and Armando (2021) demonstrated the GAMMA attack
+against PE (Portable Executable) Windows binary classifiers: adversarial perturbations
+to PE sections (appending benign content to the overlay section, modifying import
+table entries) that caused MalConv and other gradient-based PE classifiers to produce
+benign classifications while preserving the binary&#x27;&#x27;s full malicious execution behaviour.
+The attack operated under a functionality-preserving L0 constraint -- only byte regions
+that do not affect execution were modified.
+
+Root cause analysis. The deployed antivirus ML classifiers had no adversarial training
+on functionality-preserving adversarial PE binaries: the training distribution was clean
+malware and benign software samples, not adversarially perturbed malware. There was no
+feature consistency checking: the same binary analysed with a static feature squeezer
+(feature normalisation, section stripping) would likely still be classified as malicious,
+but no such check was applied. There was no ensemble classification: agreement across
+multiple independent classifiers with different feature representations would reduce the
+adversarial example success rate.
+
+Detection opportunity: the feature squeezing analogue for structured data (normalise PE
+section content, strip overlay content, hash-normalise import table) would reduce the
+adversarial perturbation surface. Consistency checking across multiple PE classifiers
+with different feature representations (byte n-gram, API call sequence, control flow)
+catches adversarial perturbations that fool one feature representation but not others.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Root Cause Synthesis: The Four Missing Controls</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Across all four incidents, the root cause analysis produces the same four missing
+control categories. This convergence is not coincidental -- it reflects the fundamental
+structure of the adversarial ML defence problem.
+
+Missing control 1 -- Adversarial training: no incident system had been trained on
+adversarial examples. All four systems were trained on natural data distributions without
+adversarially augmented examples. Adversarial training (Section 10.15) directly addresses
+this gap: the inner training loop generates adversarial examples and the model is trained
+to classify them correctly, producing models with empirically higher robustness to the
+attack families represented in training.
+
+Missing control 2 -- Input-side adversarial detection: none of the four systems had a
+pre-inference stage that detected adversarial perturbations before the classifier saw the
+input. Feature squeezing (Section 10.11), patch localisation (Section 10.8), and Unicode
+anomaly detection (Section 10.9) are the input-side primitives. They operate before
+model inference and reduce the adversarial attack success rate independently of model
+robustness.
+
+Missing control 3 -- Prediction consistency checking: none of the four systems verified
+that the classifier&#x27;&#x27;s output was stable under small input variations (digital) or
+under paraphrase/back-translation (text). Consistency checking (Section 10.12) catches
+adversarial examples that are fragile -- those that exist near the decision boundary and
+lose their adversarial property under small input perturbation.
+
+Missing control 4 -- Non-ML complementary controls: three of the four incidents
+(all physical and malware) were exploited partly because the deployed system had no
+non-ML complementary control. Multi-sensor fusion (LIDAR + optical for autonomous
+vehicles), infrared imaging (facial recognition), and multi-classifier ensemble agreement
+(malware detection) would all have reduced incident success rates. The adversary optimised
+against a single classifier; a two-layer system with independent failure modes is
+significantly harder to attack simultaneously.</p>
+<h3 class="sh2">Part 7</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Operator Response Patterns and Production Lessons</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Operator responses to adversarial ML incidents have followed three patterns, with varying
+effectiveness.
+
+Model-only response: retrain the model on adversarial examples from the specific incident
+attack type. This is the most common first response and the least durable: the retrained
+model is more robust to the specific attack variant that was published, but an adversary
+who encounters the updated model will adapt to a different attack variant. The stop sign
+attack and adversarial glasses papers were followed by new adversarial examples that
+bypassed the improved models.
+
+Detection layer addition: add an input-side anomaly detector (texture analysis for
+physical patches, Unicode filtering for text attacks) as a pre-inference stage. This is
+more durable than model-only response because it operates independently of the model&#x27;&#x27;s
+decision boundary. Even if the adversary crafts a new attack variant, the detection layer
+does not need to be retrained for the specific attack -- it detects the structural
+properties (spatial texture anomaly, non-ASCII characters) that all variants share.
+
+Architecture change: replace single-sensor or single-classifier design with
+multi-sensor or multi-classifier ensemble. This is the most durable response because it
+changes the attack surface fundamentally: an adversary who optimised against one
+component must now optimise against multiple independent components simultaneously.
+The automotive industry&#x27;&#x27;s adoption of multi-sensor fusion (LIDAR + radar + camera)
+after the adversarial stop sign research is an example of this response.
+
+The production lesson: incident response should add detection layers and architecture
+controls, not only update models. Model updates address the specific attack; detection
+layers and architecture changes address the attack class. A pre-production adversarial
+robustness checklist (deliverable 5) that requires Track 7 detection coverage before
+deployment would have prevented all four incidents in this section.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Four Documented Adversarial Incidents: Summary</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Incident overview with domain, attack technique, documented system, attack success, and Chapter 10 section mapping</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Incident</li><li>Domain</li><li>Attack type</li><li>Documented system</li><li>Reported success</li><li>Ch10 section</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Stop sign attack</li><li>Autonomous vehicle</li><li>Physical patch (EOT)</li><li>YOLO v2, Faster RCNN</li><li>84.8% misclassification in drive-by</li><li>Section 10.8</li></ul>
+<ul class="blist"><li>Adversarial glasses</li><li>Facial recognition access control</li><li>Physical patch (targeted)</li><li>Commercial face recognition</li><li>88% targeted impersonation</li><li>Section 10.8</li></ul>
+<ul class="blist"><li>LLM safety evasion</li><li>Content moderation / LLM safety</li><li>Universal adversarial suffix (text)</li><li>GPT-4, Claude, Llama 2 (transferable)</li><li>&gt;90% bypass on tested models</li><li>Section 10.9</li></ul>
+<ul class="blist"><li>Malware PE evasion</li><li>Antivirus malware detection</li><li>Functionality-preserving L0 (PE bytes)</li><li>MalConv, gradient-based PE classifiers</li><li>&gt;60% evasion at matched epsilon</li><li>Section 10.3-10.5</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Root Cause Analysis: Four Missing Controls Across All Incidents</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Presence or absence of each control category in each incident deployment</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Missing control</li><li>Stop sign (Ch10.8)</li><li>Adv glasses (Ch10.8)</li><li>LLM safety (Ch10.9)</li><li>Malware PE (Ch10.3-5)</li><li>Defence section</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Adversarial training on attack family</li><li>Absent</li><li>Absent</li><li>Absent (RLHF only)</li><li>Absent</li><li>Section 10.15</li></ul>
+<ul class="blist"><li>Input-side adversarial detection</li><li>Absent</li><li>Absent</li><li>Absent</li><li>Absent</li><li>Section 10.11</li></ul>
+<ul class="blist"><li>Prediction consistency checking</li><li>Absent</li><li>Absent</li><li>Absent</li><li>Absent</li><li>Section 10.12</li></ul>
+<ul class="blist"><li>Non-ML complementary controls</li><li>Absent (single camera)</li><li>Absent (single RGB)</li><li>Partial (rate limiting)</li><li>Partial (signature AV)</li><li>Section 10.13</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection Opportunity Mapping: Track 7 Primitives vs Incidents</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Which Track 7 primitive would have detected each incident, at what stage, and with what estimated detection rate</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Track 7 primitive</li><li>Stop sign</li><li>Adv glasses</li><li>LLM safety</li><li>Malware PE</li><li>Stage</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Feature squeezing (Section 10.11)</li><li>Moderate (full-image squeezer limited for patch)</li><li>Moderate (patch region partially smoothed)</li><li>High (synonym substitution fragile)</li><li>Moderate (structured feature squeezing)</li><li>Pre-inference</li></ul>
+<ul class="blist"><li>Patch localisation / spatial anomaly (Section 10.8)</li><li>High (sticker texture anomaly flagged)</li><li>High (glasses frame texture anomaly)</li><li>N/A (text)</li><li>N/A (binary not image)</li><li>Pre-inference</li></ul>
+<ul class="blist"><li>Consistency checking (Section 10.12)</li><li>High (multi-frame temporal)</li><li>High (multi-angle capture)</li><li>High (paraphrase breaks adversarial suffix)</li><li>High (feature normalisation changes classification)</li><li>Post-inference</li></ul>
+<ul class="blist"><li>Adversarial classifier (Section 10.12)</li><li>Moderate (if trained on patched images)</li><li>Moderate (if trained on adversarial face images)</li><li>Moderate (if trained on adversarial text)</li><li>Moderate (if trained on adversarial PE features)</li><li>Post-inference</li></ul>
+<ul class="blist"><li>Unicode anomaly (Section 10.9)</li><li>N/A</li><li>N/A</li><li>High for homoglyph; Low for semantic subs</li><li>N/A</li><li>Pre-inference</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Incident Timeline</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">adversarial_incident_timeline.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Structured timeline of four documented adversarial incidents with attack metadata, documented success rates, and chapter cross-references; generates incident summary reports</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies.
+Incident data structured as dataclasses for programmatic access.
+Generates formatted timeline output for security documentation and briefings.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># adversarial_incident_timeline.py
+# Section 10.10: Adversarial Example Incident Timeline
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class AdversarialIncident:
+    incident_id: str
+    year: int
+    title: str
+    authors: str
+    reference: str
+    domain: str
+    attack_type: str
+    target_system: str
+    perturbation_constraint: str
+    api_required: bool
+    reported_success_rate: str
+    ch10_sections: List[str]
+    atlas_technique: str
+    root_causes: List[str]
+    track7_coverage: List[str]
+    operator_response: str
+    notes: str = &#x27;&#x27;
+
+
+INCIDENT_TIMELINE: List[AdversarialIncident] = [
+    AdversarialIncident(
+        incident_id=&#x27;INC-001&#x27;,
+        year=2016,
+        title=&#x27;Accessorize to a Crime: Adversarial Glasses Bypass Facial Recognition&#x27;,
+        authors=&#x27;Sharif, Bhagavatula, Bauer, Reiter&#x27;,
+        reference=&#x27;ACM CCS 2016&#x27;,
+        domain=&#x27;Biometric access control (facial recognition)&#x27;,
+        attack_type=&#x27;Physical adversarial patch (targeted misidentification)&#x27;,
+        target_system=&#x27;Commercial face recognition classifier (VGG-based)&#x27;,
+        perturbation_constraint=&#x27;Physical wearable (glasses frames); RGB optical only&#x27;,
+        api_required=False,
+        reported_success_rate=&#x27;88% targeted impersonation in physical conditions&#x27;,
+        ch10_sections=[&#x27;Section 10.8 (Physical Adversarial)&#x27;, &#x27;Section 10.3 (FGSM foundation)&#x27;],
+        atlas_technique=&#x27;AML.T0043 (Adversarial Patch)&#x27;,
+        root_causes=[
+            &#x27;No adversarial training on face images with adversarial accessories&#x27;,
+            &#x27;No spatial anomaly detection for face region&#x27;,
+            &#x27;No multi-spectral verification (IR + RGB agreement)&#x27;,
+            &#x27;No liveness detection as complementary control&#x27;,
+        ],
+        track7_coverage=[
+            &#x27;Patch localisation (Section 10.8): glasses frame texture anomaly flagged&#x27;,
+            &#x27;Consistency check (Section 10.12): multi-angle captures disagree&#x27;,
+        ],
+        operator_response=&#x27;Research disclosure; subsequent adversarial training work in academia; commercial adoption of IR liveness checks&#x27;,
+    ),
+    AdversarialIncident(
+        incident_id=&#x27;INC-002&#x27;,
+        year=2018,
+        title=&#x27;Robust Physical Perturbations in the Real World (Stop Sign Attack)&#x27;,
+        authors=&#x27;Eykholt, Evtimov, Fernandes, Li, Rahmati, Xiao, Prakash, Kohno, Song&#x27;,
+        reference=&#x27;CVPR 2018&#x27;,
+        domain=&#x27;Autonomous vehicle perception (traffic sign detection)&#x27;,
+        attack_type=&#x27;Physical adversarial patch with EOT (untargeted, then targeted)&#x27;,
+        target_system=&#x27;YOLO v2 and Faster RCNN traffic sign detectors&#x27;,
+        perturbation_constraint=&#x27;Physical stickers on stop sign surface; EOT across angles/lighting&#x27;,
+        api_required=False,
+        reported_success_rate=&#x27;84.8% misclassification in drive-by tests; 100% in static tests&#x27;,
+        ch10_sections=[&#x27;Section 10.8 (Physical Adversarial)&#x27;, &#x27;Section 10.8 (EOT)&#x27;],
+        atlas_technique=&#x27;AML.T0043 (Adversarial Patch)&#x27;,
+        root_causes=[
+            &#x27;No adversarial training on patch-augmented traffic sign images&#x27;,
+            &#x27;No patch localisation or spatial anomaly detection in camera pipeline&#x27;,
+            &#x27;No multi-sensor fusion (LIDAR / radar confirmation)&#x27;,
+            &#x27;No temporal consistency requirement across frames&#x27;,
+        ],
+        track7_coverage=[
+            &#x27;Patch localisation (Section 10.8): sticker texture anomaly detectable&#x27;,
+            &#x27;Temporal consistency: same sign inconsistently classified across frames&#x27;,
+        ],
+        operator_response=&#x27;Industry shift toward multi-sensor fusion; subsequent adversarial patch datasets released; ongoing NIST AV standards work&#x27;,
+    ),
+    AdversarialIncident(
+        incident_id=&#x27;INC-003&#x27;,
+        year=2023,
+        title=&#x27;Universal and Transferable Adversarial Attacks on Aligned LLMs&#x27;,
+        authors=&#x27;Zou, Wang, Kolter, Fredrikson&#x27;,
+        reference=&#x27;arXiv 2023 (GCG attack)&#x27;,
+        domain=&#x27;LLM safety alignment / content moderation&#x27;,
+        attack_type=&#x27;Universal adversarial suffix (automated; gradient-based)&#x27;,
+        target_system=&#x27;GPT-4, Claude, Llama 2, Vicuna safety classifiers&#x27;,
+        perturbation_constraint=&#x27;Discrete token suffix appended to harmful prompt&#x27;,
+        api_required=True,
+        reported_success_rate=&#x27;&gt;90% harmful content bypass on tested aligned models&#x27;,
+        ch10_sections=[&#x27;Section 10.9 (LLM Adversarial)&#x27;, &#x27;Section 10.9 (Universal Triggers)&#x27;],
+        atlas_technique=&#x27;AML.T0043 (Craft Adversarial Data) / AML.T0015 (Evade ML Model)&#x27;,
+        root_causes=[
+            &#x27;RLHF safety training did not include adversarial suffix attack variants&#x27;,
+            &#x27;No semantic consistency check before generation (paraphrase without suffix classifies harmful)&#x27;,
+            &#x27;No adversarial suffix detection layer in inference pipeline&#x27;,
+            &#x27;No per-request adversarial input classifier&#x27;,
+        ],
+        track7_coverage=[
+            &#x27;Semantic consistency (Section 10.12): suffix removal or paraphrase breaks adversarial property&#x27;,
+            &#x27;Adversarial text classifier (Section 10.12): if trained on suffix attack patterns&#x27;,
+        ],
+        operator_response=&#x27;Rapid model updates by all affected vendors; adversarial fine-tuning research accelerated; red-team requirements formalised in US EO on AI&#x27;,
+    ),
+    AdversarialIncident(
+        incident_id=&#x27;INC-004&#x27;,
+        year=2021,
+        title=&#x27;GAMMA: Generating Adversarial Malware Examples via Functionality-Preserving Perturbations&#x27;,
+        authors=&#x27;Demetrio, Biggio, Lagorio, Roli, Armando&#x27;,
+        reference=&#x27;IEEE TIFS 2021&#x27;,
+        domain=&#x27;Malware detection (antivirus PE binary classification)&#x27;,
+        attack_type=&#x27;Functionality-preserving L0 adversarial PE binary&#x27;,
+        target_system=&#x27;MalConv, gradient-based PE binary classifiers&#x27;,
+        perturbation_constraint=&#x27;L0 over modifiable PE bytes (overlay, padding, import table); execution preserved&#x27;,
+        api_required=False,
+        reported_success_rate=&#x27;&gt;60% evasion at matched epsilon; higher with query-based black-box&#x27;,
+        ch10_sections=[&#x27;Section 10.5 (C&amp;W L0)&#x27;, &#x27;Section 10.3 (FGSM)&#x27;, &#x27;Section 10.2 (Tabular/L0 cells)&#x27;],
+        atlas_technique=&#x27;AML.T0043 (Craft Adversarial Data)&#x27;,
+        root_causes=[
+            &#x27;No adversarial training on functionality-preserving adversarial PE samples&#x27;,
+            &#x27;No feature-level squeezing (PE header normalisation, overlay stripping)&#x27;,
+            &#x27;No multi-classifier ensemble agreement requirement&#x27;,
+            &#x27;No dynamic execution verification as complementary control&#x27;,
+        ],
+        track7_coverage=[
+            &#x27;Structured feature squeezing (Section 10.11 analogue): PE normalisation changes adversarial features&#x27;,
+            &#x27;Consistency check: agreement across byte n-gram and API call classifiers&#x27;,
+            &#x27;Complementary control: dynamic sandbox execution as non-ML verification&#x27;,
+        ],
+        operator_response=&#x27;GAMMA dataset released for adversarial AV research; adversarial training adopted by several AV vendors; ensemble detection standard in security products&#x27;,
+        notes=&#x27;Malware adversarial examples demonstrate adversarial ML is relevant to classical security domains beyond LLM and vision systems&#x27;,
+    ),
+]
+
+
+def print_timeline(incidents: List[AdversarialIncident]) -&gt; None:
+    sorted_incidents = sorted(incidents, key=lambda x: x.year)
+    print(&#x27;Adversarial Example Incident Timeline&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for inc in sorted_incidents:
+        print(f&#x27;\n[{inc.incident_id}] {inc.year}: {inc.title}&#x27;)
+        print(f&#x27;  Authors:     {inc.authors}&#x27;)
+        print(f&#x27;  Reference:   {inc.reference}&#x27;)
+        print(f&#x27;  Domain:      {inc.domain}&#x27;)
+        print(f&#x27;  Attack:      {inc.attack_type}&#x27;)
+        print(f&#x27;  Target:      {inc.target_system}&#x27;)
+        print(f&#x27;  Success:     {inc.reported_success_rate}&#x27;)
+        print(f&#x27;  API needed:  {inc.api_required}&#x27;)
+        print(f&#x27;  ATLAS:       {inc.atlas_technique}&#x27;)
+        print(f&#x27;  Ch10 refs:   {&quot;; &quot;.join(inc.ch10_sections)}&#x27;)
+        if inc.notes:
+            print(f&#x27;  Note:        {inc.notes}&#x27;)
+
+
+def domain_summary(incidents: List[AdversarialIncident]) -&gt; None:
+    domains = {}
+    for inc in incidents:
+        domains[inc.domain] = domains.get(inc.domain, 0) + 1
+    print(&#x27;\nIncident count by domain:&#x27;)
+    for domain, count in domains.items():
+        print(f&#x27;  {domain}: {count}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_timeline(INCIDENT_TIMELINE)
+    domain_summary(INCIDENT_TIMELINE)</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Incident Root Cause Analyser</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">incident_root_cause_analyser.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Root cause analysis framework for adversarial incidents using four missing control categories; generates structured RCA documents for security reporting and architecture review</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies.
+Import INCIDENT_TIMELINE from adversarial_incident_timeline.py.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># incident_root_cause_analyser.py
+# Section 10.10: Adversarial Incident Root Cause Analysis
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List, Dict
+from adversarial_incident_timeline import INCIDENT_TIMELINE, AdversarialIncident
+
+
+CONTROL_CATEGORIES = [
+    &#x27;adversarial_training&#x27;,
+    &#x27;input_side_detection&#x27;,
+    &#x27;consistency_checking&#x27;,
+    &#x27;complementary_nonml_control&#x27;,
+]
+
+CONTROL_LABELS = {
+    &#x27;adversarial_training&#x27;: &#x27;Adversarial training (Section 10.15)&#x27;,
+    &#x27;input_side_detection&#x27;: &#x27;Input-side adversarial detection (Section 10.11)&#x27;,
+    &#x27;consistency_checking&#x27;: &#x27;Prediction consistency checking (Section 10.12)&#x27;,
+    &#x27;complementary_nonml_control&#x27;: &#x27;Non-ML complementary controls (multi-sensor, ensemble)&#x27;,
+}
+
+
+@dataclass
+class RootCauseReport:
+    incident_id: str
+    title: str
+    missing_controls: List[str]
+    contributing_factors: List[str]
+    severity: str
+    remediation_priority: str
+    recommended_controls: List[str]
+
+
+def classify_root_causes(incident: AdversarialIncident) -&gt; Dict[str, bool]:
+    &#x27;&#x27;&#x27;Classify which control categories are missing for this incident.&#x27;&#x27;&#x27;
+    missing = {cat: False for cat in CONTROL_CATEGORIES}
+    for cause in incident.root_causes:
+        cause_lower = cause.lower()
+        if &#x27;adversarial training&#x27; in cause_lower:
+            missing[&#x27;adversarial_training&#x27;] = True
+        if &#x27;detection&#x27; in cause_lower or &#x27;anomaly&#x27; in cause_lower or &#x27;squeezing&#x27; in cause_lower:
+            missing[&#x27;input_side_detection&#x27;] = True
+        if &#x27;consistency&#x27; in cause_lower or &#x27;temporal&#x27; in cause_lower or &#x27;ensemble&#x27; in cause_lower:
+            missing[&#x27;consistency_checking&#x27;] = True
+        if &#x27;sensor&#x27; in cause_lower or &#x27;liveness&#x27; in cause_lower or &#x27;dynamic&#x27; in cause_lower or &#x27;complementary&#x27; in cause_lower:
+            missing[&#x27;complementary_nonml_control&#x27;] = True
+    return missing
+
+
+def generate_rca(incident: AdversarialIncident) -&gt; RootCauseReport:
+    missing = classify_root_causes(incident)
+    n_missing = sum(missing.values())
+    severity = &#x27;CRITICAL&#x27; if n_missing &gt;= 3 else (&#x27;HIGH&#x27; if n_missing == 2 else &#x27;MEDIUM&#x27;)
+    remediation_priority = &#x27;Immediate&#x27; if not incident.api_required else &#x27;High&#x27;
+    recommended = [CONTROL_LABELS[cat] for cat, absent in missing.items() if absent]
+
+    return RootCauseReport(
+        incident_id=incident.incident_id,
+        title=incident.title,
+        missing_controls=[
+            CONTROL_LABELS[cat] for cat, absent in missing.items() if absent
+        ],
+        contributing_factors=incident.root_causes,
+        severity=severity,
+        remediation_priority=remediation_priority,
+        recommended_controls=recommended,
+    )
+
+
+def print_rca(rca: RootCauseReport) -&gt; None:
+    print(f&#x27;\n{&quot;=&quot; * 60}&#x27;)
+    print(f&#x27;[{rca.incident_id}] {rca.title}&#x27;)
+    print(f&#x27;Severity: {rca.severity}  |  Priority: {rca.remediation_priority}&#x27;)
+    print(f&#x27;\nMissing controls ({len(rca.missing_controls)}):&#x27;)
+    for ctrl in rca.missing_controls:
+        print(f&#x27;  - {ctrl}&#x27;)
+    print(f&#x27;\nContributing factors:&#x27;)
+    for factor in rca.contributing_factors:
+        print(f&#x27;  - {factor}&#x27;)
+    print(f&#x27;\nRecommended controls:&#x27;)
+    for rec in rca.recommended_controls:
+        print(f&#x27;  [ADD] {rec}&#x27;)
+
+
+def cross_incident_pattern(incidents: List[AdversarialIncident]) -&gt; None:
+    print(&#x27;\nCross-incident pattern analysis:&#x27;)
+    all_missing = {cat: 0 for cat in CONTROL_CATEGORIES}
+    for inc in incidents:
+        missing = classify_root_causes(inc)
+        for cat, absent in missing.items():
+            if absent:
+                all_missing[cat] += 1
+    for cat, count in all_missing.items():
+        pct = count / len(incidents) * 100
+        print(f&#x27;  {CONTROL_LABELS[cat]}: missing in {count}/{len(incidents)} incidents ({pct:.0f}%)&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Root Cause Analysis: Adversarial Incidents&#x27;)
+    for incident in INCIDENT_TIMELINE:
+        rca = generate_rca(incident)
+        print_rca(rca)
+    cross_incident_pattern(INCIDENT_TIMELINE)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection Opportunity Mapper</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">detection_opportunity_mapper.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps each incident to Track 7 detection primitives, estimates when each primitive would have fired, and identifies coverage gaps requiring additional controls</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies.
+Import from adversarial_incident_timeline.py.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># detection_opportunity_mapper.py
+# Section 10.10: Track 7 Detection Opportunity Mapping
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+from adversarial_incident_timeline import INCIDENT_TIMELINE, AdversarialIncident
+
+
+@dataclass
+class DetectionOpportunity:
+    incident_id: str
+    primitive: str
+    section_ref: str
+    stage: str
+    estimated_coverage: str  # high / moderate / low / none
+    detection_signal: str
+    would_have_fired: bool
+    notes: str = &#x27;&#x27;
+
+
+DETECTION_OPPORTUNITIES: List[DetectionOpportunity] = [
+    # INC-001: Adversarial glasses
+    DetectionOpportunity(
+        incident_id=&#x27;INC-001&#x27;,
+        primitive=&#x27;Patch localisation / spatial anomaly&#x27;,
+        section_ref=&#x27;Section 10.8&#x27;,
+        stage=&#x27;Pre-inference (camera pipeline)&#x27;,
+        estimated_coverage=&#x27;high&#x27;,
+        detection_signal=&#x27;Glasses frame region has texture variance inconsistent with natural eyewear&#x27;,
+        would_have_fired=True,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-001&#x27;,
+        primitive=&#x27;Temporal / multi-angle consistency&#x27;,
+        section_ref=&#x27;Section 10.12&#x27;,
+        stage=&#x27;Post-inference&#x27;,
+        estimated_coverage=&#x27;high&#x27;,
+        detection_signal=&#x27;Face classification changes across viewing angles (adversarial only from optimised angle)&#x27;,
+        would_have_fired=True,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-001&#x27;,
+        primitive=&#x27;Feature squeezing&#x27;,
+        section_ref=&#x27;Section 10.11&#x27;,
+        stage=&#x27;Pre-inference&#x27;,
+        estimated_coverage=&#x27;moderate&#x27;,
+        detection_signal=&#x27;Gaussian blur on full image reduces patch effectiveness; prediction changes&#x27;,
+        would_have_fired=True,
+        notes=&#x27;Less effective than patch localisation because squeezing is global not regional&#x27;,
+    ),
+    # INC-002: Stop sign attack
+    DetectionOpportunity(
+        incident_id=&#x27;INC-002&#x27;,
+        primitive=&#x27;Patch localisation / spatial anomaly&#x27;,
+        section_ref=&#x27;Section 10.8&#x27;,
+        stage=&#x27;Pre-inference (camera pipeline)&#x27;,
+        estimated_coverage=&#x27;high&#x27;,
+        detection_signal=&#x27;Sticker region on sign surface has high spatial frequency texture inconsistent with sign material&#x27;,
+        would_have_fired=True,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-002&#x27;,
+        primitive=&#x27;Temporal consistency across frames&#x27;,
+        section_ref=&#x27;Section 10.12&#x27;,
+        stage=&#x27;Post-inference&#x27;,
+        estimated_coverage=&#x27;high&#x27;,
+        detection_signal=&#x27;Stop sign classification is inconsistent across consecutive camera frames at different angles&#x27;,
+        would_have_fired=True,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-002&#x27;,
+        primitive=&#x27;Feature squeezing (full image)&#x27;,
+        section_ref=&#x27;Section 10.11&#x27;,
+        stage=&#x27;Pre-inference&#x27;,
+        estimated_coverage=&#x27;moderate&#x27;,
+        detection_signal=&#x27;Gaussian blur reduces sticker patch signal; classification may flip back&#x27;,
+        would_have_fired=True,
+        notes=&#x27;Squeezing may also blur natural sign features; tune threshold carefully&#x27;,
+    ),
+    # INC-003: LLM safety evasion
+    DetectionOpportunity(
+        incident_id=&#x27;INC-003&#x27;,
+        primitive=&#x27;Semantic consistency check (paraphrase)&#x27;,
+        section_ref=&#x27;Section 10.12&#x27;,
+        stage=&#x27;Post-inference&#x27;,
+        estimated_coverage=&#x27;high&#x27;,
+        detection_signal=&#x27;Input paraphrased without adversarial suffix classifies as harmful; suffix-augmented input does not&#x27;,
+        would_have_fired=True,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-003&#x27;,
+        primitive=&#x27;Unicode anomaly detection&#x27;,
+        section_ref=&#x27;Section 10.9&#x27;,
+        stage=&#x27;Pre-inference&#x27;,
+        estimated_coverage=&#x27;low&#x27;,
+        detection_signal=&#x27;GCG adversarial suffixes are ASCII; homoglyph variants detectable but not core GCG attack&#x27;,
+        would_have_fired=False,
+        notes=&#x27;Unicode detection covers homoglyph variant attacks; does not cover semantic token substitution&#x27;,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-003&#x27;,
+        primitive=&#x27;Adversarial text classifier&#x27;,
+        section_ref=&#x27;Section 10.12&#x27;,
+        stage=&#x27;Post-inference&#x27;,
+        estimated_coverage=&#x27;moderate&#x27;,
+        detection_signal=&#x27;Binary classifier trained on GCG suffix patterns flags adversarial-looking suffixes&#x27;,
+        would_have_fired=True,
+        notes=&#x27;Coverage depends on training data including GCG-style patterns before incident&#x27;,
+    ),
+    # INC-004: Malware PE evasion
+    DetectionOpportunity(
+        incident_id=&#x27;INC-004&#x27;,
+        primitive=&#x27;Structured feature squeezing (PE normalisation)&#x27;,
+        section_ref=&#x27;Section 10.11 (analogue)&#x27;,
+        stage=&#x27;Pre-inference&#x27;,
+        estimated_coverage=&#x27;moderate&#x27;,
+        detection_signal=&#x27;Stripping overlay section and normalising import table removes GAMMA adversarial features&#x27;,
+        would_have_fired=True,
+        notes=&#x27;Domain-specific squeezer: normalise PE structure before classifier inference&#x27;,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-004&#x27;,
+        primitive=&#x27;Multi-classifier consistency (byte n-gram vs API call)&#x27;,
+        section_ref=&#x27;Section 10.12 (analogue)&#x27;,
+        stage=&#x27;Post-inference&#x27;,
+        estimated_coverage=&#x27;high&#x27;,
+        detection_signal=&#x27;Adversarial PE binary fools byte-level classifier but not API call sequence classifier&#x27;,
+        would_have_fired=True,
+    ),
+    DetectionOpportunity(
+        incident_id=&#x27;INC-004&#x27;,
+        primitive=&#x27;Dynamic execution sandbox&#x27;,
+        section_ref=&#x27;Non-ML complementary control&#x27;,
+        stage=&#x27;Post-classification&#x27;,
+        estimated_coverage=&#x27;high&#x27;,
+        detection_signal=&#x27;Execution in sandbox reveals malicious API calls regardless of static classifier output&#x27;,
+        would_have_fired=True,
+        notes=&#x27;Not a Track 7 primitive but the most reliable complementary control for malware detection&#x27;,
+    ),
+]
+
+
+def coverage_report_by_incident(
+    opportunities: List[DetectionOpportunity],
+    incidents: List[AdversarialIncident],
+) -&gt; None:
+    print(&#x27;Detection Opportunity Coverage by Incident&#x27;)
+    print(&#x27;=&#x27; * 55)
+    for inc in incidents:
+        inc_ops = [op for op in opportunities if op.incident_id == inc.incident_id]
+        would_fire = [op for op in inc_ops if op.would_have_fired]
+        print(f&#x27;\n{inc.incident_id}: {inc.title[:55]}&#x27;)
+        print(f&#x27;  Primitives mapped: {len(inc_ops)} | Would have fired: {len(would_fire)}&#x27;)
+        for op in inc_ops:
+            marker = &#x27;FIRES&#x27; if op.would_have_fired else &#x27;MISS &#x27;
+            print(f&#x27;  [{marker}] {op.primitive} ({op.estimated_coverage.upper()}) -- {op.stage}&#x27;)
+
+
+def uncovered_incidents(
+    opportunities: List[DetectionOpportunity],
+    incidents: List[AdversarialIncident],
+) -&gt; None:
+    print(&#x27;\nCoverage gaps (incidents with Track 7 miss on any primitive):&#x27;)
+    for inc in incidents:
+        misses = [op for op in opportunities
+                  if op.incident_id == inc.incident_id and not op.would_have_fired]
+        if misses:
+            print(f&#x27;  {inc.incident_id}: {len(misses)} Track 7 misses&#x27;)
+            for m in misses:
+                print(f&#x27;    - {m.primitive}: {m.notes}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    coverage_report_by_incident(DETECTION_OPPORTUNITIES, INCIDENT_TIMELINE)
+    uncovered_incidents(DETECTION_OPPORTUNITIES, INCIDENT_TIMELINE)</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Architectural Remediation Comparison</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">architectural_remediation.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Before/after architecture comparison for each incident class: vulnerable deployment vs Track 7-defended deployment with specific controls addressing each root cause</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># architectural_remediation.py
+# Section 10.10: Before/After Architectural Remediation
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class ArchitectureLayer:
+    name: str
+    present_before: bool
+    present_after: bool
+    description: str
+    addresses_root_cause: str
+
+
+@dataclass
+class ArchitectureComparison:
+    incident_id: str
+    incident_name: str
+    layers: List[ArchitectureLayer]
+
+
+REMEDIATIONS: List[ArchitectureComparison] = [
+    ArchitectureComparison(
+        incident_id=&#x27;INC-001/INC-002&#x27;,
+        incident_name=&#x27;Physical vision adversarial (glasses + stop sign)&#x27;,
+        layers=[
+            ArchitectureLayer(
+                name=&#x27;Primary classifier (single model, single sensor)&#x27;,
+                present_before=True, present_after=True,
+                description=&#x27;RGB camera + object/face classifier (unchanged)&#x27;,
+                addresses_root_cause=&#x27;N/A (existing)&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Patch localisation pre-inference stage&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Spatial texture anomaly detector flags suspicious image regions before classifier&#x27;,
+                addresses_root_cause=&#x27;Missing: input-side adversarial detection&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Temporal consistency check (multi-frame)&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Require 3 consecutive frame agreement before accepting classification&#x27;,
+                addresses_root_cause=&#x27;Missing: consistency checking&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Adversarial training on patch-augmented images&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Retrain classifier on EOT patch-augmented training dataset&#x27;,
+                addresses_root_cause=&#x27;Missing: adversarial training&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Supplemental sensor (IR / LIDAR / radar)&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Require multi-sensor agreement; optical adversarial patches do not affect non-RGB sensors&#x27;,
+                addresses_root_cause=&#x27;Missing: non-ML complementary control&#x27;,
+            ),
+        ],
+    ),
+    ArchitectureComparison(
+        incident_id=&#x27;INC-003&#x27;,
+        incident_name=&#x27;LLM safety classifier evasion (adversarial suffix)&#x27;,
+        layers=[
+            ArchitectureLayer(
+                name=&#x27;Primary safety classifier / RLHF alignment&#x27;,
+                present_before=True, present_after=True,
+                description=&#x27;LLM safety training (unchanged, but supplemented)&#x27;,
+                addresses_root_cause=&#x27;N/A (existing)&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Semantic consistency pre-check&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Paraphrase input; if classification changes, flag as potentially adversarial&#x27;,
+                addresses_root_cause=&#x27;Missing: consistency checking&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Adversarial suffix pattern classifier&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Binary classifier trained on GCG-style suffixes; flags anomalous token sequences&#x27;,
+                addresses_root_cause=&#x27;Missing: input-side adversarial detection&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Adversarial fine-tuning of safety classifier&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Include adversarial suffix attack examples in safety training data&#x27;,
+                addresses_root_cause=&#x27;Missing: adversarial training&#x27;,
+            ),
+        ],
+    ),
+    ArchitectureComparison(
+        incident_id=&#x27;INC-004&#x27;,
+        incident_name=&#x27;Malware PE binary adversarial evasion&#x27;,
+        layers=[
+            ArchitectureLayer(
+                name=&#x27;Primary static ML classifier (MalConv / byte n-gram)&#x27;,
+                present_before=True, present_after=True,
+                description=&#x27;Byte-level PE classifier (unchanged, supplemented)&#x27;,
+                addresses_root_cause=&#x27;N/A (existing)&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;PE structure normalisation (structured squeezer)&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Strip overlay, normalise import table, pad sections before classification&#x27;,
+                addresses_root_cause=&#x27;Missing: input-side adversarial detection&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Multi-classifier agreement (byte + API call + CFG)&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Require agreement across byte n-gram, API call sequence, and CFG-based classifiers&#x27;,
+                addresses_root_cause=&#x27;Missing: consistency checking / non-ML control&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Adversarial training on GAMMA-style PE samples&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Include functionality-preserving adversarial PE binaries in training dataset&#x27;,
+                addresses_root_cause=&#x27;Missing: adversarial training&#x27;,
+            ),
+            ArchitectureLayer(
+                name=&#x27;Dynamic sandbox execution on uncertain samples&#x27;,
+                present_before=False, present_after=True,
+                description=&#x27;Route borderline classifications to dynamic sandbox; execution reveals malicious behaviour&#x27;,
+                addresses_root_cause=&#x27;Missing: non-ML complementary control&#x27;,
+            ),
+        ],
+    ),
+]
+
+
+def print_remediation(rem: ArchitectureComparison) -&gt; None:
+    print(f&#x27;\n{rem.incident_id}: {rem.incident_name}&#x27;)
+    print(f&#x27;{&quot;Layer&quot;:&lt;45} {&quot;Before&quot;:&lt;8} {&quot;After&quot;:&lt;8} {&quot;Addresses&quot;}&#x27;)
+    print(&#x27;-&#x27; * 90)
+    for layer in rem.layers:
+        before = &#x27;YES&#x27; if layer.present_before else &#x27;NO &#x27;
+        after = &#x27;YES&#x27; if layer.present_after else &#x27;NO &#x27;
+        added = &#x27; [ADDED]&#x27; if not layer.present_before and layer.present_after else &#x27;&#x27;
+        print(f&#x27;{layer.name[:43]:&lt;45} {before:&lt;8} {after:&lt;8} {layer.addresses_root_cause[:30]}{added}&#x27;)
+
+
+def remediation_summary(remediations: List[ArchitectureComparison]) -&gt; None:
+    total_added = sum(
+        sum(1 for l in rem.layers if not l.present_before and l.present_after)
+        for rem in remediations
+    )
+    print(f&#x27;\nTotal controls added across all incident remediations: {total_added}&#x27;)
+    print(&#x27;All added controls map to Section 10.11-10.15 production defences.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Architectural Remediation: Before vs After Track 7 Defence&#x27;)
+    for rem in REMEDIATIONS:
+        print_remediation(rem)
+    remediation_summary(REMEDIATIONS)</code></pre>
+<h3 class="sh2">Deliverable 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Lessons Checklist</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">adversarial_lessons_checklist.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Pre-production adversarial robustness verification checklist derived from the four documented incidents; eight items that would have prevented all incidents in this section</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies.
+Checklist is structured for use in security architecture review and pre-deployment sign-off.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># adversarial_lessons_checklist.py
+# Section 10.10: Pre-Production Adversarial Robustness Checklist
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class ChecklistItem:
+    item_id: str
+    category: str
+    description: str
+    verification_method: str
+    incidents_addressed: List[str]
+    section_ref: str
+    blocking: bool  # If False, deployment should be blocked until addressed
+
+
+ADVERSARIAL_CHECKLIST: List[ChecklistItem] = [
+    ChecklistItem(
+        item_id=&#x27;ADV-001&#x27;,
+        category=&#x27;Adversarial training&#x27;,
+        description=&#x27;Model has been adversarially trained on attack families relevant to its input modality (patch augmentation for vision; adversarial suffix/substitution for text; functionality-preserving perturbation for malware)&#x27;,
+        verification_method=&#x27;Run PGD robustness evaluator (Section 10.4) and C&amp;W kappa sweep (Section 10.5); report robust accuracy at deployment epsilon&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-003&#x27;, &#x27;INC-004&#x27;],
+        section_ref=&#x27;Section 10.15&#x27;,
+        blocking=True,
+    ),
+    ChecklistItem(
+        item_id=&#x27;ADV-002&#x27;,
+        category=&#x27;Input-side adversarial detection&#x27;,
+        description=&#x27;Track 7 feature squeezer (or domain-appropriate analogue) is deployed in the pre-inference stage; squeezer disagreement threshold is calibrated at the production epsilon range&#x27;,
+        verification_method=&#x27;Run squeezer latency benchmark (Section 10.11); verify detection rate against FGSM and PGD at operational epsilon; verify P99 latency &lt; 50ms&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-003&#x27;, &#x27;INC-004&#x27;],
+        section_ref=&#x27;Section 10.11&#x27;,
+        blocking=True,
+    ),
+    ChecklistItem(
+        item_id=&#x27;ADV-003&#x27;,
+        category=&#x27;Consistency checking&#x27;,
+        description=&#x27;Prediction consistency checker is deployed; for images: N random perturbation variants; for text: paraphrase or back-translation; for structured data: feature normalisation consistency&#x27;,
+        verification_method=&#x27;Run consistency check detection rate benchmark (Section 10.12) against FGSM and C&amp;W kappa=0 and kappa=20 adversarial examples&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-003&#x27;, &#x27;INC-004&#x27;],
+        section_ref=&#x27;Section 10.12&#x27;,
+        blocking=True,
+    ),
+    ChecklistItem(
+        item_id=&#x27;ADV-004&#x27;,
+        category=&#x27;Physical adversarial (vision systems only)&#x27;,
+        description=&#x27;Patch localisation / spatial anomaly detector is deployed as a separate Track 7 primitive for all vision system deployments; not applicable to text/tabular-only systems&#x27;,
+        verification_method=&#x27;Apply test patches to held-out images; verify spatial anomaly detector flags &gt; 80% of patched images with &lt; 10% false positive rate on natural images&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;],
+        section_ref=&#x27;Section 10.8&#x27;,
+        blocking=True,
+    ),
+    ChecklistItem(
+        item_id=&#x27;ADV-005&#x27;,
+        category=&#x27;Non-ML complementary control&#x27;,
+        description=&#x27;At least one complementary non-ML control is deployed: multi-sensor fusion (vision), liveness detection (face recognition), dynamic sandbox (malware), semantic back-translation (text safety)&#x27;,
+        verification_method=&#x27;Document the complementary control and verify it is independent of the ML classifier failure mode; test adversarial examples against both the ML classifier and the complementary control&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-004&#x27;],
+        section_ref=&#x27;Section 10.13&#x27;,
+        blocking=True,
+    ),
+    ChecklistItem(
+        item_id=&#x27;ADV-006&#x27;,
+        category=&#x27;C&amp;W adaptive evaluation&#x27;,
+        description=&#x27;Proposed defence has been tested against adaptive C&amp;W (kappa=0 for minimum-norm; kappa=20 for consistency check evaluation) before deployment claim is made&#x27;,
+        verification_method=&#x27;Run defence_evaluator_cw.py (Section 10.5) with the deployed defence in the C&amp;W objective; report adaptive bypass rate at kappa=0 and kappa=20&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-003&#x27;, &#x27;INC-004&#x27;],
+        section_ref=&#x27;Section 10.5&#x27;,
+        blocking=True,
+    ),
+    ChecklistItem(
+        item_id=&#x27;ADV-007&#x27;,
+        category=&#x27;Incident register&#x27;,
+        description=&#x27;An adversarial incident register is maintained; newly published adversarial attack papers are reviewed within 30 days for applicability to deployed classifiers&#x27;,
+        verification_method=&#x27;Confirm incident register exists and was updated within the last 30 days; confirm review process for arXiv adversarial ML papers&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-003&#x27;, &#x27;INC-004&#x27;],
+        section_ref=&#x27;Section 10.10&#x27;,
+        blocking=False,
+    ),
+    ChecklistItem(
+        item_id=&#x27;ADV-008&#x27;,
+        category=&#x27;Track 7 gate deployment&#x27;,
+        description=&#x27;Full seven-track gateway (Section 10.13) is deployed in production; Track 7 latency benchmark has been run at production input dimensions; P99 latency is within 50ms budget&#x27;,
+        verification_method=&#x27;Run track7_latency_benchmark.py (Section 10.13) at production batch size and input dimension; verify P99 &lt;= 50ms; confirm all seven tracks are active&#x27;,
+        incidents_addressed=[&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-003&#x27;, &#x27;INC-004&#x27;],
+        section_ref=&#x27;Section 10.13&#x27;,
+        blocking=True,
+    ),
+]
+
+
+def print_checklist(checklist: List[ChecklistItem], show_blocking_only: bool = False) -&gt; None:
+    items = [i for i in checklist if (not show_blocking_only or i.blocking)]
+    print(f&#x27;Pre-Production Adversarial Robustness Checklist ({len(items)} items)&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for item in items:
+        status = &#x27;[BLOCKING]&#x27; if item.blocking else &#x27;[ADVISORY]&#x27;
+        print(f&#x27;\n{status} {item.item_id}: {item.description[:70]}&#x27;)
+        print(f&#x27;  Category:    {item.category}&#x27;)
+        print(f&#x27;  Verify:      {item.verification_method[:80]}&#x27;)
+        print(f&#x27;  Reference:   {item.section_ref}&#x27;)
+        print(f&#x27;  Incidents:   {&quot;, &quot;.join(item.incidents_addressed)}&#x27;)
+
+
+def coverage_by_incident(checklist: List[ChecklistItem]) -&gt; None:
+    incident_ids = [&#x27;INC-001&#x27;, &#x27;INC-002&#x27;, &#x27;INC-003&#x27;, &#x27;INC-004&#x27;]
+    print(&#x27;\nChecklist coverage by incident:&#x27;)
+    for inc_id in incident_ids:
+        covering = [i.item_id for i in checklist if inc_id in i.incidents_addressed]
+        blocking = [i.item_id for i in checklist
+                    if inc_id in i.incidents_addressed and i.blocking]
+        print(f&#x27;  {inc_id}: {len(covering)} items cover it ({len(blocking)} blocking)&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_checklist(ADVERSARIAL_CHECKLIST)
+    coverage_by_incident(ADVERSARIAL_CHECKLIST)
+    print(f&#x27;\nBlocking items: {sum(1 for i in ADVERSARIAL_CHECKLIST if i.blocking)}/8&#x27;)
+    print(&#x27;All blocking items must pass before production deployment of any ML classifier.&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating adversarial ML incident papers as theoretical demonstrations rather than as operational threat signals requiring production response</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Adversarial ML papers are published in academic venues (CVPR, CCS, USENIX). Security
+engineers in operations-focused roles may not monitor academic venues, or may
+discount academic demonstrations as &quot;lab conditions&quot; not applicable to production.
+The stop sign paper was published in 2018; autonomous vehicle security teams that
+read it as theoretical were behind the threat curve for years.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Production classifiers remain undefended against documented attack families. The
+attack is already known to the adversary community; the defender has the information
+needed to implement Track 7 controls but does not act on it. The gap between attack
+publication and production defence widens with each incident not acted upon.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Establish a process to review adversarial ML papers (arXiv cs.CR and cs.LG, major
+security conferences, MITRE ATLAS case study additions) within 30 days of publication.
+For each paper: does the attack apply to any deployed classifier? If yes, trigger
+the pre-production checklist (deliverable 5) for that classifier. The adversarial
+incident register (ADV-007) formalises this process.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Scoping adversarial ML defence only to LLM and image classification deployments, missing classical security domains (malware detection, fraud scoring, anomaly detection)</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Adversarial ML discourse is dominated by LLM safety and image classifier examples.
+Security teams responsible for malware detection, fraud scoring, or network anomaly
+detection classify their systems as &quot;traditional ML&quot; rather than &quot;AI security&quot; and
+do not apply adversarial robustness controls.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Malware classifiers (GAMMA incident, INC-004), fraud models, and intrusion detection
+systems are all gradient-based learners with the same structural vulnerability to
+adversarial perturbation as image classifiers. They are not protected by adversarial
+training, input-side detection, or consistency checking. An adversary who discovers
+that a fraud model is vulnerable to feature-space adversarial perturbation (modify
+transaction features within domain constraints) can evade it systematically.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Apply the pre-production adversarial robustness checklist (deliverable 5) to any
+ML classifier where the adversary can control the input -- including malware samples,
+transaction features, and network telemetry. The checklist items are domain-agnostic:
+adversarial training, feature squeezing analogue, consistency checking analogue, and
+non-ML complementary control apply to all domains.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Responding to an adversarial ML incident with a model update only, without adding a detection layer, leaving the system vulnerable to the next attack variant</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Model updates are the familiar incident response mechanism. After an adversarial
+incident, retraining on adversarial examples is the natural first action. It is
+faster than architectural changes and measurably improves robustness against the
+specific attack that was demonstrated.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The updated model is more robust to the specific attack variant published in the
+incident paper. A new attack variant (higher kappa, different norm, adaptive adversary
+with knowledge of the updated model) may achieve comparable evasion rates. Without
+a detection layer (Track 7), the updated model has no defence against unknown future
+variants. The pattern repeats: incident → model update → new variant → incident.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Model updates address the specific attack; detection layers address the attack class.
+The correct incident response adds: (1) adversarial training on the specific attack,
+(2) Track 7 detection layer covering the attack family, and (3) architecture controls
+(multi-sensor, ensemble) that are attack-variant-independent. Only the combination
+of all three provides durable defence rather than temporary patch coverage.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Calibrating the detection layer only against the specific attack from the incident report, missing related attack families in the same taxonomy cell</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The detection layer is built and validated against the incident attack (e.g., EOT
+patch detection calibrated against the specific Eykholt et al. sticker pattern).
+The detector is tuned to that specific pattern and declared operational.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A new physical patch design (different texture, different colour profile, different
+size) evades the detector calibrated against the original sticker pattern. The detection
+coverage is specific to the published attack, not to the attack class (all adversarial
+patches). The adversary simply designs a different patch that falls outside the
+calibrated detection region.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Calibrate detection against the attack class, not the specific attack instance.
+For patch detection: calibrate against patches of varied size, texture, and colour
+using the EOT transformation sweep from Section 10.8. For text adversarial detection:
+calibrate against TextFooler, HotFlip, and universal triggers (not just the GCG suffix).
+The physical_robustness_benchmark.py (Section 10.8) and cw_confidence_sweep.py
+(Section 10.5) provide the right calibration frameworks.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Not maintaining a post-deployment adversarial red-team schedule, allowing detection coverage to drift as new attack variants emerge after initial Track 7 deployment</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Track 7 is deployed at launch, passing all pre-production checklist items. The
+detection layer is treated as a static control that does not require ongoing
+maintenance. New adversarial attack papers accumulate without triggering a
+re-evaluation of Track 7 coverage.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Track 7 coverage drifts: the adversarial classifier (Section 10.12) trained on
+attack families at deployment time degrades on novel attack families. The squeezer
+thresholds calibrated at deployment epsilon become miscalibrated as the production
+threat changes. Detection rates that were 85% at launch drift to 60% after 18
+months of new attack publications without re-evaluation.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Schedule quarterly adversarial red-team exercises: run the full detection opportunity
+mapping (deliverable 3) against newly published attacks, retrain the adversarial
+classifier if new attack families are not covered, and re-run the pre-production
+checklist annually. The adversarial incident register (ADV-007) tracks this cadence.
+Adversarial robustness is not a one-time deployment property -- it is an ongoing
+security posture that requires continuous maintenance.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Four documented adversarial incidents span physical vision (stop sign attack, adversarial
+glasses), text safety classifiers (LLM adversarial suffix), and malware detection (GAMMA PE
+attack). All four share the same root cause: no adversarial training, no input-side
+adversarial detection, no consistency checking, and no non-ML complementary controls.
+Every control built in Sections 10.11-10.15 directly addresses a specific root cause in
+one of these incidents. The detection opportunity mapping shows which Track 7 primitive
+would have fired: patch localisation for physical attacks, semantic consistency for text
+attacks, structured feature squeezing for malware. The correct incident response adds all
+three control layers -- model update, detection layer, architecture control -- not model
+update alone. The pre-production checklist (eight items, six blocking) operationalises
+this across any ML classifier deployment.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Adversarial ML is a production threat across four domains: physical vision, biometric access, text safety, and malware detection -- not only LLM</li><li>All four incidents share four missing controls: adversarial training, input-side detection, consistency checking, non-ML complementary control</li><li>Model-only incident response is insufficient: it addresses the specific attack but not the attack class; detection layers provide durable coverage</li><li>The pre-production checklist (ADV-001 to ADV-008) implements the four missing controls as eight verifiable items; six are blocking for deployment</li><li>Detection coverage requires quarterly red-team maintenance: adversarial classifiers drift as new attack families emerge post-deployment</li></ul>
+<h2 class="sh1">Preview Section 10 11</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 10.11: Detection Primitives -- Input Preprocessing and Feature Squeezing</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 10.11 builds the first of three Track 7 detection primitives: feature squeezing.
+The detection mechanism is prediction-change-under-transformation: compare the model&#x27;&#x27;s
+output on the original input versus a squeezed version. A large prediction change signals
+adversarial perturbation -- natural images are robust to small input transformations;
+adversarial perturbations are precisely calibrated and destroyed by transformation. Three
+squeezers are implemented: Gaussian spatial smoothing (effective against L-infinity digital
+noise), bit-depth reduction (reduces precision of gradient-based perturbations), and JPEG
+compression (lossy compression as adversarial signal destruction). A squeezer ensemble
+with disagreement scoring combines all three. The text canonicaliser (synonym normalisation
+and paraphrase detection) implements the squeezer analogue for LLM adversarial inputs.
+Section 10.11 closes with the squeezer latency benchmark that establishes how many
+squeezers fit within Track 7&#x27;&#x27;s pre-inference latency allocation of the 50ms P99 budget.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Sections 10.3-10.9: attack catalogue (each incident maps to specific sections)</li><li>Section 10.8: physical adversarial patches (stop sign and glasses incidents)</li><li>Section 10.9: text adversarial attacks (LLM safety incident)</li><li>Section 9.9: extraction incident (parallel role in Chapter 9)</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 10.11: feature squeezing (addresses ADV-001 and ADV-002 in checklist)</li><li>Section 10.12: consistency checking (addresses ADV-003 in checklist)</li><li>Section 10.13: Track 7 gateway (addresses ADV-008 in checklist)</li><li>Section 10.15: adversarial training (addresses ADV-001 in checklist)</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>adversarial-incident</li><li>stop-sign-attack</li><li>eykholt-2018</li><li>adversarial-glasses</li><li>sharif-2016</li><li>llm-safety-evasion</li><li>gcg-attack</li><li>malware-adversarial</li><li>gamma-attack</li><li>root-cause-analysis</li><li>detection-opportunity</li><li>architectural-remediation</li><li>pre-production-checklist</li><li>incident-response</li><li>adversarial-ml-production</li></ul>
+</article>

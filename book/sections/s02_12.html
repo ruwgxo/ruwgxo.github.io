@@ -1,0 +1,751 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 12 · ~6 pages</div>
+<h1>Batch Normalization</h1>
+<div class="tags"><span class="tag">batch-normalization</span><span class="tag">internal-covariate-shift</span><span class="tag">normalization</span><span class="tag">training-stability</span><span class="tag">moving-average</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Batch Normalization (BatchNorm) is one of the most important innovations
+in deep learning, enabling training of much deeper networks with faster
+convergence and better generalization.
+
+The core idea: normalize layer inputs to have zero mean and unit variance,
+then learn optimal scale and shift parameters. This addresses &quot;internal
+covariate shift&quot; - the problem that input distributions to each layer
+change during training, making optimization difficult.
+
+You&#x27;ll understand why BatchNorm works (reduces covariate shift, smooths
+loss landscape), implement the algorithm with its train/test mode
+differences, handle moving averages correctly, learn where to place it
+(before vs after activation), and understand its security implications
+for model robustness.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand internal covariate shift problem</li><li>Grasp why normalizing layer inputs helps training</li><li>Know difference between training and inference modes</li><li>Understand learnable gamma (scale) and beta (shift) parameters</li><li>Recognize when to use BatchNorm vs alternatives (LayerNorm, GroupNorm)</li><li>Connect BatchNorm to implicit regularization</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement BatchNorm layer from scratch (NumPy)</li><li>Handle moving averages for mean and variance</li><li>Implement train vs eval mode correctly</li><li>Integrate BatchNorm into multi-layer networks</li><li>Choose placement: before or after activation</li><li>Debug common BatchNorm mistakes</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>BatchNorm statistics can leak training data information</li><li>Batch size affects BatchNorm behavior (small batches problematic)</li><li>Moving averages preserve training distribution patterns</li><li>Can be exploited in membership inference attacks</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Sections 02_05-02_08 (backpropagation, optimization)</li><li>Section 02_10 (regularization concepts)</li><li>Understanding of mean, variance, standard deviation</li><li>Gradient flow through normalization operations</li></ul>
+<h2 class="sh1">Internal Covariate Shift</h2>
+<h3 class="sh2">The Problem</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">Internal Covariate Shift: During training, the distribution of inputs
+to each layer changes as parameters in previous layers update.
+
+Example: Layer 3 input distribution
+- Epoch 1: mean=0.5, std=2.0
+- Epoch 5: mean=1.2, std=0.8
+- Epoch 10: mean=-0.3, std=3.5
+
+Each layer must constantly adapt to this shifting input distribution,
+slowing down training.</p>
+<h3 class="sh3">Why Its Problematic</h3>
+<p class="prose">Layer L is trying to learn function f(x):
+
+Epoch 1: Learns to handle inputs with mean=0, std=1
+Epoch 2: Previous layers updated → inputs now mean=2, std=3
+
+Layer L&#x27;s learned parameters are now mismatched!
+Must &quot;unlearn&quot; and relearn for new distribution.
+
+This happens EVERY epoch, for EVERY layer.
+Training becomes extremely slow and unstable.</p>
+<h3 class="sh3">Analogy</h3>
+<p class="prose">Imagine learning to catch a ball:
+
+Without covariate shift:
+- Ball always thrown from same height, speed, angle
+- You quickly learn to catch it
+
+With covariate shift:
+- Every throw is from different height, speed, angle
+- You never get consistent practice
+- Learning to catch becomes much harder</p>
+<h3 class="sh2">Mathematical Formulation</h3>
+<h3 class="sh3">Layer Input Distribution</h3>
+<p class="prose">Layer l receives input: x^(l) = f_{l-1}(x^(l-1); W_{l-1})
+
+Distribution: x^(l) ~ p(x^(l) | W_{l-1})
+
+As W_{l-1} updates during training:
+- p(x^(l)) changes continuously
+- Layer l must track these changes
+- Optimization becomes harder</p>
+<h3 class="sh3">Effect On Learning</h3>
+<p class="prose">Gradient descent assumes stationary distribution:
+W_{l} ← W_{l} - α·∇_{W_l} L
+
+But if input distribution changes, old gradients become stale.
+Need smaller learning rates → slower convergence.</p>
+<h3 class="sh2">How Batch Norm Helps</h3>
+<h3 class="sh3">Core Idea</h3>
+<p class="prose">Force layer inputs to have consistent distribution:
+- Mean = 0 (centered)
+- Variance = 1 (normalized)
+
+No matter how previous layers change, current layer sees
+stable input distribution.</p>
+<h3 class="sh3">Benefits</h3>
+<ul class="blist"><li>Faster training: Can use higher learning rates (10x typical)</li><li>Deeper networks: Can train 100+ layer networks without vanishing/exploding gradients</li><li>Less sensitive to initialization: Poor weight init less problematic</li><li>Implicit regularization: Acts like dropout (noise from batch statistics)</li><li>Smoother loss landscape: Easier optimization</li></ul>
+<h2 class="sh1">Batch Norm Algorithm</h2>
+<h3 class="sh2">Training Time Algorithm</h3>
+<h3 class="sh3">Input Output</h3>
+<p class="prose">Input: Mini-batch of activations x = {x_1, x_2, ..., x_m}
+       Each x_i is a vector (or tensor) for sample i
+
+Output: Normalized and scaled activations y = {y_1, y_2, ..., y_m}</p>
+<h3 class="sh3">Step By Step</h3>
+<p class="prose">Given mini-batch x of size m:
+
+Step 1: Compute batch mean
+μ_B = (1/m) Σ_{i=1}^m x_i
+
+Step 2: Compute batch variance
+σ²_B = (1/m) Σ_{i=1}^m (x_i - μ_B)²
+
+Step 3: Normalize (zero mean, unit variance)
+x̂_i = (x_i - μ_B) / √(σ²_B + ε)
+
+where ε = 1e-5 (small constant for numerical stability)
+
+Step 4: Scale and shift (learnable parameters)
+y_i = γ · x̂_i + β
+
+where:
+- γ (gamma): learnable scale parameter
+- β (beta): learnable shift parameter</p>
+<h3 class="sh3">Why Learnable Parameters</h3>
+<p class="prose">After normalization, activations have mean=0, std=1.
+But this might not be optimal!
+
+Example: Sigmoid activation works best with input near 0
+But maybe this layer needs input with mean=2 for better performance.
+
+Solution: Learn optimal distribution via γ and β
+
+If γ=σ²_B and β=μ_B, we recover original distribution
+(identity transformation, BatchNorm has no effect)
+
+Network can learn to use or bypass normalization as needed.</p>
+<h3 class="sh2">Inference Time Algorithm</h3>
+<h3 class="sh3">The Problem</h3>
+<p class="prose">Training: Have mini-batch → compute μ_B and σ²_B
+Inference: Single sample → can&#x27;t compute batch statistics!
+
+Solution: Use running averages from training.</p>
+<h3 class="sh3">Moving Averages</h3>
+<p class="prose">During training, maintain running statistics:
+
+μ_running ← momentum · μ_running + (1 - momentum) · μ_B
+σ²_running ← momentum · σ²_running + (1 - momentum) · σ²_B
+
+where momentum = 0.9 or 0.99 (typical)
+
+These track the overall training distribution.</p>
+<h3 class="sh3">Inference Procedure</h3>
+<p class="prose">At inference time (single sample or any batch size):
+
+1. Use μ_running and σ²_running (from training)
+2. Normalize: x̂ = (x - μ_running) / √(σ²_running + ε)
+3. Scale/shift: y = γ · x̂ + β
+
+No batch statistics computed, purely deterministic.</p>
+<h3 class="sh2">Forward Pass Pseudocode</h3>
+<pre class="code"><code>def batch_norm_forward(x, gamma, beta, mode=&#x27;train&#x27;):
+    &quot;&quot;&quot;
+    x: (D, N) activations (D = # features, N = batch size)
+    gamma: (D,) scale parameter
+    beta: (D,) shift parameter
+    &quot;&quot;&quot;
+    if mode == &#x27;train&#x27;:
+        # Compute batch statistics
+        mu = np.mean(x, axis=1, keepdims=True)  # (D, 1)
+        var = np.var(x, axis=1, keepdims=True)  # (D, 1)
+        
+        # Normalize
+        x_norm = (x - mu) / np.sqrt(var + eps)
+        
+        # Scale and shift
+        y = gamma * x_norm + beta
+        
+        # Update running statistics
+        running_mean = momentum * running_mean + (1 - momentum) * mu
+        running_var = momentum * running_var + (1 - momentum) * var
+        
+        # Cache for backward pass
+        cache = (x, x_norm, mu, var, gamma, beta)
+        return y, cache
+    
+    else:  # mode == &#x27;test&#x27;
+        # Use running statistics
+        x_norm = (x - running_mean) / np.sqrt(running_var + eps)
+        y = gamma * x_norm + beta
+        return y</code></pre>
+<h3 class="sh2">Backward Pass Derivation</h3>
+<h3 class="sh3">Gradient Flow</h3>
+<p class="prose">Loss L → Output y → Scaled x̂ → Normalized x̂ → Variance σ² → Mean μ → Input x
+
+Need to compute:
+- ∂L/∂x (gradient w.r.t. input, for previous layer)
+- ∂L/∂γ (gradient w.r.t. scale parameter)
+- ∂L/∂β (gradient w.r.t. shift parameter)</p>
+<h3 class="sh3">Gradient Equations</h3>
+<p class="prose">Given: ∂L/∂y (gradient from next layer)
+
+Gradient w.r.t. β (easy):
+∂L/∂β = Σ_{i=1}^m ∂L/∂y_i
+
+Gradient w.r.t. γ (easy):
+∂L/∂γ = Σ_{i=1}^m (∂L/∂y_i · x̂_i)
+
+Gradient w.r.t. x̂ (intermediate):
+∂L/∂x̂_i = ∂L/∂y_i · γ
+
+Gradient w.r.t. x (complex, involves chain rule through mean and variance):
+∂L/∂x_i = (1/m) · (1/σ_B) · [
+    m·(∂L/∂x̂_i) 
+    - Σ_j (∂L/∂x̂_j) 
+    - x̂_i·Σ_j (∂L/∂x̂_j · x̂_j)
+]</p>
+<h3 class="sh3">Intuition For Complex Gradient</h3>
+<p class="prose">Why is ∂L/∂x complex?
+
+Input x affects output through THREE paths:
+1. Direct: x → x̂ → y
+2. Through mean: x → μ → x̂ → y
+3. Through variance: x → σ² → x̂ → y
+
+Must sum gradients from all three paths (chain rule).</p>
+<h2 class="sh1">Implementation</h2>
+<h3 class="sh2">Batch Norm Layer Class</h3>
+<pre class="code"><code>import numpy as np
+
+class BatchNormLayer:
+    &quot;&quot;&quot;
+    Batch Normalization layer.
+    
+    Normalizes inputs to zero mean and unit variance, then applies
+    learnable scale (gamma) and shift (beta) parameters.
+    
+    Parameters:
+    - num_features: number of features/neurons (D)
+    - momentum: for moving average of statistics (default: 0.9)
+    - epsilon: small constant for numerical stability (default: 1e-5)
+    &quot;&quot;&quot;
+    
+    def __init__(self, num_features, momentum=0.9, epsilon=1e-5):
+        self.num_features = num_features
+        self.momentum = momentum
+        self.epsilon = epsilon
+        
+        # Learnable parameters
+        self.gamma = np.ones((num_features, 1))   # Scale (initialized to 1)
+        self.beta = np.zeros((num_features, 1))   # Shift (initialized to 0)
+        
+        # Running statistics (for inference)
+        self.running_mean = np.zeros((num_features, 1))
+        self.running_var = np.ones((num_features, 1))
+        
+        # Gradients (computed in backward pass)
+        self.dgamma = None
+        self.dbeta = None
+        
+        # Mode flag
+        self.training = True
+        
+        # Cache for backward pass
+        self.cache = None
+    
+    def forward(self, x):
+        &quot;&quot;&quot;
+        Forward pass through BatchNorm.
+        
+        Parameters:
+        - x: (num_features, batch_size) input activations
+        
+        Returns:
+        - y: (num_features, batch_size) normalized and scaled activations
+        &quot;&quot;&quot;
+        if self.training:
+            # Training mode: use batch statistics
+            
+            # Step 1: Compute batch mean and variance
+            batch_mean = np.mean(x, axis=1, keepdims=True)  # (D, 1)
+            batch_var = np.var(x, axis=1, keepdims=True)    # (D, 1)
+            
+            # Step 2: Normalize
+            x_centered = x - batch_mean
+            std = np.sqrt(batch_var + self.epsilon)
+            x_norm = x_centered / std
+            
+            # Step 3: Scale and shift
+            y = self.gamma * x_norm + self.beta
+            
+            # Step 4: Update running statistics (moving average)
+            self.running_mean = self.momentum * self.running_mean + \
+                               (1 - self.momentum) * batch_mean
+            self.running_var = self.momentum * self.running_var + \
+                              (1 - self.momentum) * batch_var
+            
+            # Cache for backward pass
+            self.cache = (x, x_centered, x_norm, batch_mean, batch_var, std)
+            
+            return y
+        
+        else:
+            # Inference mode: use running statistics
+            
+            x_norm = (x - self.running_mean) / \
+                    np.sqrt(self.running_var + self.epsilon)
+            y = self.gamma * x_norm + self.beta
+            
+            return y
+    
+    def backward(self, dL_dy):
+        &quot;&quot;&quot;
+        Backward pass through BatchNorm.
+        
+        Parameters:
+        - dL_dy: (num_features, batch_size) gradient from next layer
+        
+        Returns:
+        - dL_dx: (num_features, batch_size) gradient to previous layer
+        &quot;&quot;&quot;
+        # Retrieve cached values
+        x, x_centered, x_norm, batch_mean, batch_var, std = self.cache
+        batch_size = x.shape[1]
+        
+        # Gradient w.r.t. beta (simple sum)
+        self.dbeta = np.sum(dL_dy, axis=1, keepdims=True)
+        
+        # Gradient w.r.t. gamma (element-wise multiply and sum)
+        self.dgamma = np.sum(dL_dy * x_norm, axis=1, keepdims=True)
+        
+        # Gradient w.r.t. normalized x
+        dL_dx_norm = dL_dy * self.gamma
+        
+        # Gradient w.r.t. variance
+        dL_dvar = np.sum(dL_dx_norm * x_centered, axis=1, keepdims=True) * \
+                 (-0.5) * (batch_var + self.epsilon) ** (-1.5)
+        
+        # Gradient w.r.t. mean
+        dL_dmean = np.sum(dL_dx_norm * (-1.0 / std), axis=1, keepdims=True) + \
+                  dL_dvar * np.mean(-2.0 * x_centered, axis=1, keepdims=True)
+        
+        # Gradient w.r.t. input x (combining all paths)
+        dL_dx = (dL_dx_norm / std) + \
+               (dL_dvar * 2.0 * x_centered / batch_size) + \
+               (dL_dmean / batch_size)
+        
+        return dL_dx
+    
+    def train(self):
+        &quot;&quot;&quot;Set to training mode&quot;&quot;&quot;
+        self.training = True
+    
+    def eval(self):
+        &quot;&quot;&quot;Set to evaluation/inference mode&quot;&quot;&quot;
+        self.training = False
+    
+    def get_parameters(self):
+        &quot;&quot;&quot;Get learnable parameters&quot;&quot;&quot;
+        return {&#x27;gamma&#x27;: self.gamma, &#x27;beta&#x27;: self.beta}
+    
+    def get_gradients(self):
+        &quot;&quot;&quot;Get parameter gradients&quot;&quot;&quot;
+        return {&#x27;gamma&#x27;: self.dgamma, &#x27;beta&#x27;: self.dbeta}
+    
+    def __repr__(self):
+        return f&quot;BatchNorm(num_features={self.num_features}, &quot; \
+               f&quot;momentum={self.momentum}, training={self.training})&quot;</code></pre>
+<h3 class="sh2">Network Integration</h3>
+<pre class="code"><code>class NeuralNetworkWithBatchNorm:
+    &quot;&quot;&quot;
+    Neural network with Batch Normalization.
+    
+    Architecture: Linear → BatchNorm → Activation → ...
+    &quot;&quot;&quot;
+    
+    def __init__(self, layer_dims):
+        &quot;&quot;&quot;
+        Parameters:
+        - layer_dims: [input_size, hidden1, hidden2, ..., output_size]
+        &quot;&quot;&quot;
+        self.layer_dims = layer_dims
+        self.num_layers = len(layer_dims) - 1
+        
+        # Linear layers
+        self.linear_layers = []
+        for l in range(self.num_layers):
+            layer = LinearLayer(layer_dims[l], layer_dims[l+1])
+            self.linear_layers.append(layer)
+        
+        # BatchNorm layers (for hidden layers only, not input or output)
+        self.batchnorm_layers = []
+        for l in range(self.num_layers - 1):  # Skip output layer
+            bn = BatchNormLayer(num_features=layer_dims[l+1])
+            self.batchnorm_layers.append(bn)
+        
+        # Activation layers (ReLU for hidden layers)
+        self.activation_layers = []
+        for l in range(self.num_layers - 1):
+            self.activation_layers.append(ReLULayer())
+        
+        # Output layer
+        self.output_layer = SoftmaxCrossEntropyLayer()
+    
+    def forward(self, x, y_true=None):
+        &quot;&quot;&quot;
+        Forward pass: x → [Linear → BatchNorm → ReLU] → ... → Output
+        &quot;&quot;&quot;
+        a = x
+        
+        for l in range(self.num_layers):
+            # Linear transformation
+            z = self.linear_layers[l].forward(a)
+            
+            if l &lt; self.num_layers - 1:
+                # Hidden layer: BatchNorm → Activation
+                z_norm = self.batchnorm_layers[l].forward(z)
+                a = self.activation_layers[l].forward(z_norm)
+            else:
+                # Output layer: no BatchNorm, no activation
+                logits = z
+        
+        if y_true is not None:
+            loss, predictions = self.output_layer.forward(logits, y_true)
+            return loss, predictions
+        else:
+            predictions = self.output_layer.softmax(logits)
+            return predictions
+    
+    def backward(self):
+        &quot;&quot;&quot;Backward pass through entire network&quot;&quot;&quot;
+        dL_da = self.output_layer.backward()
+        
+        for l in reversed(range(self.num_layers)):
+            if l &lt; self.num_layers - 1:
+                # Backward through activation
+                dL_dz_norm = self.activation_layers[l].backward(dL_da)
+                # Backward through BatchNorm
+                dL_dz = self.batchnorm_layers[l].backward(dL_dz_norm)
+            else:
+                dL_dz = dL_da
+            
+            # Backward through linear layer
+            dL_da = self.linear_layers[l].backward(dL_dz)
+    
+    def train(self):
+        &quot;&quot;&quot;Set all BatchNorm layers to training mode&quot;&quot;&quot;
+        for bn in self.batchnorm_layers:
+            bn.train()
+    
+    def eval(self):
+        &quot;&quot;&quot;Set all BatchNorm layers to evaluation mode&quot;&quot;&quot;
+        for bn in self.batchnorm_layers:
+            bn.eval()</code></pre>
+<h3 class="sh2">Usage Example</h3>
+<p class="prose"># Create network with BatchNorm: 784 → 512 → 256 → 10
+network = NeuralNetworkWithBatchNorm(layer_dims=[784, 512, 256, 10])
+
+optimizer = Adam(learning_rate=0.001)
+
+# Training
+network.train()  # Enable BatchNorm training mode
+for epoch in range(num_epochs):
+    for X_batch, y_batch in train_loader:
+        loss, _ = network.forward(X_batch, y_batch)
+        network.backward()
+        
+        # Get parameters (includes gamma, beta from BatchNorm)
+        params = network.get_all_parameters()
+        grads = network.get_all_gradients()
+        optimizer.step(params, grads)
+
+# Evaluation
+network.eval()  # Switch to inference mode
+test_loss, test_acc = evaluate(network, test_loader)</p>
+<h2 class="sh1">Placement In Network</h2>
+<h3 class="sh2">Before Vs After Activation</h3>
+<h3 class="sh3">Option 1 Before Activation</h3>
+<p class="prose">Linear → BatchNorm → Activation
+
+Original paper recommendation:
+- Normalize linear outputs (before non-linearity)
+- Allows BatchNorm to &quot;correct&quot; for bad weight initialization
+
+z = W·x + b
+z_norm = BatchNorm(z)
+a = ReLU(z_norm)</p>
+<h3 class="sh3">Option 2 After Activation</h3>
+<p class="prose">Linear → Activation → BatchNorm
+
+Alternative (less common):
+- Normalize activations (after non-linearity)
+- Can be useful with certain activation functions
+
+z = W·x + b
+a_pre = ReLU(z)
+a = BatchNorm(a_pre)</p>
+<h3 class="sh3">Which Is Better</h3>
+<p class="prose">Empirically, BEFORE activation works better most of the time.
+
+Original BatchNorm paper (Ioffe &amp; Szegedy, 2015):
+&quot;Normalization before the non-linearity&quot;
+
+Exception: For some modern architectures (ResNets, Transformers),
+different orderings are used (covered in advanced topics).
+
+Default recommendation: Linear → BatchNorm → Activation</p>
+<h3 class="sh2">Which Layers To Batchnorm</h3>
+<h3 class="sh3">Standard Practice</h3>
+<p class="prose">Apply BatchNorm to:
+- All hidden layers
+
+Do NOT apply to:
+- Input layer (data already preprocessed/normalized)
+- Output layer (softmax needs unnormalized logits)</p>
+<h3 class="sh3">Convolutional Networks</h3>
+<p class="prose">For CNNs:
+Conv → BatchNorm → Activation (e.g., ReLU)
+
+BatchNorm operates on feature maps (one gamma/beta per channel)</p>
+<h3 class="sh3">Recurrent Networks</h3>
+<p class="prose">For RNNs/LSTMs:
+- BatchNorm less common (temporal dependencies complicate)
+- Layer Normalization preferred (covered in alternatives)</p>
+<h3 class="sh2">Bias Term Redundancy</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Linear layer: z = W·x + b
+BatchNorm: z_norm = γ·(z - μ)/σ + β
+
+The bias b is subtracted by BatchNorm (in the mean μ)!
+Then BatchNorm adds its own shift β.
+
+Result: Bias b is redundant, has no effect.</p>
+<h3 class="sh3">Optimization</h3>
+<p class="prose">When using BatchNorm, you can:
+- Remove bias from linear layers (set b=0)
+- Saves parameters and computation
+- Common practice in modern implementations
+
+Linear(bias=False) → BatchNorm → Activation</p>
+<h2 class="sh1">Benefits And Limitations</h2>
+<h3 class="sh2">Benefits</h3>
+<h3 class="sh3">Faster Convergence</h3>
+<p class="prose">With BatchNorm:
+- Can use 10x higher learning rates
+- Converges in 50% fewer epochs
+- Total training time reduced significantly
+
+Example: ResNet-50 on ImageNet
+Without BatchNorm: 90 epochs to converge
+With BatchNorm: 30 epochs to converge</p>
+<h3 class="sh3">Enables Deeper Networks</h3>
+<p class="prose">Pre-BatchNorm: Networks deeper than 20-30 layers hard to train
+Post-BatchNorm: Can train 100+, 1000+ layer networks
+
+Examples:
+- ResNet-152: 152 layers
+- ResNet-1001: 1001 layers
+
+BatchNorm prevents gradient vanishing/exploding in deep networks.</p>
+<h3 class="sh3">Less Sensitive To Initialization</h3>
+<p class="prose">Poor weight initialization less catastrophic.
+BatchNorm &quot;corrects&quot; bad initial distributions.
+
+Without BatchNorm: Careful He/Xavier initialization required
+With BatchNorm: Random initialization often works</p>
+<h3 class="sh3">Implicit Regularization</h3>
+<p class="prose">BatchNorm has regularizing effect similar to dropout:
+- Batch statistics introduce noise (different for each batch)
+- Prevents overfitting
+- Often can reduce or remove dropout when using BatchNorm</p>
+<h3 class="sh2">Limitations</h3>
+<h3 class="sh3">Batch Size Dependency</h3>
+<p class="prose">BatchNorm requires reasonably large batches:
+- Batch size ≥ 16: Usually okay
+- Batch size &lt; 8: Statistics become noisy
+- Batch size = 1: Completely breaks (undefined variance)
+
+Problem for:
+- Small memory GPUs (can&#x27;t fit large batches)
+- Online learning (batch size = 1)
+- Certain applications (medical imaging, high-res images)</p>
+<h3 class="sh3">Train Test Discrepancy</h3>
+<p class="prose">Training: Uses batch statistics (stochastic)
+Testing: Uses running statistics (deterministic)
+
+If training and test distributions differ significantly,
+performance can degrade.
+
+Must ensure running statistics are well-estimated.</p>
+<h3 class="sh3">Incompatible With Small Batches</h3>
+<p class="prose">Solutions for small batch sizes:
+- Group Normalization: Normalize within each sample
+- Layer Normalization: Normalize across features
+- Instance Normalization: For style transfer
+
+Covered in alternatives section.</p>
+<h3 class="sh3">Adds Complexity</h3>
+<p class="prose">More moving parts:
+- Extra parameters (gamma, beta)
+- Running statistics to maintain
+- Train/eval mode to manage
+- Backward pass more complex
+
+More things that can go wrong (debugging harder).</p>
+<h2 class="sh1">Alternative Normalizations</h2>
+<h3 class="sh2">Layer Normalization</h3>
+<h3 class="sh3">How It Differs</h3>
+<p class="prose">BatchNorm: Normalize across batch dimension
+LayerNorm: Normalize across feature dimension
+
+BatchNorm: For each feature, normalize across batch
+LayerNorm: For each sample, normalize across features</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">LayerNorm better for:
+- RNNs/LSTMs (sequence models)
+- Transformers (standard in modern NLP)
+- Variable batch sizes
+- Batch size = 1
+
+BatchNorm better for:
+- CNNs (image models)
+- Large batch sizes
+- When batch statistics meaningful</p>
+<h3 class="sh3">Brief Implementation</h3>
+<p class="prose"># LayerNorm normalizes per sample, across features
+mean = np.mean(x, axis=0, keepdims=True)  # Mean across features
+var = np.var(x, axis=0, keepdims=True)    # Var across features
+x_norm = (x - mean) / np.sqrt(var + eps)
+y = gamma * x_norm + beta</p>
+<h3 class="sh2">Group Normalization</h3>
+<h3 class="sh3">Motivation</h3>
+<p class="prose">Compromise between BatchNorm and LayerNorm:
+- Divide features into groups
+- Normalize within each group
+- Independent of batch size</p>
+<h3 class="sh3">Use Case</h3>
+<p class="prose">Good for:
+- Very small batch sizes (2-4)
+- Object detection (where large batches infeasible)
+- Video understanding</p>
+<h3 class="sh2">Instance Normalization</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Normalize each feature map independently, per sample.
+
+Used in:
+- Style transfer
+- GANs
+- Image generation</p>
+<h3 class="sh3">Difference From Batchnorm</h3>
+<p class="prose">BatchNorm: Statistics across batch
+InstanceNorm: Statistics per sample, per feature map
+
+Removes style information, preserves content.</p>
+<h3 class="sh2">Comparison Table</h3>
+<p class="prose">Normalization  | Normalize Over        | Best For           | Batch Size
+---------------|-----------------------|--------------------|-----------
+BatchNorm      | Batch, per feature    | CNNs, images       | Large (≥16)
+LayerNorm      | Features, per sample  | RNNs, Transformers | Any
+GroupNorm      | Feature groups        | Small batch apps   | Small (2-4)
+InstanceNorm   | Spatial, per sample   | Style transfer     | Any</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Batchnorm Statistics Leak Information</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Running mean and variance learned from training data.
+These statistics encode information about training distribution.
+
+Example: Running mean of feature 10 = 5.3
+→ Training data had feature 10 with average value 5.3
+
+Attacker with model access can extract these statistics.</p>
+<h3 class="sh3">Membership Inference Attacks</h3>
+<p class="prose">Attack: Determine if specific sample was in training set
+
+Method:
+1. For sample x, compute activations at each BatchNorm layer
+2. Compare to running statistics
+3. If activations match statistics closely → likely in training set
+
+BatchNorm statistics make this attack easier.</p>
+<h3 class="sh3">Mitigation</h3>
+<p class="prose">Differential privacy during training:
+- Add noise to batch statistics
+- Clip gradient updates
+
+Trade-off: Privacy vs accuracy</p>
+<h3 class="sh2">Batch Size Affects Adversarial Robustness</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Small batches → noisy statistics → noisier gradients
+→ Harder for adversary to compute precise adversarial examples
+
+Large batches → stable statistics → clean gradients
+→ Easier adversarial attacks</p>
+<h3 class="sh3">Empirical Finding</h3>
+<p class="prose">Models trained with BatchNorm (large batches):
+- Slightly less robust to adversarial attacks
+
+Models trained with small batches or LayerNorm:
+- Slightly more robust (noise acts as implicit defense)
+
+Effect is small but measurable.</p>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Forgetting Eval Mode</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">network.train()
+# ... training ...
+# Forgot network.eval()
+test_acc = evaluate(network, test_loader)</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">BatchNorm uses batch statistics at test time:
+- Test batch may have different distribution
+- Running statistics not used
+- Performance drops significantly
+
+Also: Results not reproducible (stochastic due to batch stats)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always call network.eval() before evaluation/inference.</p>
+<h3 class="sh2">Not Updating Running Statistics</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgot to update running_mean and running_var during training.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">At test time, running statistics are wrong (e.g., all zeros).
+Normalized outputs completely incorrect.
+Model fails at inference.</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Ensure running statistics updated in forward pass (training mode).</p>
+<h3 class="sh2">Batch Size Too Small</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using batch size = 2 or 4 with BatchNorm.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Batch statistics extremely noisy:
+- Variance estimate unreliable
+- Training unstable
+- Poor convergence</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use batch size ≥ 16 for BatchNorm.
+If impossible, use LayerNorm or GroupNorm instead.</p>
+<h3 class="sh2">Applying To Output Layer</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Linear → BatchNorm → Softmax (for output)</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Softmax expects unnormalized logits.
+BatchNorm changes scale → affects softmax probabilities.
+Training may still work but suboptimal.</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Never apply BatchNorm to output layer.
+Only to hidden layers.</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Internal covariate shift: layer inputs change distribution as previous layers update, slows training</li><li>BatchNorm normalizes to mean=0, std=1: makes input distribution stable across training</li><li>Learnable γ (scale) and β (shift): network can learn optimal distribution, not forced to zero-mean</li><li>Training uses batch statistics: μ_B, σ²_B computed from current mini-batch</li><li>Inference uses running statistics: μ_running, σ²_running from moving averages during training</li><li>Enables 10x higher learning rates: faster convergence, trains 100+ layer networks</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Place BatchNorm BEFORE activation: Linear → BatchNorm → ReLU (standard practice)</li><li>Apply to hidden layers only: NOT input or output layers</li><li>Remove bias from linear layers: b redundant when using BatchNorm, saves parameters</li><li>Use batch size ≥ 16: smaller batches make statistics noisy, training unstable</li><li>Always call network.eval(): critical before inference, uses running statistics not batch stats</li><li>Use LayerNorm for RNNs/Transformers: BatchNorm less suitable for sequential models</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Running statistics leak training data info: can enable membership inference attacks</li><li>Batch size affects robustness: smaller batches → noisier gradients → slightly more robust</li><li>BatchNorm statistics are attack surface: adversary can extract, analyze for information</li><li>Use differential privacy if needed: add noise to statistics, trade accuracy for privacy</li></ul>
+<h3 class="sh2">Debugging Checklist</h3>
+<ul class="blist"><li>Test accuracy much lower than train: forgot to call network.eval() before testing</li><li>Test predictions inconsistent/random: still using batch statistics at inference</li><li>Training unstable, loss explodes: batch size too small (&lt;8), switch to LayerNorm</li><li>Model fails at inference: running statistics not updated during training</li><li>Poor performance on output: incorrectly applied BatchNorm to output layer</li></ul>
+</article>

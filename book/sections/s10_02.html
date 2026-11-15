@@ -1,0 +1,1324 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 10 · Section 2 · ~6 pages</div>
+<h1>Adversarial Example Taxonomy: Goals, Constraints, and Detection Signals</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The complete adversarial taxonomy maps four attack goals across three access tiers and four input modalities, and assigns each cell a canonical technique and a Track 7 detection primitive.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Section 10.1 established the threat model shift from extraction to evasion. Section 10.2
+formalises that shift into a complete operational taxonomy. The taxonomy has three axes:
+attack goal (what wrong output the adversary wants), access tier (what information they
+have), and input modality (what type of data they are perturbing). Each combination maps
+to a canonical technique covered in Sections 10.3-10.9 and to one or more Track 7 detection
+primitives from Sections 10.11-10.12. The taxonomy is the scaffold for the rest of the
+chapter and the operational reference the Section 10.13 gateway uses to route alerts.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 10.2 is the classification layer between the threat model (Section 10.1) and the
+individual attack implementations (Sections 10.3-10.9). Every attack section occupies one
+or more cells in this taxonomy. Every detection primitive in Sections 10.11-10.12 covers
+one or more cells. Building the taxonomy here means each subsequent section can anchor
+itself precisely without re-establishing context.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 10.1: evasion threat model, Lp norm constraints, adversary access ladder, Track 7 pre-inference architecture</li><li>Section 9.2: extraction taxonomy (parallel structure; shared access tier framing)</li><li>Section 9.10: detection primitive library (five Ch9 primitives; Track 7 extends the same pattern)</li><li>Chapter 5 Section 5.8: MITRE ATLAS techniques (ATLAS sub-technique cross-reference built here)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why Classification Before Implementation</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Every threat catalogue needs a classification layer before an implementation layer. Without
+it, defences get designed against individual named attacks rather than against the underlying
+structural properties that make attacks work. A defence that blocks FGSM but not PGD, or
+catches image attacks but not tabular attacks, is a defence built against the name, not the
+threat class.
+
+The adversarial ML literature has produced dozens of named attacks since Szegedy et al. first
+demonstrated adversarial examples in 2013. FGSM, IFGSM, PGD, C&amp;W, DeepFool, Boundary Attack,
+NES, SPSA, HopSkipJump, Square Attack, TextFooler, HotFlip, BERT-Attack, Universal Adversarial
+Triggers -- each has its own paper, implementation, and benchmark. A practitioner confronting
+this list faces a combinatorial problem: which attacks should Track 7 defend against, and in
+what order?
+
+The taxonomy reduces that combinatorial problem to a structured question. A given production
+deployment has a specific input modality (image, text, tabular), a specific adversary access
+tier (the API configuration determines what information an adversary receives), and a specific
+set of attack goals the adversary has operational motivation to pursue. The taxonomy maps
+directly to the intersection of those three axes. A deployment with a hard-label text
+classification API, where the adversary wants untargeted evasion of a content moderation
+system, has a well-defined taxonomy cell -- and that cell maps to a specific set of attack
+families and a specific Track 7 configuration.
+
+Section 10.2 also makes the detection gap explicit. Not every taxonomy cell has full Track 7
+coverage. Some attack goal × tier × modality combinations are harder to detect than others.
+Making that explicit is more useful than claiming coverage that does not exist.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Four Attack Goals: Extending Targeted and Untargeted to the Full Goal Space</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Section 10.1 introduced targeted and untargeted misclassification as the primary goal axis.
+Two additional goals complete the formal taxonomy and are operationally important for
+production security systems.
+
+Goal 1 -- Untargeted misclassification: the adversary perturbs x such that argmax f(x_adv)
+!= y_true. Any wrong class is acceptable. This is the most common goal in academic adversarial
+ML benchmarks and the easier optimisation problem. For security deployments, untargeted evasion
+is sufficient when the downstream control fires on any positive classification (malware detected,
+fraud flagged, content blocked) -- any evasion of the positive class is operationally
+meaningful.
+
+Goal 2 -- Targeted misclassification: the adversary perturbs x such that argmax f(x_adv) =
+y_target where y_target is a specific adversary-chosen class. This is harder to achieve
+(tighter optimisation constraint) but more dangerous to defend against (forces a specific
+operational decision). Targeted evasion suppresses all downstream controls that depend on
+the specific classification output: a fraud transaction classified as a specific trusted
+merchant pattern, a malware binary classified as a specific signed system file hash.
+
+Goal 3 -- Confidence reduction: the adversary perturbs x such that the model&#x27;&#x27;s confidence
+in any class falls below an operational threshold, without necessarily changing the argmax
+class. This goal is relevant against systems that use calibrated confidence scores for
+downstream routing (send low-confidence predictions to human review, high-confidence to
+automated action). By reducing confidence, the adversary shifts decisions from automated
+processing to lower-scrutiny human queues. The perturbation budget is often smaller than for
+outright misclassification because the objective is softer.
+
+Goal 4 -- Detection evasion: the adversary crafts x_adv to fool the primary classifier
+(goal 1 or 2) while simultaneously evading Track 7&#x27;&#x27;s adversarial detector. This is the
+adaptive adversary goal -- the adversary knows Track 7 exists and optimises against it. An
+adversarial example that evades feature squeezing, consistency checking, and the adversarial
+classifier simultaneously requires a more constrained optimisation, typically resulting in
+larger perturbation or lower attack success rate. Detection evasion is the goal that motivates
+the three-primitive Track 7 ensemble: each primitive is harder to jointly evade than any
+single primitive alone.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Access Tier Taxonomy: Four Tiers Including Physical</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Section 10.1 covered three API-level access tiers. Section 10.2 adds the physical tier, which
+is qualitatively different and expands the threat surface beyond the API entirely.
+
+The three API tiers (white-box, grey-box, black-box) were defined in Section 10.1 with query
+budget implications. The key addition here is the relationship between tiers and attack goal
+feasibility. Not all tier × goal combinations are equally achievable. Targeted misclassification
+under black-box access (hard-label only) is orders of magnitude harder than under white-box
+access: the adversary has no gradient information to guide the optimisation toward the target
+class. The Boundary Attack can achieve untargeted black-box evasion efficiently, but targeted
+black-box evasion typically requires the adversary to have a surrogate model (elevating from
+black-box to transfer tier) or to use more expensive decision-based targeted attack variants.
+
+The physical tier describes adversaries who cannot query the API at all but interact with the
+physical environment sensed by the system. A stop sign attacked with stickers (Section 10.8),
+a face with adversarial glasses frames, a surface painted with an adversarial pattern -- these
+attacks bypass the API entirely. The physical tier maps to Goal 1 (untargeted, most common:
+cause any misclassification) and Goal 2 (targeted, harder: force a specific wrong class such
+as misidentifying a person as a known identity). Physical attacks require expectation-over-
+transformation optimisation because the perturbation must survive variation in viewing angle,
+lighting, and distance. Section 10.8 covers the complete physical attack threat model.
+
+The transfer tier -- introduced in Section 10.1 as the Chapter 9 elevation path -- fits between
+grey-box and white-box in terms of attack capability: the adversary has white-box access to a
+surrogate but only limited access to the victim. Transfer tier attacks can achieve all four
+goals against the surrogate; whether those goals transfer to the victim depends on how closely
+the surrogate matches the victim. This is why Section 9.4 distillation quality directly
+determines Chapter 10 transfer attack power.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Input Modality Dimension: Why the Attack Problem Changes Across Domains</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The input modality dimension is where the formal Lp norm framework either applies directly
+or requires domain-specific adaptation.
+
+Image inputs live in a continuous space where Lp norms are natural perturbation metrics.
+Each pixel is a continuous value in [0, 255]; perturbing a pixel by delta_i is a well-defined
+real-valued operation. The gradient of the loss with respect to pixel values is computable
+via backpropagation. This makes images the canonical domain for adversarial ML research:
+FGSM, PGD, and C&amp;W all operate most cleanly here. The perceptibility constraint (human
+eyes cannot detect small per-pixel changes at low epsilon) maps naturally to the L-infinity
+ball.
+
+Text inputs are discrete. A token is an integer index into a vocabulary -- not a continuous
+value. Perturbing token i by a real-valued delta_i produces a value that does not correspond
+to any valid token. The gradient of the loss with respect to token indices is not meaningful
+in the same way. The adversarial text literature has developed two workarounds: operating in
+embedding space (treat embeddings as continuous, optimise there, then project back to the
+nearest valid token) or using combinatorial search (try all single-token substitutions,
+greedy or beam). HotFlip (Section 10.9) uses the Jacobian of the loss with respect to a
+one-hot token indicator to identify which character flip most reduces confidence, operating
+in a continuous relaxation of the discrete space. TextFooler (Section 10.9) uses a fully
+discrete search with semantic similarity constraints. Neither approach admits a clean Lp
+bound; token edit distance (the number of substitutions) and semantic similarity (cosine
+distance between sentence embeddings) are the relevant constraints.
+
+Tabular inputs are mixed: some features are continuous (amount, duration, count) where Lp
+norms apply; some are categorical (merchant category, country code, payment method) where
+they do not. The physically realisable constraint is typically more restrictive than any Lp
+ball: a transaction cannot freely combine any feature values -- the adversary is limited to
+changes they can actually execute (changing the amount within a range, choosing among
+available merchant categories). Production adversarial attacks against fraud scoring systems
+typically use constrained optimisation over the continuous features with categorical features
+enumerated by search.
+
+Audio inputs share the continuous-space property with images but have frequency-domain
+structure that matters for perceptibility. Psychoacoustic models define what modifications
+are inaudible to humans, analogous to visual perceptibility constraints for images. Section
+10.2 does not develop audio attacks in depth; the Chapter 10 attack sections (10.3-10.9)
+focus on images and text as the two highest-production-risk modalities.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Budget-Success Tradeoff: The Operational Space Where Attacks Live</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The budget-success tradeoff curve describes how attack success rate varies with perturbation
+magnitude (epsilon) for a given attack method and norm. This curve has a characteristic shape:
+near zero at small epsilon, rising steeply through a transition region, plateauing near 100%
+at large epsilon. The location and slope of the transition region is what determines where
+production attacks operate.
+
+For L-infinity attacks on image classifiers, empirical benchmarks (CIFAR-10, ResNet family)
+show characteristic behaviour. FGSM achieves roughly 30% untargeted attack success at
+epsilon=4/255, rising to 60% at 8/255 and plateauing near 90% at 16/255. PGD (40 steps)
+achieves 65% at 4/255, rising to 95% at 8/255. C&amp;W L2 operates at a different epsilon scale
+(L2 distance rather than L-infinity); minimum-norm C&amp;W finds adversarial examples at L2
+distances typically below 1.0 for ResNet on CIFAR-10.
+
+The security-critical insight from this curve is the detectability-success joint distribution.
+High epsilon produces high attack success rates -- but large perturbations are more detectable
+by feature squeezing (Section 10.11), which reduces precision in the input and is most
+effective against fine-grained perturbations. Low epsilon produces lower attack success rates
+but smaller perturbations that survive feature squeezing with less prediction change. Production
+adversaries operate in the transition region: enough epsilon to achieve reliable attack success,
+small enough to stay below detection thresholds. Finding that region is itself an optimisation
+problem, which is why the Section 10.11 squeezer calibration must be done at the epsilon
+values where attack success rates are non-trivial, not at extreme epsilon values.
+
+For targeted attacks, the success-epsilon curve shifts right and down relative to untargeted
+attacks at matched epsilon: targeted attacks require larger perturbations to achieve the same
+success rate because the optimisation constraint is tighter. At the epsilon values where
+untargeted attacks achieve 95% success, targeted attacks may achieve only 40-60%. This trade-
+off means targeted attackers typically need larger perturbations, which are more detectable --
+the defender is in a slightly better position against targeted attacks at matched detection
+thresholds.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detectability Analysis: Goal-to-Detection-Signal Mapping</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Track 7 has three detection primitives, each with different coverage across the taxonomy
+cells. Understanding which primitive covers which cell is the design specification for the
+Section 10.13 gateway.
+
+Feature squeezing (Section 10.11) detects adversarial examples through their sensitivity to
+input transformation. The detection signal is: original prediction P(y|x) disagrees with
+transformed prediction P(y|squeezer(x)) by more than threshold tau. This works because
+adversarial perturbations are precisely calibrated to the victim model -- small input
+transformations (Gaussian blur, bit-depth reduction, JPEG compression) destroy the calibration
+and restore the correct classification, while natural images are robust to the same
+transformations. Coverage: best against L-infinity FGSM and PGD; weaker against C&amp;W (which
+finds minimum-norm adversarial examples that may survive squeezing) and against attacks that
+optimise through the squeezer (adaptive attacks).
+
+Consistency checking (Section 10.12) detects adversarial examples through prediction
+instability under random perturbation. The detection signal is: N randomly perturbed variants
+of x produce a distribution of predictions inconsistent with the original. This works because
+adversarial examples are typically fragile -- they exist in narrow regions of input space near
+decision boundaries, and small random perturbations push them back to correctly classified
+regions. Coverage: best against FGSM (single-step, sits precisely on boundary) and boundary
+attacks (by construction near boundary); weaker against C&amp;W with high confidence parameter
+kappa (which specifically optimises for a large margin, making the adversarial example robust
+to small perturbations).
+
+The adversarial detector classifier (Section 10.12) detects adversarial examples through
+learned pattern recognition. It is a binary classifier trained on adversarial and natural
+examples from multiple attack families. Coverage: generalises across attack families seen
+in training; degrades on novel attack families not represented in training data. The detection
+evasion goal (Goal 4) specifically targets this primitive -- an adversary who can query the
+adversarial detector may be able to craft examples that fool both the primary classifier and
+the adversarial classifier.
+
+The three-primitive ensemble (Section 10.13) provides meaningful resistance against
+Goal 4 (detection evasion) because jointly evading all three primitives is a harder
+optimisation problem than evading any one. A detection-evasion adversary must craft an
+example that: (a) survives squeezing without restoring correct classification, (b) is stable
+under random perturbation, and (c) falls outside the distribution the adversarial classifier
+was trained on. Achieving all three simultaneously requires larger perturbation budgets or
+higher query counts than single-primitive evasion.</p>
+<h3 class="sh2">Part 7</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Defender Decision Tree: Classifying Evasion Attempts from Observable Signals</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The defender decision tree converts observable signals into a taxonomy classification. In
+production, defenders do not observe attacks directly -- they observe API inputs, model
+outputs, and Track 7 detector signals. The decision tree maps those observations to the
+most likely attack goal, access tier, and modality.
+
+Signal 1: input modality. The modality is directly observable -- the input is an image,
+a text string, a feature vector, or an audio sample. This immediately constrains the
+applicable attack families and the relevant perturbation constraints.
+
+Signal 2: query pattern. Does the request arrive as an isolated submission, or is it part
+of an anomalous query pattern detected by Track 6? If Track 6 fired, the adversary was
+running a query-based attack (grey-box or black-box) requiring a campaign footprint. A
+single isolated submission with no query pattern signal suggests white-box access or a
+transfer attack.
+
+Signal 3: feature squeezer disagreement magnitude. A large disagreement (original prediction
+changes substantially under squeezing) suggests an L-infinity or L2 attack with a detectable
+perturbation. A small or zero disagreement suggests either a natural input or an adaptive
+attack that survives squeezing (C&amp;W style, or deliberate optimisation through the squeezer).
+
+Signal 4: consistency check result. Prediction instability under random perturbation
+(consistency check fires) suggests the adversarial example is near the decision boundary --
+consistent with FGSM, untargeted PGD, or boundary attacks. A stable prediction despite
+Track 7 squeezer signal suggests C&amp;W with high kappa (produces robust adversarial examples
+intentionally far from the boundary).
+
+Signal 5: primary model output class. Is the output the most likely wrong class (suggesting
+untargeted), a specific suspiciously plausible class (suggesting targeted), or an unusually
+low-confidence correct class (suggesting confidence reduction)? This signal is not conclusive
+alone but in combination with signals 3 and 4 narrows the goal classification.
+
+The operational value of the decision tree is that it gives the analyst a classification
+in under 60 seconds from the available signals, which informs the incident response
+(is this a one-off targeted attack or an ongoing campaign?) and the detection tuning
+priority (which Track 7 primitive needs recalibration based on the attack class observed?).</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Taxonomy Matrix: Goals x Access Tiers with Canonical Technique</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Four attack goals by four access tiers showing canonical technique, Chapter 10 section, and Track 7 primary coverage</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Attack Goal</li><li>White-box</li><li>Grey-box</li><li>Black-box</li><li>Physical / Transfer</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Untargeted misclassification</li><li>FGSM (10.3), PGD (10.4)</li><li>NES (10.6)</li><li>Boundary Attack (10.6)</li><li>Physical patch (10.8); Transfer via surrogate (10.7)</li></ul>
+<ul class="blist"><li>Targeted misclassification</li><li>PGD targeted (10.4), C&amp;W (10.5)</li><li>NES targeted</li><li>Hard-label targeted + surrogate</li><li>Targeted patch (10.8); High-kappa C&amp;W on surrogate (10.7)</li></ul>
+<ul class="blist"><li>Confidence reduction</li><li>FGSM low-eps variant; C&amp;W kappa=0 (10.5)</li><li>Score monitoring + gradient estimation</li><li>Hard-label confidence not directly observable</li><li>Not primary physical goal</li></ul>
+<ul class="blist"><li>Detection evasion (Goal 4)</li><li>Adaptive C&amp;W (10.5) with Track 7 knowledge</li><li>Adaptive black-box against ensemble</li><li>Adaptive transfer + ensemble evasion</li><li>Not primary physical goal</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Modality-Specific Perturbation Constraints</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Four input modalities with applicable perturbation metric, constraint interpretation, and example attack method</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Modality</li><li>Perturbation Metric</li><li>Constraint Interpretation</li><li>Example Attack</li><li>Section</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Image</li><li>L-infinity, L2, L0</li><li>Max per-pixel change; Euclidean distance; sparse pixel modification</li><li>FGSM (L-inf), C&amp;W (L2)</li><li>10.3, 10.5</li></ul>
+<ul class="blist"><li>Text</li><li>Token edit distance, semantic similarity</li><li>Number of token substitutions; cosine distance between embeddings</li><li>TextFooler, HotFlip</li><li>10.9</li></ul>
+<ul class="blist"><li>Tabular</li><li>Per-feature bounds + categorical search</li><li>Continuous features: Lp; categorical: enumeration; realisation constraint</li><li>Feature-space evasion</li><li>10.2 (reference)</li></ul>
+<ul class="blist"><li>Audio</li><li>Psychoacoustic threshold + L2</li><li>Inaudible perturbation; frequency-domain constraint</li><li>Out of scope Ch10; reference only</li><li>N/A</li></ul>
+<ul class="blist"><li>Malware (PE)</li><li>L0 over modifiable bytes</li><li>Bytes that can change without altering execution: header, overlay, padding</li><li>Functional L0 evasion</li><li>10.2 (reference)</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Goal-to-Detection-Signal Mapping</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Four attack goals mapped to the Track 7 primitive that provides best coverage, with signal description and coverage quality</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Attack Goal</li><li>Primary Track 7 Primitive</li><li>Detection Signal</li><li>Coverage Quality</li><li>Gap</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Untargeted misclassification</li><li>Feature squeezing (10.11)</li><li>Prediction change under squeezer transform</li><li>Good for L-inf/L2 image; limited for L0 and text</li><li>L0 sparse attacks; text attacks below squeezer sensitivity</li></ul>
+<ul class="blist"><li>Targeted misclassification</li><li>Consistency checker (10.12)</li><li>Prediction instability if near boundary; stable if high-kappa</li><li>Good for FGSM/boundary; limited for high-kappa C&amp;W</li><li>C&amp;W kappa&gt;0 targeted attacks are robust under random perturbation</li></ul>
+<ul class="blist"><li>Confidence reduction</li><li>Output entropy monitor (Ch9 Section 9.10 primitive extended)</li><li>Unusual output probability distribution even when argmax is correct</li><li>Moderate; requires calibrated confidence baseline</li><li>Detectable only if output probabilities are exposed (grey-box condition)</li></ul>
+<ul class="blist"><li>Detection evasion</li><li>Three-primitive ensemble (10.13)</li><li>Joint failure across squeezer + consistency + classifier primitives</li><li>Meaningful resistance; not absolute</li><li>Adaptive adversary with full Track 7 knowledge reduces ensemble advantage</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detectability Spectrum: Attack Family vs Track 7 Primitive Coverage</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Coverage levels for each attack family across the three Track 7 primitives. H=high coverage, M=moderate, L=low, X=not applicable</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Attack Family</li><li>Feature Squeezing</li><li>Consistency Check</li><li>Adversarial Classifier</li><li>Ensemble</li><li>Notes</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>FGSM (L-inf, low eps)</li><li>H</li><li>H</li><li>M</li><li>H</li><li>Fragile by design; survives poorly under squeezing or random perturbation</li></ul>
+<ul class="blist"><li>PGD (L-inf, high iter)</li><li>M</li><li>M</li><li>H</li><li>H</li><li>Stronger; consistency check catches if near boundary; classifier trained on PGD</li></ul>
+<ul class="blist"><li>C&amp;W L2 (kappa=0)</li><li>M</li><li>H</li><li>H</li><li>H</li><li>Minimum norm; squeezer moderate; consistency good; classifier trained on C&amp;W</li></ul>
+<ul class="blist"><li>C&amp;W L2 (kappa high)</li><li>M</li><li>L</li><li>M</li><li>M</li><li>High kappa = large margin = robust under perturbation; hardest for consistency check</li></ul>
+<ul class="blist"><li>Boundary Attack (black-box)</li><li>M</li><li>H</li><li>M</li><li>H</li><li>By construction near boundary; consistency check is primary primitive</li></ul>
+<ul class="blist"><li>NES (grey-box)</li><li>M</li><li>M</li><li>M</li><li>M</li><li>Similar properties to PGD; fewer iterations may leave weaker examples</li></ul>
+<ul class="blist"><li>Transfer attack (surrogate)</li><li>M</li><li>M</li><li>M</li><li>M</li><li>May not perfectly match victim boundary; slight fragility advantage for defender</li></ul>
+<ul class="blist"><li>Physical patch (10.8)</li><li>L</li><li>L</li><li>M</li><li>M</li><li>Patch is not a fine-grained perturbation; squeezing/consistency less effective; spatial detector needed</li></ul>
+<ul class="blist"><li>TextFooler (text)</li><li>X</li><li>H</li><li>M</li><li>M</li><li>No image squeezer applicable; semantic consistency check via back-translation is primary</li></ul>
+<ul class="blist"><li>Universal trigger (text)</li><li>X</li><li>L</li><li>H</li><li>M</li><li>Trigger is stable by design; classifier if trigger patterns in training data</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Taxonomy Matrix</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">adversarial_taxonomy_matrix.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Complete adversarial taxonomy as a queryable data structure: four goals by four access tiers by four input modalities with canonical technique, Chapter 10 section reference, and detection primitive per cell</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># adversarial_taxonomy_matrix.py
+# Section 10.2: Adversarial Example Taxonomy Matrix
+# 20260522 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List, Optional
+
+
+GOALS = [&#x27;untargeted&#x27;, &#x27;targeted&#x27;, &#x27;confidence_reduction&#x27;, &#x27;detection_evasion&#x27;]
+TIERS = [&#x27;white_box&#x27;, &#x27;grey_box&#x27;, &#x27;black_box&#x27;, &#x27;physical_transfer&#x27;]
+MODALITIES = [&#x27;image&#x27;, &#x27;text&#x27;, &#x27;tabular&#x27;, &#x27;audio&#x27;]
+
+
+@dataclass
+class TaxonomyCell:
+    goal: str
+    tier: str
+    modality: str
+    canonical_technique: str
+    section_ref: str
+    perturbation_constraint: str
+    track7_primary: str
+    coverage_quality: str
+    atlas_technique: str
+    notes: str = &#x27;&#x27;
+
+
+TAXONOMY: List[TaxonomyCell] = [
+    # Image x untargeted
+    TaxonomyCell(
+        goal=&#x27;untargeted&#x27;, tier=&#x27;white_box&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;FGSM, PGD&#x27;,
+        section_ref=&#x27;Section 10.3, 10.4&#x27;,
+        perturbation_constraint=&#x27;L-infinity epsilon &lt;= 8/255&#x27;,
+        track7_primary=&#x27;Feature squeezing (10.11)&#x27;,
+        coverage_quality=&#x27;high&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+    ),
+    TaxonomyCell(
+        goal=&#x27;untargeted&#x27;, tier=&#x27;grey_box&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;NES gradient estimation&#x27;,
+        section_ref=&#x27;Section 10.6&#x27;,
+        perturbation_constraint=&#x27;L-infinity; 1000-10000 queries per step&#x27;,
+        track7_primary=&#x27;Feature squeezing + query monitor (Track 6)&#x27;,
+        coverage_quality=&#x27;moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+    ),
+    TaxonomyCell(
+        goal=&#x27;untargeted&#x27;, tier=&#x27;black_box&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;Boundary Attack&#x27;,
+        section_ref=&#x27;Section 10.6&#x27;,
+        perturbation_constraint=&#x27;L2 distance minimisation; 10k-100k queries&#x27;,
+        track7_primary=&#x27;Consistency checker (10.12)&#x27;,
+        coverage_quality=&#x27;high&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+        notes=&#x27;Boundary proximity makes consistency check the primary primitive&#x27;,
+    ),
+    TaxonomyCell(
+        goal=&#x27;untargeted&#x27;, tier=&#x27;physical_transfer&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;Adversarial patch; transfer from surrogate&#x27;,
+        section_ref=&#x27;Section 10.7, 10.8&#x27;,
+        perturbation_constraint=&#x27;Patch region L-inf; transfer: ~0 victim queries&#x27;,
+        track7_primary=&#x27;Patch localisation detector (10.8)&#x27;,
+        coverage_quality=&#x27;moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043 / AML.T0043&#x27;,
+    ),
+    # Image x targeted
+    TaxonomyCell(
+        goal=&#x27;targeted&#x27;, tier=&#x27;white_box&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;PGD targeted, C&amp;W L2&#x27;,
+        section_ref=&#x27;Section 10.4, 10.5&#x27;,
+        perturbation_constraint=&#x27;L2 minimised; higher epsilon than untargeted&#x27;,
+        track7_primary=&#x27;Adversarial classifier (10.12)&#x27;,
+        coverage_quality=&#x27;high&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+    ),
+    TaxonomyCell(
+        goal=&#x27;targeted&#x27;, tier=&#x27;black_box&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;Hard-label targeted + surrogate elevation&#x27;,
+        section_ref=&#x27;Section 10.6, 10.7&#x27;,
+        perturbation_constraint=&#x27;L2; requires surrogate for practical feasibility&#x27;,
+        track7_primary=&#x27;Adversarial classifier + consistency&#x27;,
+        coverage_quality=&#x27;moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+        notes=&#x27;Practical targeted black-box typically uses Ch9 surrogate elevation&#x27;,
+    ),
+    # Text x untargeted
+    TaxonomyCell(
+        goal=&#x27;untargeted&#x27;, tier=&#x27;white_box&#x27;, modality=&#x27;text&#x27;,
+        canonical_technique=&#x27;HotFlip&#x27;,
+        section_ref=&#x27;Section 10.9&#x27;,
+        perturbation_constraint=&#x27;Token edit distance &lt;= k; semantic similarity &gt; threshold&#x27;,
+        track7_primary=&#x27;Semantic consistency check (back-translation)&#x27;,
+        coverage_quality=&#x27;moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+    ),
+    TaxonomyCell(
+        goal=&#x27;untargeted&#x27;, tier=&#x27;black_box&#x27;, modality=&#x27;text&#x27;,
+        canonical_technique=&#x27;TextFooler, BERT-Attack&#x27;,
+        section_ref=&#x27;Section 10.9&#x27;,
+        perturbation_constraint=&#x27;Word substitution; cosine sim &gt; 0.8&#x27;,
+        track7_primary=&#x27;Semantic consistency check&#x27;,
+        coverage_quality=&#x27;moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+        notes=&#x27;No image squeezer applicable; text-specific primitives required&#x27;,
+    ),
+    TaxonomyCell(
+        goal=&#x27;untargeted&#x27;, tier=&#x27;physical_transfer&#x27;, modality=&#x27;text&#x27;,
+        canonical_technique=&#x27;Universal adversarial trigger&#x27;,
+        section_ref=&#x27;Section 10.9&#x27;,
+        perturbation_constraint=&#x27;Fixed appended token sequence; universally adversarial&#x27;,
+        track7_primary=&#x27;Adversarial classifier if triggers in training data&#x27;,
+        coverage_quality=&#x27;low_to_moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+    ),
+    # Detection evasion
+    TaxonomyCell(
+        goal=&#x27;detection_evasion&#x27;, tier=&#x27;white_box&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;Adaptive C&amp;W with Track 7 knowledge&#x27;,
+        section_ref=&#x27;Section 10.5, 10.13&#x27;,
+        perturbation_constraint=&#x27;L2 with squeezer-survival and consistency constraints added&#x27;,
+        track7_primary=&#x27;Three-primitive ensemble (10.13)&#x27;,
+        coverage_quality=&#x27;moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043 / AML.T0015&#x27;,
+        notes=&#x27;Joint evasion of all three primitives requires larger perturbation budget&#x27;,
+    ),
+    # Confidence reduction
+    TaxonomyCell(
+        goal=&#x27;confidence_reduction&#x27;, tier=&#x27;white_box&#x27;, modality=&#x27;image&#x27;,
+        canonical_technique=&#x27;C&amp;W kappa=0; low-eps FGSM&#x27;,
+        section_ref=&#x27;Section 10.5&#x27;,
+        perturbation_constraint=&#x27;L2 minimum norm; small epsilon&#x27;,
+        track7_primary=&#x27;Output entropy monitor (Ch9 10.10 extended)&#x27;,
+        coverage_quality=&#x27;moderate&#x27;,
+        atlas_technique=&#x27;AML.T0043&#x27;,
+        notes=&#x27;Detectable only when model returns soft-label outputs&#x27;,
+    ),
+]
+
+
+def query(
+    goal: Optional[str] = None,
+    tier: Optional[str] = None,
+    modality: Optional[str] = None,
+) -&gt; List[TaxonomyCell]:
+    result = TAXONOMY
+    if goal:
+        result = [c for c in result if c.goal == goal]
+    if tier:
+        result = [c for c in result if c.tier == tier]
+    if modality:
+        result = [c for c in result if c.modality == modality]
+    return result
+
+
+def print_cell(c: TaxonomyCell) -&gt; None:
+    print(f&#x27;  Goal:        {c.goal}&#x27;)
+    print(f&#x27;  Tier:        {c.tier}&#x27;)
+    print(f&#x27;  Modality:    {c.modality}&#x27;)
+    print(f&#x27;  Technique:   {c.canonical_technique}&#x27;)
+    print(f&#x27;  Section:     {c.section_ref}&#x27;)
+    print(f&#x27;  Constraint:  {c.perturbation_constraint}&#x27;)
+    print(f&#x27;  Track7:      {c.track7_primary}&#x27;)
+    print(f&#x27;  Coverage:    {c.coverage_quality}&#x27;)
+    print(f&#x27;  ATLAS:       {c.atlas_technique}&#x27;)
+    if c.notes:
+        print(f&#x27;  Notes:       {c.notes}&#x27;)
+
+
+def coverage_summary() -&gt; None:
+    goal_counts = {g: len([c for c in TAXONOMY if c.goal == g]) for g in GOALS}
+    tier_counts = {t: len([c for c in TAXONOMY if c.tier == t]) for t in TIERS}
+    print(&#x27;\nCoverage by goal:&#x27;)
+    for g, n in goal_counts.items():
+        print(f&#x27;  {g}: {n} cells&#x27;)
+    print(&#x27;Coverage by tier:&#x27;)
+    for t, n in tier_counts.items():
+        print(f&#x27;  {t}: {n} cells&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;=== Full Taxonomy ===&#x27;)
+    for cell in TAXONOMY:
+        print(&#x27;-&#x27; * 50)
+        print_cell(cell)
+
+    print(&#x27;\n=== Black-box image cells ===&#x27;)
+    for cell in query(tier=&#x27;black_box&#x27;, modality=&#x27;image&#x27;):
+        print(&#x27;-&#x27; * 50)
+        print_cell(cell)
+
+    coverage_summary()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Budget-Success Tradeoff Curves</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">budget_success_tradeoff.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Attack success rate vs perturbation epsilon curves for FGSM, PGD, and C&amp;W, parameterised from published CIFAR-10 benchmarks, with the detectability-success joint region highlighted</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, requires numpy and matplotlib</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># budget_success_tradeoff.py
+# Section 10.2: Budget-Success Tradeoff Curves
+# 20260522 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+# Curves parameterised from published benchmarks:
+# FGSM/PGD: Madry et al. 2018 (CIFAR-10, ResNet); C&amp;W: Carlini &amp; Wagner 2017
+
+import numpy as np
+import matplotlib.pyplot as plt
+from dataclasses import dataclass
+from typing import Callable
+
+
+@dataclass
+class AttackCurve:
+    name: str
+    norm: str
+    success_fn: Callable[[np.ndarray], np.ndarray]
+    color: str
+    linestyle: str
+
+
+def logistic_curve(
+    x: np.ndarray,
+    midpoint: float,
+    steepness: float,
+    ceiling: float = 0.97,
+) -&gt; np.ndarray:
+    return ceiling / (1.0 + np.exp(-steepness * (x - midpoint)))
+
+
+# Parameterised from published L-inf benchmarks on CIFAR-10
+# epsilon axis in units of 1/255 for L-inf curves
+LINF_CURVES = [
+    AttackCurve(
+        name=&#x27;FGSM (L-inf)&#x27;,
+        norm=&#x27;L-infinity&#x27;,
+        success_fn=lambda x: logistic_curve(x, midpoint=10.0, steepness=0.28, ceiling=0.92),
+        color=&#x27;#e74c3c&#x27;,
+        linestyle=&#x27;-&#x27;,
+    ),
+    AttackCurve(
+        name=&#x27;PGD-40 (L-inf)&#x27;,
+        norm=&#x27;L-infinity&#x27;,
+        success_fn=lambda x: logistic_curve(x, midpoint=5.5, steepness=0.45, ceiling=0.97),
+        color=&#x27;#2980b9&#x27;,
+        linestyle=&#x27;-&#x27;,
+    ),
+    AttackCurve(
+        name=&#x27;PGD-7 (L-inf)&#x27;,
+        norm=&#x27;L-infinity&#x27;,
+        success_fn=lambda x: logistic_curve(x, midpoint=7.0, steepness=0.38, ceiling=0.95),
+        color=&#x27;#2980b9&#x27;,
+        linestyle=&#x27;--&#x27;,
+    ),
+]
+
+# C&amp;W L2 curve: epsilon axis in L2 distance units
+L2_CURVE = AttackCurve(
+    name=&#x27;C&amp;W L2&#x27;,
+    norm=&#x27;L2&#x27;,
+    success_fn=lambda x: logistic_curve(x, midpoint=0.4, steepness=8.0, ceiling=0.99),
+    color=&#x27;#27ae60&#x27;,
+    linestyle=&#x27;-&#x27;,
+)
+
+# Squeezer detection rate as a function of L-inf epsilon
+# Rises with epsilon: higher perturbation is more detectable
+def squeezer_detection_rate(eps: np.ndarray) -&gt; np.ndarray:
+    return logistic_curve(eps, midpoint=6.0, steepness=0.35, ceiling=0.88)
+
+
+def plot_linf_tradeoff(save_path: str = &#x27;budget_success_tradeoff_linf.png&#x27;) -&gt; None:
+    eps = np.linspace(0, 32, 500)
+    fig, ax = plt.subplots(figsize=(9, 5))
+
+    for curve in LINF_CURVES:
+        ax.plot(eps, curve.success_fn(eps), label=curve.name,
+                color=curve.color, linestyle=curve.linestyle, linewidth=2)
+
+    det_rate = squeezer_detection_rate(eps)
+    ax.plot(eps, det_rate, label=&#x27;Feature squeezer detection rate&#x27;,
+            color=&#x27;#8e44ad&#x27;, linestyle=&#x27;:&#x27;, linewidth=2)
+
+    # Shade the operational region: attack success &gt; 0.5 and detection &lt; 0.5
+    pgd_success = LINF_CURVES[1].success_fn(eps)
+    mask = (pgd_success &gt; 0.50) &amp; (det_rate &lt; 0.50)
+    if mask.any():
+        ax.fill_between(eps, 0, 1, where=mask, alpha=0.12, color=&#x27;#e67e22&#x27;,
+                        label=&#x27;Operational region (high success, low detection)&#x27;)
+
+    ax.set_xlabel(&#x27;Perturbation epsilon (units of 1/255 for L-inf)&#x27;, fontsize=11)
+    ax.set_ylabel(&#x27;Rate&#x27;, fontsize=11)
+    ax.set_title(&#x27;L-infinity Attack Success vs Squeezer Detection Rate\n(CIFAR-10 ResNet, parameterised from published benchmarks)&#x27;, fontsize=11)
+    ax.set_xlim(0, 32)
+    ax.set_ylim(0, 1.05)
+    ax.axvline(8, color=&#x27;grey&#x27;, linestyle=&#x27;--&#x27;, alpha=0.5, linewidth=1)
+    ax.text(8.3, 0.05, &#x27;eps=8/255\n(common benchmark)&#x27;, fontsize=8, color=&#x27;grey&#x27;)
+    ax.legend(fontsize=9, loc=&#x27;center right&#x27;)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches=&#x27;tight&#x27;)
+    print(f&#x27;Saved: {save_path}&#x27;)
+    plt.show()
+
+
+def plot_l2_tradeoff(save_path: str = &#x27;budget_success_tradeoff_l2.png&#x27;) -&gt; None:
+    eps_l2 = np.linspace(0, 2.0, 500)
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.plot(eps_l2, L2_CURVE.success_fn(eps_l2),
+            label=L2_CURVE.name, color=L2_CURVE.color, linewidth=2)
+    ax.set_xlabel(&#x27;L2 perturbation distance&#x27;, fontsize=11)
+    ax.set_ylabel(&#x27;Attack success rate&#x27;, fontsize=11)
+    ax.set_title(&#x27;C&amp;W L2 Attack Success Rate vs Perturbation Norm\n(CIFAR-10, parameterised)&#x27;, fontsize=11)
+    ax.set_xlim(0, 2.0)
+    ax.set_ylim(0, 1.05)
+    ax.legend(fontsize=9)
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches=&#x27;tight&#x27;)
+    print(f&#x27;Saved: {save_path}&#x27;)
+    plt.show()
+
+
+def print_operational_region_summary() -&gt; None:
+    eps = np.linspace(0, 32, 1000)
+    pgd_success = LINF_CURVES[1].success_fn(eps)
+    det_rate = squeezer_detection_rate(eps)
+    mask = (pgd_success &gt; 0.50) &amp; (det_rate &lt; 0.50)
+    if mask.any():
+        lo = eps[mask][0]
+        hi = eps[mask][-1]
+        print(f&#x27;Operational region (PGD success &gt; 50%, squeezer detection &lt; 50%):&#x27;)
+        print(f&#x27;  L-inf epsilon range: {lo:.1f}/255 to {hi:.1f}/255&#x27;)
+        print(f&#x27;  Production attacks concentrate in this region&#x27;)
+    else:
+        print(&#x27;No operational region found at these thresholds&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_operational_region_summary()
+    plot_linf_tradeoff()
+    plot_l2_tradeoff()</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Goal-to-Detection-Signal Mapper</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">goal_to_detection_mapper.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps each of the four attack goals to Track 7 primitives with coverage scores, identifies coverage gaps, and generates the detection configuration recommendation for a given threat model</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># goal_to_detection_mapper.py
+# Section 10.2: Goal-to-Detection-Signal Mapping
+# 20260522 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List, Dict
+
+
+@dataclass
+class DetectionMapping:
+    goal: str
+    primitives: List[str]
+    signals: List[str]
+    coverage_scores: Dict[str, float]
+    gaps: List[str]
+    recommended_config: str
+
+
+DETECTION_MAPPINGS: List[DetectionMapping] = [
+    DetectionMapping(
+        goal=&#x27;untargeted&#x27;,
+        primitives=[&#x27;feature_squeezing&#x27;, &#x27;consistency_checker&#x27;, &#x27;adversarial_classifier&#x27;],
+        signals=[
+            &#x27;Prediction change under squeezer transform (primary)&#x27;,
+            &#x27;Prediction instability under random perturbation&#x27;,
+            &#x27;Binary adversarial classification score&#x27;,
+        ],
+        coverage_scores={
+            &#x27;feature_squeezing&#x27;: 0.75,
+            &#x27;consistency_checker&#x27;: 0.70,
+            &#x27;adversarial_classifier&#x27;: 0.80,
+            &#x27;ensemble&#x27;: 0.92,
+        },
+        gaps=[
+            &#x27;L0 sparse attacks survive squeezing (few pixels changed)&#x27;,
+            &#x27;Text modality: image squeezer not applicable&#x27;,
+        ],
+        recommended_config=(
+            &#x27;Full ensemble with squeezer as primary (pre-inference stage). &#x27;
+            &#x27;For text modality substitute semantic consistency check.&#x27;
+        ),
+    ),
+    DetectionMapping(
+        goal=&#x27;targeted&#x27;,
+        primitives=[&#x27;adversarial_classifier&#x27;, &#x27;consistency_checker&#x27;],
+        signals=[
+            &#x27;Binary adversarial classification score (primary)&#x27;,
+            &#x27;Prediction stability: targeted C&amp;W with high kappa is stable&#x27;,
+        ],
+        coverage_scores={
+            &#x27;feature_squeezing&#x27;: 0.60,
+            &#x27;consistency_checker&#x27;: 0.55,
+            &#x27;adversarial_classifier&#x27;: 0.78,
+            &#x27;ensemble&#x27;: 0.85,
+        },
+        gaps=[
+            &#x27;High-kappa C&amp;W specifically optimises for a large margin: robust under perturbation&#x27;,
+            &#x27;C&amp;W targeted examples may be close to the natural image; squeezer less effective&#x27;,
+        ],
+        recommended_config=(
+            &#x27;Adversarial classifier as primary; consistency check as secondary. &#x27;
+            &#x27;Ensure training data includes targeted attack examples.&#x27;
+        ),
+    ),
+    DetectionMapping(
+        goal=&#x27;confidence_reduction&#x27;,
+        primitives=[&#x27;output_entropy_monitor&#x27;],
+        signals=[
+            &#x27;Unusually flat output probability distribution&#x27;,
+            &#x27;Correct class confidence below operational threshold&#x27;,
+        ],
+        coverage_scores={
+            &#x27;feature_squeezing&#x27;: 0.40,
+            &#x27;consistency_checker&#x27;: 0.45,
+            &#x27;adversarial_classifier&#x27;: 0.50,
+            &#x27;output_entropy_monitor&#x27;: 0.65,
+            &#x27;ensemble&#x27;: 0.70,
+        },
+        gaps=[
+            &#x27;Detectable only when model returns soft-label outputs&#x27;,
+            &#x27;Hard-label API: confidence not observable; goal effectively undetectable&#x27;,
+        ],
+        recommended_config=(
+            &#x27;Output entropy monitor (from Ch9 Section 9.10) extended to Track 7. &#x27;
+            &#x27;Requires soft-label API output. If hard-label only: gap cannot be closed by Track 7.&#x27;
+        ),
+    ),
+    DetectionMapping(
+        goal=&#x27;detection_evasion&#x27;,
+        primitives=[&#x27;feature_squeezing&#x27;, &#x27;consistency_checker&#x27;, &#x27;adversarial_classifier&#x27;],
+        signals=[
+            &#x27;Joint failure: all three primitives must miss simultaneously&#x27;,
+            &#x27;Unusually large perturbation norm (adaptive attacks need more budget)&#x27;,
+        ],
+        coverage_scores={
+            &#x27;feature_squeezing&#x27;: 0.50,
+            &#x27;consistency_checker&#x27;: 0.50,
+            &#x27;adversarial_classifier&#x27;: 0.55,
+            &#x27;ensemble&#x27;: 0.75,
+        },
+        gaps=[
+            &#x27;Adversary with full Track 7 knowledge can optimise jointly against all three primitives&#x27;,
+            &#x27;No formal guarantee; ensemble resistance scales with number of diverse primitives&#x27;,
+        ],
+        recommended_config=(
+            &#x27;Full three-primitive ensemble mandatory. &#x27;
+            &#x27;Consider fourth primitive (randomised smoothing certificate, Section 10.14) &#x27;
+            &#x27;for highest-risk deployments.&#x27;
+        ),
+    ),
+]
+
+
+def print_mapping(m: DetectionMapping) -&gt; None:
+    print(f&#x27;\nGoal: {m.goal.upper()}&#x27;)
+    print(f&#x27;  Primary primitives: {&quot;, &quot;.join(m.primitives)}&#x27;)
+    print(f&#x27;  Detection signals:&#x27;)
+    for s in m.signals:
+        print(f&#x27;    - {s}&#x27;)
+    print(f&#x27;  Coverage scores:&#x27;)
+    for p, score in m.coverage_scores.items():
+        bar = &#x27;#&#x27; * int(score * 20)
+        print(f&#x27;    {p:&lt;28} {bar:&lt;20} {score:.2f}&#x27;)
+    print(f&#x27;  Coverage gaps:&#x27;)
+    for g in m.gaps:
+        print(f&#x27;    - {g}&#x27;)
+    print(f&#x27;  Recommended config: {m.recommended_config}&#x27;)
+
+
+def recommend_for_threat_model(
+    goals: List[str],
+    modality: str,
+    api_type: str,
+) -&gt; None:
+    print(f&#x27;\n--- Detection recommendation ---&#x27;)
+    print(f&#x27;Goals: {goals} | Modality: {modality} | API: {api_type}&#x27;)
+    primitives_needed = set()
+    for goal in goals:
+        mapping = next((m for m in DETECTION_MAPPINGS if m.goal == goal), None)
+        if mapping:
+            primitives_needed.update(mapping.primitives)
+    if modality == &#x27;text&#x27;:
+        primitives_needed.discard(&#x27;feature_squeezing&#x27;)
+        primitives_needed.add(&#x27;semantic_consistency_checker&#x27;)
+    if api_type == &#x27;hard_label&#x27;:
+        primitives_needed.discard(&#x27;output_entropy_monitor&#x27;)
+    print(f&#x27;Required Track 7 primitives: {sorted(primitives_needed)}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Goal-to-Detection-Signal Mapping&#x27;)
+    print(&#x27;=&#x27; * 40)
+    for m in DETECTION_MAPPINGS:
+        print_mapping(m)
+
+    recommend_for_threat_model(
+        goals=[&#x27;untargeted&#x27;, &#x27;detection_evasion&#x27;],
+        modality=&#x27;image&#x27;,
+        api_type=&#x27;soft_label&#x27;,
+    )
+    recommend_for_threat_model(
+        goals=[&#x27;untargeted&#x27;],
+        modality=&#x27;text&#x27;,
+        api_type=&#x27;hard_label&#x27;,
+    )</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS Sub-technique Cross-reference</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">atlas_subtech_crossref.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps every adversarial attack family in Chapter 10 to its ATLAS sub-technique with tactic, section reference, and Sigma rule status</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># atlas_subtech_crossref.py
+# Section 10.2: ATLAS Sub-technique Cross-reference for Chapter 10
+# 20260522 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class AtlasEntry:
+    technique_id: str
+    tactic: str
+    attack_family: str
+    chapter_section: str
+    access_tiers: List[str]
+    modalities: List[str]
+    sigma_status: str
+
+
+ATLAS_CROSSREF: List[AtlasEntry] = [
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;FGSM&#x27;,
+        chapter_section=&#x27;Section 10.3&#x27;,
+        access_tiers=[&#x27;white_box&#x27;],
+        modalities=[&#x27;image&#x27;, &#x27;tabular&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule (Section 10.13)&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;PGD&#x27;,
+        chapter_section=&#x27;Section 10.4&#x27;,
+        access_tiers=[&#x27;white_box&#x27;],
+        modalities=[&#x27;image&#x27;, &#x27;tabular&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule (Section 10.13)&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;C&amp;W L2 / L0 / L-inf&#x27;,
+        chapter_section=&#x27;Section 10.5&#x27;,
+        access_tiers=[&#x27;white_box&#x27;],
+        modalities=[&#x27;image&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule (Section 10.13)&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;Boundary Attack&#x27;,
+        chapter_section=&#x27;Section 10.6&#x27;,
+        access_tiers=[&#x27;black_box&#x27;],
+        modalities=[&#x27;image&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule (Section 10.13)&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;NES (Natural Evolution Strategies)&#x27;,
+        chapter_section=&#x27;Section 10.6&#x27;,
+        access_tiers=[&#x27;grey_box&#x27;],
+        modalities=[&#x27;image&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule (Section 10.13)&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;Surrogate transfer attack&#x27;,
+        chapter_section=&#x27;Section 10.7&#x27;,
+        access_tiers=[&#x27;physical_transfer&#x27;],
+        modalities=[&#x27;image&#x27;, &#x27;text&#x27;, &#x27;tabular&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule; transfer sub-condition&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;Universal adversarial patch&#x27;,
+        chapter_section=&#x27;Section 10.8&#x27;,
+        access_tiers=[&#x27;physical_transfer&#x27;],
+        modalities=[&#x27;image&#x27;],
+        sigma_status=&#x27;Sub-condition in AML.T0043 Sigma rule (physical variant)&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;HotFlip&#x27;,
+        chapter_section=&#x27;Section 10.9&#x27;,
+        access_tiers=[&#x27;white_box&#x27;],
+        modalities=[&#x27;text&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule; text sub-condition&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;TextFooler / BERT-Attack&#x27;,
+        chapter_section=&#x27;Section 10.9&#x27;,
+        access_tiers=[&#x27;black_box&#x27;, &#x27;grey_box&#x27;],
+        modalities=[&#x27;text&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule; text sub-condition&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0043&#x27;,
+        tactic=&#x27;ML Attack Staging&#x27;,
+        attack_family=&#x27;Universal adversarial trigger&#x27;,
+        chapter_section=&#x27;Section 10.9&#x27;,
+        access_tiers=[&#x27;white_box&#x27;, &#x27;black_box&#x27;],
+        modalities=[&#x27;text&#x27;],
+        sigma_status=&#x27;Covered by AML.T0043 Sigma rule; trigger sub-condition&#x27;,
+    ),
+    AtlasEntry(
+        technique_id=&#x27;AML.T0015&#x27;,
+        tactic=&#x27;Impact&#x27;,
+        attack_family=&#x27;ML model evasion (runtime)&#x27;,
+        chapter_section=&#x27;Section 10.13, 10.14, 10.15&#x27;,
+        access_tiers=[&#x27;white_box&#x27;, &#x27;grey_box&#x27;, &#x27;black_box&#x27;, &#x27;physical_transfer&#x27;],
+        modalities=[&#x27;image&#x27;, &#x27;text&#x27;, &#x27;tabular&#x27;],
+        sigma_status=&#x27;Completed as AML.T0015 Sigma rule in Section 10.13&#x27;,
+    ),
+]
+
+
+def print_crossref_by_section(entries: List[AtlasEntry]) -&gt; None:
+    by_section: dict = {}
+    for e in entries:
+        by_section.setdefault(e.chapter_section, []).append(e)
+    for section in sorted(by_section):
+        print(f&#x27;\n{section}&#x27;)
+        for e in by_section[section]:
+            print(f&#x27;  [{e.technique_id}] {e.attack_family}&#x27;)
+            print(f&#x27;    Tiers: {&quot;, &quot;.join(e.access_tiers)}&#x27;)
+            print(f&#x27;    Modalities: {&quot;, &quot;.join(e.modalities)}&#x27;)
+            print(f&#x27;    Sigma: {e.sigma_status}&#x27;)
+
+
+def technique_coverage_count(entries: List[AtlasEntry]) -&gt; None:
+    ids = {}
+    for e in entries:
+        ids[e.technique_id] = ids.get(e.technique_id, 0) + 1
+    print(&#x27;\nATLAS technique coverage count:&#x27;)
+    for tid, count in sorted(ids.items()):
+        print(f&#x27;  {tid}: {count} attack families&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;ATLAS Sub-technique Cross-reference: Chapter 10&#x27;)
+    print(&#x27;=&#x27; * 50)
+    print_crossref_by_section(ATLAS_CROSSREF)
+    technique_coverage_count(ATLAS_CROSSREF)</code></pre>
+<h3 class="sh2">Deliverable 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Defender Decision Tree</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">defender_decision_tree.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Classifies an observed evasion attempt into the taxonomy using observable signals: input modality, query pattern, squeezer disagreement, consistency check result, and primary model output</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># defender_decision_tree.py
+# Section 10.2: Defender Decision Tree for Evasion Attempt Classification
+# 20260522 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import Optional, List
+
+
+@dataclass
+class EvasionSignals:
+    modality: str                      # &#x27;image&#x27;, &#x27;text&#x27;, &#x27;tabular&#x27;, &#x27;audio&#x27;
+    query_pattern_fired: bool          # Track 6 fired (extraction campaign detected)
+    squeezer_disagreement: float       # 0.0 = no change; 1.0 = complete flip
+    squeezer_disagreement_threshold: float = 0.20
+    consistency_check_fired: bool = False
+    consistency_instability_score: float = 0.0
+    output_confidence: Optional[float] = None   # None if hard-label API
+    output_class_suspicious: bool = False       # Specific expected wrong class
+
+
+@dataclass
+class EvasionClassification:
+    likely_goal: str
+    likely_tier: str
+    confidence: str
+    canonical_technique: str
+    recommended_primitive: str
+    rationale: str
+
+
+def classify_evasion(signals: EvasionSignals) -&gt; EvasionClassification:
+    # Step 1: Determine access tier from query pattern
+    if signals.query_pattern_fired:
+        tier = &#x27;grey_or_black_box_campaign&#x27;
+    else:
+        tier = &#x27;white_box_or_transfer&#x27;
+
+    # Step 2: Determine goal from output signals
+    if signals.output_confidence is not None and signals.output_confidence &lt; 0.40:
+        goal = &#x27;confidence_reduction&#x27;
+        technique = &#x27;Low-epsilon FGSM or C&amp;W kappa=0&#x27;
+        primitive = &#x27;Output entropy monitor + feature squeezing&#x27;
+    elif signals.output_class_suspicious:
+        goal = &#x27;targeted&#x27;
+        technique = &#x27;PGD targeted or C&amp;W L2 high-kappa&#x27;
+        primitive = &#x27;Adversarial classifier (primary) + consistency checker&#x27;
+    else:
+        goal = &#x27;untargeted&#x27;
+        technique = &#x27;FGSM or PGD (white-box); Boundary Attack (black-box)&#x27;
+        primitive = &#x27;Feature squeezing (primary) + consistency checker&#x27;
+
+    # Step 3: Refine tier estimate from squeezer and consistency signals
+    large_squeezer = signals.squeezer_disagreement &gt; signals.squeezer_disagreement_threshold
+    if large_squeezer and not signals.consistency_check_fired:
+        tier_refined = &#x27;white_box_fgsm_or_pgd&#x27;
+        conf = &#x27;moderate&#x27;
+    elif not large_squeezer and signals.consistency_check_fired:
+        tier_refined = &#x27;near_boundary_black_box&#x27;
+        conf = &#x27;moderate&#x27;
+    elif large_squeezer and signals.consistency_check_fired:
+        tier_refined = &#x27;white_box_low_iterations&#x27;
+        conf = &#x27;low&#x27;
+    elif not large_squeezer and not signals.consistency_check_fired:
+        tier_refined = &#x27;cw_high_kappa_or_transfer_or_natural&#x27;
+        conf = &#x27;low&#x27;
+    else:
+        tier_refined = tier
+        conf = &#x27;low&#x27;
+
+    # Step 4: Modality-specific override
+    if signals.modality == &#x27;text&#x27;:
+        primitive = &#x27;Semantic consistency check (back-translation) + adversarial classifier&#x27;
+        technique = &#x27;TextFooler or HotFlip (if white-box)&#x27;
+
+    rationale = (
+        f&#x27;Modality={signals.modality}, &#x27;
+        f&#x27;track6={signals.query_pattern_fired}, &#x27;
+        f&#x27;squeezer_disagreement={signals.squeezer_disagreement:.2f}, &#x27;
+        f&#x27;consistency_fired={signals.consistency_check_fired}, &#x27;
+        f&#x27;conf={signals.output_confidence}&#x27;
+    )
+
+    return EvasionClassification(
+        likely_goal=goal,
+        likely_tier=tier_refined,
+        confidence=conf,
+        canonical_technique=technique,
+        recommended_primitive=primitive,
+        rationale=rationale,
+    )
+
+
+def print_classification(c: EvasionClassification) -&gt; None:
+    print(f&#x27;  Likely goal:      {c.likely_goal}&#x27;)
+    print(f&#x27;  Likely tier:      {c.likely_tier}&#x27;)
+    print(f&#x27;  Confidence:       {c.confidence}&#x27;)
+    print(f&#x27;  Technique:        {c.canonical_technique}&#x27;)
+    print(f&#x27;  Recommended:      {c.recommended_primitive}&#x27;)
+    print(f&#x27;  Rationale:        {c.rationale}&#x27;)
+
+
+SCENARIOS: List[EvasionSignals] = [
+    EvasionSignals(
+        modality=&#x27;image&#x27;,
+        query_pattern_fired=False,
+        squeezer_disagreement=0.75,
+        consistency_check_fired=True,
+        output_confidence=0.85,
+        output_class_suspicious=False,
+    ),
+    EvasionSignals(
+        modality=&#x27;image&#x27;,
+        query_pattern_fired=False,
+        squeezer_disagreement=0.15,
+        consistency_check_fired=False,
+        output_confidence=0.92,
+        output_class_suspicious=True,
+    ),
+    EvasionSignals(
+        modality=&#x27;image&#x27;,
+        query_pattern_fired=True,
+        squeezer_disagreement=0.30,
+        consistency_check_fired=True,
+        output_confidence=None,
+        output_class_suspicious=False,
+    ),
+    EvasionSignals(
+        modality=&#x27;text&#x27;,
+        query_pattern_fired=False,
+        squeezer_disagreement=0.0,
+        consistency_check_fired=True,
+        output_confidence=0.60,
+        output_class_suspicious=False,
+    ),
+    EvasionSignals(
+        modality=&#x27;image&#x27;,
+        query_pattern_fired=False,
+        squeezer_disagreement=0.10,
+        consistency_check_fired=False,
+        output_confidence=0.30,
+        output_class_suspicious=False,
+    ),
+]
+
+SCENARIO_NAMES = [
+    &#x27;Large squeezer disagreement + consistency fired -&gt; FGSM/PGD white-box&#x27;,
+    &#x27;Low squeezer + stable + suspicious class -&gt; targeted C&amp;W high-kappa&#x27;,
+    &#x27;Track 6 fired + moderate signals -&gt; black-box campaign&#x27;,
+    &#x27;Text modality + consistency fired -&gt; TextFooler/semantic substitution&#x27;,
+    &#x27;Low squeezer + stable + low confidence -&gt; confidence reduction&#x27;,
+]
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Defender Decision Tree: Evasion Attempt Classification&#x27;)
+    print(&#x27;=&#x27; * 56)
+    for name, signals in zip(SCENARIO_NAMES, SCENARIOS):
+        print(f&#x27;\nScenario: {name}&#x27;)
+        result = classify_evasion(signals)
+        print_classification(result)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Using the taxonomy as a checklist rather than as a filter -- defending all cells rather than the cells relevant to the deployment</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The full taxonomy matrix has 4 goals x 4 tiers x 4 modalities = 64 potential cells.
+Engineers see the complete matrix and conclude they must defend against all cells.
+Track 7 gets configured with maximum primitives regardless of which cells the
+actual deployment is exposed to.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Over-broad Track 7 configuration adds unnecessary latency (more squeezers, more consistency
+check variants) and raises false positive rate for non-applicable attack classes. A text-only
+deployment running image squeezers gets no security benefit and measurable latency cost.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Filter the taxonomy to the cells that apply: determine the deployment modality, the realistic
+adversary access tier (based on API configuration), and the attack goals that adversaries have
+operational motivation to pursue. Configure Track 7 for those cells only. The taxonomy is a
+filter, not a checklist.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating confidence reduction (Goal 3) as undetectable because it does not change the argmax class</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Evaluation metrics for adversarial robustness focus on accuracy (does the argmax class
+change?). Confidence reduction that does not change argmax does not appear in standard
+adversarial robustness benchmarks and gets treated as a non-event.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Systems that route low-confidence predictions to lower-scrutiny processing (human review
+queues, secondary classifiers) are bypassed by confidence reduction attacks without any
+alert. The adversary achieves a routing bypass without triggering any accuracy-based
+detection threshold.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Monitor output probability distributions, not just argmax accuracy. The output entropy
+monitor from Section 9.10 applies here: flag requests whose output probability distribution
+is unusually flat relative to baseline. This requires soft-label output exposure -- if the
+API returns hard labels only, acknowledge Goal 3 as a coverage gap.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Configuring the adversarial detector classifier once and not retraining as new attack families emerge</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The adversarial detector classifier is trained on a fixed dataset of adversarial and
+natural examples. Once deployed, retraining cycles are expensive and the model
+performs well against known attack families, reducing urgency for retraining.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Novel attack families not represented in training data are systematically underdetected.
+An adversary using a recently published attack method (or a custom variant) bypasses the
+adversarial classifier while being caught by the ensemble only to the extent that the
+squeezer and consistency checker cover that attack class independently.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat the adversarial detector classifier as a model requiring active maintenance: retrain
+quarterly with adversarial examples generated from recently published attack methods.
+The classifier is the highest-coverage primitive but the most brittle to distribution
+shift in the attack family space.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Concluding from a high ensemble detection rate on CIFAR-10 benchmarks that production detection rates will match</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">CIFAR-10 is the standard benchmark for adversarial ML research. Engineers validate Track 7
+against CIFAR-10 adversarial examples, achieve 85-92% detection rates, and treat that as
+the production detection rate estimate.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Production inputs are not CIFAR-10 images. Different input distributions, higher-dimensional
+feature spaces, domain-specific perturbation constraints, and adversaries who adapt to the
+specific deployed model all reduce detection rates relative to the benchmark. The production
+false negative rate is typically higher than benchmark false negative rate.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Calibrate Track 7 detection thresholds against production-representative inputs, not
+benchmark inputs. Generate adversarial examples against the specific deployed model (or a
+recent distillation surrogate) using FGSM, PGD, and C&amp;W. Use the Section 10.13 calibration
+harness. Treat benchmark numbers as upper bounds, not production estimates.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Ignoring the budget-success transition region and calibrating detection thresholds at extreme epsilon values</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Feature squeezer and consistency checker thresholds are easy to set at extreme epsilon:
+large-epsilon adversarial examples are obviously detectable. Calibration at extreme epsilon
+gives high detection rates with low false positives and produces a clean-looking ROC curve.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The thresholds are too high to catch attacks in the transition region (moderate epsilon,
+high attack success, moderate perturbation). Production attacks do not use extreme epsilon --
+they use the minimum epsilon for reliable attack success, which is in the transition region.
+The calibrated detector misses exactly the attacks most likely to appear in production.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Calibrate Track 7 thresholds specifically at the epsilon values where attack success
+exceeds 50% -- the transition region. Use the budget_success_tradeoff.py curves from this
+section to identify that region, then calibrate squeezer disagreement thresholds and
+consistency check instability thresholds against adversarial examples generated at those
+epsilon values.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Section 10.2 formalises the Chapter 10 threat model into a three-axis taxonomy: four attack
+goals (untargeted, targeted, confidence reduction, detection evasion) by four access tiers
+(white-box, grey-box, black-box, physical/transfer) by four input modalities (image, text,
+tabular, audio). Each cell maps to a canonical technique covered in Sections 10.3-10.9 and
+to one or more Track 7 detection primitives. The detectability spectrum shows that no single
+primitive covers all cells: feature squeezing catches L-infinity attacks, consistency checking
+catches boundary-proximate attacks, and the adversarial classifier catches trained patterns
+but degrades on novel families. The three-primitive ensemble provides meaningful resistance
+against detection evasion (Goal 4). The defender decision tree converts observable signals
+into a taxonomy classification in under 60 seconds, enabling rapid incident triage and
+detection tuning priority decisions.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Four goals, not two: confidence reduction and detection evasion extend the threat model beyond targeted/untargeted and require distinct detection primitives</li><li>The budget-success transition region is where production attacks live: moderate epsilon, high success rate, moderate detectability</li><li>No single Track 7 primitive covers the full taxonomy: the ensemble is required for meaningful coverage, especially against Goal 4 (detection evasion)</li><li>Text modality breaks the image Lp framework: semantic consistency check replaces feature squeezing for text adversarial detection</li><li>The adversarial detector classifier is the highest-coverage primitive but the most brittle to novel attack families -- active retraining is required</li><li>The taxonomy is a filter for Track 7 configuration: defend the cells that apply to the deployment, not all 64 potential cells</li></ul>
+<h2 class="sh1">Preview Section 10 03</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 10.3: FGSM -- Fast Gradient Sign Method</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 10.3 implements the foundational white-box adversarial attack: FGSM (Goodfellow et al.
+2014). The algorithm is x_adv = x + epsilon * sign(nabla_x J(theta, x, y)) -- one forward-
+backward pass, exact L-infinity perturbation. The section covers the epsilon sweep (attack
+success rate across perturbation budgets, grounding the Section 10.2 curves in implementation),
+targeted vs untargeted FGSM (gradient reversal for targeted misclassification), transferability
+of FGSM adversarial examples to surrogate-matched victim models, and FGSM as a data augmentation
+primitive for adversarial training (Section 10.15 preview). FGSM occupies the white-box /
+untargeted / image cell of the taxonomy matrix and sets the gradient-sign primitive that PGD
+and C&amp;W extend iteratively.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 9.2: extraction taxonomy (parallel structure -- shared access tier and goal taxonomy framing)</li><li>Section 9.10: detection primitive library (five Ch9 primitives; Track 7 follows same coverage-analysis pattern)</li><li>Section 10.1: evasion threat model (threat model defined here; taxonomy formalises it)</li><li>Chapter 5 Section 5.8: MITRE ATLAS techniques (ATLAS cross-reference extended in deliverable 4)</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 10.3: FGSM (white-box / untargeted / image cell; gradient-sign primitive)</li><li>Section 10.4: PGD (white-box / targeted and untargeted / image; iterative extension of FGSM)</li><li>Section 10.5: C&amp;W (white-box / targeted / image; detection evasion goal)</li><li>Section 10.6: Boundary Attack and NES (black-box and grey-box cells)</li><li>Section 10.7: transfer attacks (physical/transfer tier; Ch9 surrogate as vehicle)</li><li>Section 10.9: LLM adversarial attacks (text modality cells)</li><li>Section 10.11: feature squeezing (primary primitive for untargeted image cells)</li><li>Section 10.12: consistency checker and adversarial classifier (targeted and detection-evasion cells)</li><li>Section 10.13: Track 7 gateway (routes alerts using the decision tree built here)</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>adversarial-taxonomy</li><li>four-goals</li><li>access-tiers</li><li>input-modalities</li><li>budget-success-tradeoff</li><li>detectability-spectrum</li><li>goal-to-detection-mapping</li><li>defender-decision-tree</li><li>atlas-crossref</li><li>track-7-configuration</li></ul>
+</article>

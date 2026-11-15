@@ -1,0 +1,678 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 4 · Section 1 · ~6 pages</div>
+<h1>GPT-2 Architecture: The Breakthrough</h1>
+<div class="tags"><span class="tag">gpt-2</span><span class="tag">decoder-only</span><span class="tag">autoregressive</span><span class="tag">scaling</span><span class="tag">transformer-internals</span><span class="tag">pre-training</span><span class="tag">language-modeling</span><span class="tag">security-implications</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">This section dissects GPT-2 in detail — the first model in the GPT lineage that
+demonstrated language models could be dangerous enough to withhold. You understand
+transformer architecture from Chapter 3. Now we get specific: why did OpenAI build
+a decoder-only model, what exact architectural choices differentiate GPT-2 from the
+original transformer, and what does a 1.5B parameter language model actually look like
+inside?
+
+For security engineers: GPT-2 established the template every successor uses. Its
+architectural decisions — tied embeddings, pre-norm layers, BPE tokenization —
+are security-relevant. Its training data (unfiltered web text) set the precedent
+for models memorizing sensitive content. Its &quot;too dangerous to release&quot; framing was
+the first public acknowledgment that language models have dual-use risk.
+
+This section is intentionally precise. Every architectural detail matters because
+adversaries target specifics: tokenizer edge cases, embedding space geometry,
+layer norm statistics, generation sampling configurations. Vague architecture
+knowledge creates blind spots. We eliminate them here.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 1 of 17 content sections. Chapter 4 opens with GPT-2 because it is the
+simplest complete production LLM — complex enough to understand real systems,
+simple enough to implement fully. Sections 2-3 extend to GPT-3 and GPT-4. This
+section builds the foundation both use.</p>
+<h3 class="sh2">Prerequisites</h3>
+<ul class="blist"><li>Chapter 3, Section 13: Transformer Decoder (autoregressive generation mechanics)</li><li>Chapter 3, Section 17: GPT architecture overview</li><li>Chapter 3, Section 9: Positional Encoding (absolute positional embeddings)</li><li>Chapter 2, Section 12: Batch Normalization (contrast with layer normalization)</li><li>PyTorch basics: nn.Module, forward pass, parameter inspection</li></ul>
+<h3 class="sh2">What You Will Build</h3>
+<h3 class="sh3">Primary</h3>
+<p class="prose">GPT-2 architecture recreation in PyTorch (124M parameter version)</p>
+<h3 class="sh3">Secondary</h3>
+<ul class="blist"><li>Layer inspector: examine weights, activations, attention patterns per layer</li><li>BPE tokenizer (compatible with GPT-2)</li><li>Text generation pipeline with temperature and top-k sampling</li><li>Zero-shot task evaluator (classification, translation, summarization)</li></ul>
+<h3 class="sh3">Notebooks</h3>
+<ul class="blist"><li>03-llm-internals/gpt2_architecture.ipynb</li><li>03-llm-internals/gpt2_generation.ipynb</li></ul>
+<h2 class="sh1">Content</h2>
+<h3 class="sh2">Subsection 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why Decoder-Only? The GPT Design Decision</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Explanation</h3>
+<p class="prose">The original transformer (Vaswani et al., 2017) had both an encoder and decoder.
+BERT (2018) used only the encoder. GPT used only the decoder. This was not
+arbitrary — it reflects a fundamental choice about what task to optimize for.
+
+Encoder-only models (BERT) are optimized for understanding: given a full sequence,
+produce the best possible representation of it. They use bidirectional attention —
+every token attends to every other token. This is powerful for classification,
+NER, sentence similarity. It is useless for generation.
+
+Decoder-only models (GPT) are optimized for generation: given a sequence, predict
+what comes next. They use causal (masked) attention — each token only attends to
+previous tokens. This constraint enables autoregressive generation, where the model
+produces text one token at a time.
+
+The simplification matters beyond generation. Decoder-only models are:
+  - Simpler to implement (one attention type vs two)
+  - Easier to scale (no cross-attention alignment problem)
+  - More flexible at inference (same model handles prompts of any length)
+  - Naturally suited to few-shot learning (examples become part of context)</p>
+<h3 class="sh3">Gpt2 Specific Choice</h3>
+<p class="prose">GPT-2 took the decoder-only architecture and asked: what if we just scale this up
+and train it on enormous web text? No special objectives, no classification heads,
+no task-specific architectures. Just next-token prediction on 40GB of internet text.
+
+The bet was that a sufficiently capable language model would implicitly learn to
+solve downstream tasks. It was correct.</p>
+<h3 class="sh3">Security Note</h3>
+<p class="prose">Decoder-only means every interaction is generation. User input becomes the beginning
+of a sequence the model continues. This architectural choice is why prompt injection
+works: you are literally giving the model text it will treat as context to continue.
+There is no separation between &quot;instructions&quot; and &quot;content&quot; at the architecture
+level — that distinction exists only in training.</p>
+<h3 class="sh2">Subsection 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">GPT-2 Architecture: Exact Specifications</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Model Variants</h3>
+<h4 class="sh3">Gpt2 Small</h4>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">124M</p>
+<h4 class="sh3">Layers</h4>
+<p class="prose">12</p>
+<h4 class="sh3">D Model</h4>
+<p class="prose">768</p>
+<h4 class="sh3">Attention Heads</h4>
+<p class="prose">12</p>
+<h4 class="sh3">D Head</h4>
+<p class="prose">64</p>
+<h4 class="sh3">D Ffn</h4>
+<p class="prose">3072</p>
+<h4 class="sh3">Context Length</h4>
+<p class="prose">1024</p>
+<h4 class="sh3">Vocab Size</h4>
+<p class="prose">50257</p>
+<h4 class="sh3">Gpt2 Medium</h4>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">355M</p>
+<h4 class="sh3">Layers</h4>
+<p class="prose">24</p>
+<h4 class="sh3">D Model</h4>
+<p class="prose">1024</p>
+<h4 class="sh3">Attention Heads</h4>
+<p class="prose">16</p>
+<h4 class="sh3">D Head</h4>
+<p class="prose">64</p>
+<h4 class="sh3">D Ffn</h4>
+<p class="prose">4096</p>
+<h4 class="sh3">Context Length</h4>
+<p class="prose">1024</p>
+<h4 class="sh3">Vocab Size</h4>
+<p class="prose">50257</p>
+<h4 class="sh3">Gpt2 Large</h4>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">774M</p>
+<h4 class="sh3">Layers</h4>
+<p class="prose">36</p>
+<h4 class="sh3">D Model</h4>
+<p class="prose">1280</p>
+<h4 class="sh3">Attention Heads</h4>
+<p class="prose">20</p>
+<h4 class="sh3">D Head</h4>
+<p class="prose">64</p>
+<h4 class="sh3">D Ffn</h4>
+<p class="prose">5120</p>
+<h4 class="sh3">Context Length</h4>
+<p class="prose">1024</p>
+<h4 class="sh3">Vocab Size</h4>
+<p class="prose">50257</p>
+<h4 class="sh3">Gpt2 Xl</h4>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">1.5B</p>
+<h4 class="sh3">Layers</h4>
+<p class="prose">48</p>
+<h4 class="sh3">D Model</h4>
+<p class="prose">1600</p>
+<h4 class="sh3">Attention Heads</h4>
+<p class="prose">25</p>
+<h4 class="sh3">D Head</h4>
+<p class="prose">64</p>
+<h4 class="sh3">D Ffn</h4>
+<p class="prose">6400</p>
+<h4 class="sh3">Context Length</h4>
+<p class="prose">1024</p>
+<h4 class="sh3">Vocab Size</h4>
+<p class="prose">50257</p>
+<h3 class="sh3">Key Numbers Explained</h3>
+<h4 class="sh3">D Head Always 64</h4>
+<p class="prose">All GPT-2 variants keep d_head = 64. More heads = more d_model, not smaller heads.
+This is a deliberate choice: 64-dimensional attention heads have proven
+sufficient for most linguistic patterns. Smaller heads lose expressivity.
+Larger heads increase compute without proportional benefit.</p>
+<h4 class="sh3">Vocab Size 50257</h4>
+<p class="prose">50,257 = 50,000 BPE merges + 256 byte-level tokens + 1 special end-of-text token.
+This exact number appears in every GPT-2 successor because OpenAI never changed
+the tokenizer. Security implication: tokenizer quirks discovered in GPT-2
+(multi-byte characters, whitespace handling) affect GPT-3, GPT-4, and all
+fine-tuned derivatives.</p>
+<h4 class="sh3">Context Length 1024</h4>
+<p class="prose">1024 tokens was the GPT-2 context limit. Roughly 750-800 words. This limit
+drove entire research directions (long-range transformers) and attack patterns
+(context overflow attacks). Understanding why 1024 was the limit — absolute
+positional embeddings trained on fixed length — explains how RoPE and ALiBi
+later broke this constraint (Section 11).</p>
+<h3 class="sh3">Parameter Count Calculation</h3>
+<p class="prose">How do we get 124M parameters for GPT-2 small?
+
+Embedding layers:
+  Token embeddings: 50257 × 768 = 38.6M
+  Position embeddings: 1024 × 768 = 0.79M
+
+Per transformer layer (× 12 layers):
+  Attention Q, K, V projections: 3 × (768 × 768) = 1.77M
+  Attention output projection: 768 × 768 = 0.59M
+  FFN expand (768 → 3072): 768 × 3072 = 2.36M
+  FFN contract (3072 → 768): 3072 × 768 = 2.36M
+  LayerNorm parameters: 2 × 2 × 768 = 3072 (negligible)
+  Layer total: ~7.1M × 12 layers = 85.2M
+
+Output head: tied to token embeddings (0 additional parameters)
+
+Total: 38.6M + 0.79M + 85.2M ≈ 124M ✓</p>
+<h3 class="sh3">Security Note</h3>
+<p class="prose">Parameter counts matter for security resource estimation. Storing, transmitting,
+and loading model weights has costs attackers can exploit. A 124M parameter FP32
+model is ~500MB. Knowing this: a model file significantly smaller than expected
+may be quantized (lower robustness), and one significantly larger may contain
+embedded payloads.</p>
+<h3 class="sh2">Subsection 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">What GPT-2 Changed from the Original Transformer</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Changes</h3>
+<h4 class="sh3">Pre Norm Vs Post Norm</h4>
+<h4 class="sh3">Original Transformer</h4>
+<p class="prose">Post-norm: LayerNorm applied AFTER residual addition</p>
+<h4 class="sh3">Gpt2</h4>
+<p class="prose">Pre-norm: LayerNorm applied BEFORE attention/FFN (inside residual branch)</p>
+<h4 class="sh3">Why It Matters</h4>
+<p class="prose">Post-norm: output = LayerNorm(x + sublayer(x))
+Pre-norm: output = x + sublayer(LayerNorm(x))
+
+Pre-norm trains more stably at scale. With post-norm, gradients can vanish
+deep in the network during early training. Pre-norm keeps gradient magnitudes
+consistent across layers, enabling reliable training of 48-layer models.</p>
+<h4 class="sh3">Security Implication</h4>
+<p class="prose">Pre-norm means each layer operates on normalized inputs. This makes activation
+distributions more predictable — which makes side-channel analysis (inferring
+inputs from activation statistics) more reliable for attackers.</p>
+<h4 class="sh3">Tied Input Output Embeddings</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">GPT-2 uses the same weight matrix for:
+1. Input token embeddings (converting token IDs to vectors)
+2. Output projection (converting final hidden states to logits over vocabulary)
+This is called weight tying.</p>
+<h4 class="sh3">Why It Matters</h4>
+<p class="prose">Reduces parameters by ~38.6M (no separate output projection matrix).
+Forces semantic similarity: tokens with similar input embeddings get similar
+output logits. Empirically improves perplexity on language modeling.</p>
+<h4 class="sh3">Security Implication</h4>
+<p class="prose">Tied embeddings mean the output space is the input space. Adversarial
+perturbations in embedding space directly affect output probabilities.
+Model inversion attacks can work in both directions through the same matrix.</p>
+<h4 class="sh3">Additional Layer Norm At Output</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">GPT-2 adds a final LayerNorm after the last transformer block, before the
+output projection. Original transformer did not have this.</p>
+<h4 class="sh3">Why It Matters</h4>
+<p class="prose">Stabilizes the magnitude of final representations before projection to
+vocabulary logits. Prevents one dimension dominating token predictions.</p>
+<h4 class="sh3">Security Implication</h4>
+<p class="prose">The final LayerNorm statistics (mean, variance per dimension) are measurable
+via API responses (logprobs). This creates a side channel for inferring
+model internals.</p>
+<h4 class="sh3">No Encoder No Cross Attention</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Pure decoder means no cross-attention blocks. Each transformer block has:
+1. Masked self-attention (causal)
+2. Feed-forward network
+No cross-attention between encoder and decoder output.</p>
+<h4 class="sh3">Why It Matters</h4>
+<p class="prose">Simpler architecture. Faster inference. No alignment problem.
+The tradeoff: no explicit separation between context and query.</p>
+<h4 class="sh3">Security Implication</h4>
+<p class="prose">In encoder-decoder models, injected content in the encoder is at least
+architecturally separated from decoder reasoning. In decoder-only models,
+there is no such separation. All content — trusted instructions, untrusted
+user input, retrieved documents — lives in the same flat token sequence.</p>
+<h3 class="sh2">Subsection 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">GPT-2 BPE Tokenization: Security-Relevant Details</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Bpe Overview</h3>
+<p class="prose">GPT-2 uses Byte-Pair Encoding (BPE) at the byte level. This means:
+1. Start with raw bytes (256 possible values)
+2. Iteratively merge the most frequent adjacent pairs
+3. Stop after 50,000 merges
+4. Result: vocabulary of 50,256 tokens + 1 special token
+
+Byte-level BPE guarantees every possible string is tokenizable with no
+unknown tokens. This differs from word-level BPE where rare words become
+[UNK]. With GPT-2&#x27;s tokenizer, no input string is unrepresentable.</p>
+<h3 class="sh3">Critical Security Behaviors</h3>
+<h4 class="sh3">Whitespace Prefix Tokens</h4>
+<p class="prose">GPT-2&#x27;s tokenizer treats leading whitespace as part of the token.
+&quot;hello&quot; and &quot; hello&quot; are DIFFERENT tokens with DIFFERENT embeddings.
+
+Token IDs:
+  &quot;hello&quot; → 31373
+  &quot; hello&quot; → 23748
+
+Implication for injection: character-level identical strings tokenize
+differently based on context. An attacker adding a space before a word
+changes the token identity and thus the model&#x27;s treatment of that word.
+Defenses that operate on raw characters may miss token-level distinctions.</p>
+<h4 class="sh3">Multi Token Words</h4>
+<p class="prose">Long or rare words tokenize into multiple subword tokens.
+&quot;administrator&quot; → [&quot;admin&quot;, &quot;istrator&quot;]
+&quot;javascript&quot; → [&quot;java&quot;, &quot;script&quot;]
+&quot;sqlinjection&quot; → [&quot;sql&quot;, &quot;inje&quot;, &quot;ction&quot;]
+
+Implication: security keyword filters operating on token level may miss
+injections if adversaries choose word variations that cross token boundaries.
+&quot;javascript&quot; and &quot;java&quot; + &quot;script&quot; are semantically identical but may
+evade token-level filters differently.</p>
+<h4 class="sh3">Number Tokenization</h4>
+<p class="prose">Numbers often tokenize one digit at a time (for large numbers) or as
+combined tokens (for small numbers).
+&quot;2024&quot; → [&quot;2024&quot;] (single token)
+&quot;20240101&quot; → [&quot;202&quot;, &quot;401&quot;, &quot;01&quot;] (three tokens)
+
+Implication: numeric injection attacks must account for tokenization.
+A date-based injection may split unexpectedly, changing attack semantics.</p>
+<h4 class="sh3">Special Characters</h4>
+<p class="prose">Unicode characters outside standard ASCII tokenize to multiple byte tokens.
+Homoglyph attacks (visually similar characters from different scripts) produce
+entirely different token sequences. &quot;а&quot; (Cyrillic a) vs &quot;a&quot; (Latin a) are
+different bytes, different tokens, but visually indistinguishable.</p>
+<h3 class="sh3">Implementation Note</h3>
+<p class="prose">The GPT-2 tokenizer (tiktoken library) is open source. For this section&#x27;s
+exercises, we implement a simplified BPE tokenizer from scratch to understand
+the mechanics, then use tiktoken for production exercises.</p>
+<h3 class="sh2">Subsection 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">WebText Training Data and Memorization Risk</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Webtext Construction</h3>
+<p class="prose">GPT-2 was trained on WebText: 40GB of text scraped from web pages linked
+by Reddit posts with at least 3 karma. The filtering heuristic: if humans
+upvoted a link enough to reach 3 karma, the content is likely interesting.
+
+This produced approximately 8 million documents. After deduplication and
+filtering for English, ~40GB of text remained.</p>
+<h3 class="sh3">What This Means For Security</h3>
+<h4 class="sh3">Content Diversity</h4>
+<p class="prose">WebText includes news articles, Wikipedia, personal blogs, technical
+documentation, social media, and significant amounts of unfiltered internet
+content. The model learned from all of it — including:
+- Technical discussions of vulnerabilities and exploits
+- Leaked credential formats (not individual credentials, but patterns)
+- Social engineering scripts
+- Malware analysis articles (teaching the form of malware descriptions)
+- Politically extreme content</p>
+<h4 class="sh3">Memorization And Extraction</h4>
+<p class="prose">Large language models memorize training data. This is not a bug — it is
+a consequence of having sufficient capacity. GPT-2 can reproduce verbatim
+passages from WebText when prompted with the beginning.
+
+Carlini et al. (2021) demonstrated extracting training data from GPT-2 by:
+1. Generating thousands of long sequences at low temperature
+2. Scoring sequences by comparing GPT-2 to a smaller reference model
+3. High-scoring sequences were disproportionately memorized training data
+4. Results: PII, news articles, and code reproduced verbatim
+
+For security engineers: any model trained on sensitive data (code, internal
+documents, customer data) is potentially a data exfiltration vector through
+memorized training examples.</p>
+<h4 class="sh3">Deduplication Effect</h4>
+<p class="prose">Deduplicated data reduces memorization. If a document appears 1000 times in
+training, the model memorizes it. If it appears once, memorization is much
+lower. This motivates data deduplication as a privacy defense. But deduplication
+is imperfect: near-duplicates with minor variations can still cause memorization.</p>
+<h3 class="sh3">Implication For Enterprise Deployment</h3>
+<p class="prose">Organizations fine-tuning models on internal data must treat the resulting model
+as a potential exfiltration vector. The model may reproduce fragments of documents
+seen during fine-tuning. Access controls on the model API should be as strict as
+access controls on the underlying training data.</p>
+<h3 class="sh2">Subsection 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Autoregressive Generation: Sampling and Decoding</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Generation Loop</h3>
+<p class="prose">GPT-2 generates text by repeating:
+1. Feed current token sequence as input
+2. Run forward pass: compute logits over 50257 vocabulary tokens
+3. Convert logits to probabilities via softmax
+4. Sample next token from probability distribution
+5. Append token to sequence
+6. Repeat until end-of-text token or max length
+
+The entire model runs on every step. With KV caching (Section 8), previous
+key/value pairs are cached, so only the new token&#x27;s computation is needed.
+Without caching: O(n²) per generation step. With caching: O(n) amortized.</p>
+<h3 class="sh3">Sampling Strategies</h3>
+<h4 class="sh3">Greedy</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Always pick the highest probability token</p>
+<h4 class="sh3">Deterministic</h4>
+<p class="prose">True</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Repetition loops, boring output, same answer every time</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">Greedy decoding is fully deterministic. Same prompt → same output always.
+This makes it easier to build reliable attack probes (prompt → expected
+response). Defenders who rely on output randomness for security have a
+false assumption.</p>
+<h4 class="sh3">Temperature</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Divide logits by temperature T before softmax</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">P(token) = softmax(logits / T)</p>
+<h4 class="sh3">T Less Than 1</h4>
+<p class="prose">Sharper distribution — more deterministic</p>
+<h4 class="sh3">T Equal 1</h4>
+<p class="prose">Original distribution</p>
+<h4 class="sh3">T Greater Than 1</h4>
+<p class="prose">Flatter distribution — more random</p>
+<h4 class="sh3">T Approaches 0</h4>
+<p class="prose">Equivalent to greedy</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">High temperature increases output randomness, making attacks less reliable
+but also making safety filters less effective. Many production systems use
+T=0 (greedy) or T close to 0 for consistency. Attackers probe temperature
+by submitting identical prompts and comparing output variance.</p>
+<h4 class="sh3">Top K</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Zero out all but the top-K probability tokens before sampling</p>
+<h4 class="sh3">Typical K</h4>
+<p class="prose">40-50 for GPT-2</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Prevents sampling very low probability tokens</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">Top-k limits vocabulary at each step. This reduces the probability of
+rare/unusual token sequences — which some injection attacks depend on.
+But it also limits output diversity, which can be probed.</p>
+<h4 class="sh3">Top P Nucleus</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Sample from the smallest set of tokens whose cumulative probability ≥ p</p>
+<h4 class="sh3">Typical P</h4>
+<p class="prose">0.9 or 0.95</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Adapts vocabulary size to context (tight distributions → few tokens)</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">Nucleus sampling is the most commonly used production setting. It provides
+adaptive randomness. Security relevance: p determines how much of the
+probability mass is accessible. Low p (0.1) → near-deterministic.
+High p (0.99) → nearly unconstrained. Production APIs often expose p as
+a parameter — attackers can tune it to find the sampling regime most
+permissive for their attack.</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">GPT-2 Implementation from Scratch (PyTorch)</p>
+<h3 class="sh3">Notebook</h3>
+<p class="prose">03-llm-internals/gpt2_architecture.ipynb</p>
+<h3 class="sh3">Estimated Loc</h3>
+<p class="prose">350</p>
+<h3 class="sh3">Architecture Code</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Full GPT-2 small (124M) in clean PyTorch</p>
+<h4 class="sh3">Components</h4>
+<h4 class="sh3">Name</h4>
+<p class="prose">CausalSelfAttention</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Multi-head attention with causal mask</p>
+<h4 class="sh3">Key Detail</h4>
+<p class="prose">Causal mask implemented as lower triangular boolean matrix</p>
+<h4 class="sh3">Lines</h4>
+<p class="prose">~60</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">GPT2MLP</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Position-wise feed-forward (768 → 3072 → 768)</p>
+<h4 class="sh3">Key Detail</h4>
+<p class="prose">GELU activation (not ReLU — GPT-2 specific choice)</p>
+<h4 class="sh3">Lines</h4>
+<p class="prose">~20</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">GPT2Block</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Single transformer layer: pre-norm, attention, pre-norm, FFN</p>
+<h4 class="sh3">Key Detail</h4>
+<p class="prose">Pre-norm placement (LayerNorm before sublayer, inside residual)</p>
+<h4 class="sh3">Lines</h4>
+<p class="prose">~30</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">GPT2Model</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Full model: embeddings + N blocks + final LayerNorm</p>
+<h4 class="sh3">Key Detail</h4>
+<p class="prose">Weight tying: output projection reuses token embedding weights</p>
+<h4 class="sh3">Lines</h4>
+<p class="prose">~60</p>
+<h4 class="sh3">Weight Loading</h4>
+<p class="prose">After implementing architecture, load OpenAI&#x27;s released GPT-2 weights
+directly into our implementation. This verifies our architecture is correct:
+if weight loading succeeds and generation works, the architecture matches.
+
+huggingface_weights = GPT2LMHeadModel.from_pretrained(&quot;gpt2&quot;)
+our_model.load_state_dict(huggingface_weights.state_dict())</p>
+<h3 class="sh3">Layer Inspector</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Examine model internals</p>
+<h4 class="sh3">Capabilities</h4>
+<ul class="blist"><li>Print parameter count per layer</li><li>Visualize attention patterns per head</li><li>Plot activation distributions per layer</li><li>Measure layer norm statistics (mean, std per dimension)</li><li>Identify top-activating tokens for each attention head</li></ul>
+<h3 class="sh3">Generation Pipeline</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Text generation with all sampling strategies</p>
+<h4 class="sh3">Code Sketch</h4>
+<pre class="code"><code>def generate(model, prompt, max_tokens=100, temperature=1.0,
+             top_k=50, top_p=0.95):
+    tokens = tokenize(prompt)
+    for _ in range(max_tokens):
+        logits = model(tokens)[:, -1, :]    # Last token&#x27;s logits
+        logits = logits / temperature
+        logits = apply_top_k(logits, top_k)
+        logits = apply_top_p(logits, top_p)
+        probs = F.softmax(logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1)
+        tokens = torch.cat([tokens, next_token], dim=1)
+        if next_token == EOT_TOKEN:
+            break
+    return detokenize(tokens)</code></pre>
+<h3 class="sh3">Zero Shot Evaluator</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Test GPT-2 on classification/QA without fine-tuning</p>
+<h4 class="sh3">Tasks</h4>
+<ul class="blist"><li>Sentiment classification (positive/negative)</li><li>Language identification</li><li>Named entity detection</li></ul>
+<h4 class="sh3">Method</h4>
+<p class="prose">For classification: compare log-probabilities of label continuations.
+P(&quot;positive&quot; | review text) vs P(&quot;negative&quot; | review text)
+No task-specific training. Pure language model probabilities.</p>
+<h2 class="sh1">Exercises</h2>
+<h3 class="sh2">Exercise 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Build and Load GPT-2 Small</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Medium</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">2-3 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Implement GPT-2 small architecture from scratch and verify by loading official weights</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Implement CausalSelfAttention with causal mask</li><li>Implement GPT2MLP with GELU activation</li><li>Implement GPT2Block with pre-norm configuration</li><li>Implement GPT2Model with weight tying</li><li>Load OpenAI&#x27;s released weights and verify match</li><li>Generate 5 text completions and compare to HuggingFace output</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>Weight loading completes without shape errors</li><li>Our generation matches HuggingFace output token-for-token (greedy decoding)</li><li>Parameter count: 124,439,808 (within 100 parameters)</li></ul>
+<h3 class="sh2">Exercise 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Tokenizer Security Analysis</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Easy</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">1 hour</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Discover tokenization edge cases relevant to security</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Tokenize 20 security-relevant strings (SQL keywords, script tags, shell commands)</li><li>Identify which strings split across unexpected token boundaries</li><li>Test homoglyph attack: replace 3 ASCII chars with visually identical Unicode</li><li>Verify that homoglyph substitution produces different token IDs</li><li>Design a token-boundary injection: craft string that looks like one word but tokenizes as two</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>At least 3 token boundary surprises documented</li><li>Homoglyph test confirms different token IDs</li><li>Injection example tokenizes differently than it appears</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">security_tokenizer_edge_cases.md — documented edge cases with token IDs</p>
+<h3 class="sh2">Exercise 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Memorization Probe</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Medium</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">1-2 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Detect memorized content in GPT-2 using likelihood scoring</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Generate 200 sequences from GPT-2 at temperature=1.0</li><li>Score each sequence: log P(sequence | GPT-2) / log P(sequence | GPT-2 small)</li><li>High ratio = sequence scored much better on large model = likely memorized</li><li>Inspect top 10 highest-ratio sequences</li><li>Search one output sequence in a web search to confirm it is real content</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>At least one sequence that appears to be real web content</li><li>Distribution of ratio scores plotted</li><li>Memorization probe function reusable for other models</li></ul>
+<h3 class="sh3">Note</h3>
+<p class="prose">This exercise teaches the Carlini et al. extraction methodology. The same
+approach applies when auditing fine-tuned models trained on sensitive data.</p>
+<h3 class="sh2">Exercise 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Sampling Strategy Attack Probe</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Easy</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">45 minutes</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Measure how sampling parameters affect attack reliability</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Choose a simple prompt that produces a specific desired output at T=0</li><li>Vary temperature from 0 to 2.0 in 0.2 increments</li><li>For each temperature, run 20 generations and measure success rate</li><li>Repeat for top_k: vary from 1 to 100</li><li>Plot success rate vs temperature and success rate vs top_k</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>Clear plot showing attack reliability degrades with temperature</li><li>Optimal attack parameters identified</li><li>Understanding of how production sampling configs affect attack success</li></ul>
+<h2 class="sh1">Key Concepts Summary</h2>
+<h3 class="sh2">Architectural Decisions</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Decoder-only architecture</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">No structural separation between trusted and untrusted input</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Pre-norm layer normalization</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Stable gradient flow; predictable activation statistics = measurable side channel</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Tied input/output embeddings</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Model inversion works in both directions through same weight matrix</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">BPE tokenization at byte level</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">No unknown tokens; homoglyph attacks work; token boundary ≠ word boundary</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Vocab size 50,257</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Inherited by all GPT successors — tokenizer bugs persist across model generations</p>
+<h3 class="sh2">Security Takeaways</h3>
+<ul class="blist"><li>Prompt injection is an architectural property of decoder-only models, not a bug</li><li>Memorization is a capability, not just a risk — it enables training data extraction</li><li>Sampling parameters are tunable by attackers if exposed via API</li><li>Tokenizer edge cases are a consistent injection surface across the entire GPT family</li><li>Pre-norm activation statistics are measurable via API — potential side channel</li></ul>
+<h2 class="sh1">Connections</h2>
+<h3 class="sh2">Builds On</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 3, Section 13</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Transformer decoder and causal masking — now applied to production architecture</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 3, Section 17</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">GPT overview — now fully specified with exact dimensions and implementation</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 3, Section 2</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">BPE tokenization — now analyzed for security edge cases</p>
+<h3 class="sh2">Prepares For</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_02</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">GPT-3 scaling — same architecture, 1000× parameters, emergent capabilities</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_08</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">KV cache — optimization of the generation loop we build here</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_14</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Prompt engineering — using sampling and generation mechanics strategically</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 6 (Part 2)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Prompt injection attacks — grounded in decoder-only architecture mechanics</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 9 (Part 2)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Model extraction — using API sampling and memorization mechanics from this section</p>
+<h3 class="sh2">Security Thread</h3>
+<p class="prose">This section plants three security seeds that grow throughout the book:
+1. Architecture → injection (decoder-only = no trust boundary): matures in Chapter 6
+2. Memorization → extraction (training data leakage): matures in Chapter 9
+3. Tokenizer edge cases → evasion (filter bypass): matures in Chapters 6 and 15</p>
+<h2 class="sh1">Further Reading</h2>
+<h3 class="sh2">Primary</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Language Models are Unsupervised Multitask Learners</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Radford et al. (OpenAI, 2019)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Original GPT-2 paper — read the training data section carefully</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://openai.com/research/language-unsupervised</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Extracting Training Data from Large Language Models</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Carlini et al. (2021)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Critical paper for understanding memorization as a security risk</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2012.07805</p>
+<h3 class="sh2">Implementation Reference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">nanoGPT</p>
+<h3 class="sh3">Author</h3>
+<p class="prose">Andrej Karpathy</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Clean, minimal GPT-2 implementation — excellent reference for our implementation</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://github.com/karpathy/nanoGPT</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Annotated Transformer</p>
+<h3 class="sh3">Author</h3>
+<p class="prose">Harvard NLP</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Line-by-line transformer implementation with explanations</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://nlp.seas.harvard.edu/2018/04/03/attention.html</p>
+<h3 class="sh2">Security Reading</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Ignore Previous Prompt: Attack Techniques for Language Models</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Perez &amp; Ribeiro (2022)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Formalizes prompt injection as security problem — connects to this section&#x27;s architecture analysis</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2211.09527</p>
+</article>

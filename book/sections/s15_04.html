@@ -1,0 +1,729 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 15 · Section 4 · ~7 pages</div>
+<h1>PII Scanner: Regex and NER Models</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The third detector extends the Chapter 12 Section 12.09 PII scanner -- which was output-only -- into a two-sided detector on the unified API: a regex layer catches structured PII (emails, cards with a Luhn check, SSNs, phones) with precision, an NER layer catches unstructured PII (names, locations, organisations) that has no fixed format, and the whole thing is tuned around one problem -- not over-flagging the common names and place words that are the defining false-positive risk of PII detection.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">PII detection is a different kind of hybrid from injection and jailbreak. There the two layers were patterns for the known and a classifier for the novel. Here the split is by data shape: structured PII has a fixed format, so a regex catches it with high precision, while unstructured PII -- a person name, a city, a company -- has no format at all and can only be found by a named-entity-recognition model that has learned what names and places look like. Neither layer substitutes for the other. A regex cannot enumerate the world names; an NER model is the wrong, slow tool for a credit card that a format pattern nails instantly. So the scanner runs both.
+
+The section also does two things specific to PII. First, it makes the detector two-sided. The Chapter 12 Section 12.09 scanner was the only output-side detector in that chapter, catching leakage in what the model says. But PII arrives on the input too -- a user pasting a customer record, an SSN in a support request -- and a suite detector should cover both surfaces. This scanner reads the surface from the detection context and scans input, output, or both. Second, and most important, the section is organised around the false-positive problem. Names and place words are everywhere in ordinary text, and a scanner that flags every John or Singapore is worse than useless -- it buries the real leaks and gets disabled. The core design decision here is that a single low-severity entity never drives a verdict; only structured PII or an aggregate of unstructured entities does. That discipline is what keeps the detector inside the quality bar.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 15.04 is the third detector and the first whose two layers split by data shape (structured versus unstructured) rather than by known versus novel. It reuses the unified API and quality bar, extends a specific Chapter 12 detector rather than wrapping a classifier, and introduces the severity-tiered scoring that the toxicity detector (15.05) also needs. It is the clearest case in the chapter of the false-positive rate driving the design.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 15 Section 15.01: the unified detector API contract and the quality bar</li><li>Chapter 15 Section 15.02: the hybrid detector template and the two-layer combination discipline</li><li>Chapter 12 Section 12.09: the output-side PII scanner -- regex, NER, ensemble -- this detector extends into a two-sided suite detector</li><li>Familiarity with named-entity recognition (spaCy, Presidio) as the tool for unstructured PII</li><li>The Luhn checksum as a validity test for candidate card numbers</li><li>Chapter 5 on the data-protection regimes (such as GDPR) that make PII a compliance concern as well as a security one</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">A Hybrid Split by Data Shape</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The PII scanner is a hybrid, but it splits along a different seam than the injection and jailbreak detectors. Those split by novelty: patterns for the known attacks, a classifier for the novel ones. The PII scanner splits by data shape, because personal data comes in two shapes that need two different tools. Structured PII has a fixed, recognisable format -- a credit card is sixteen digits that pass a checksum, a US SSN is three-two-four digits with dashes, an email has an at-sign and a domain. Format is exactly what a regular expression captures, so the regex layer catches structured PII with high precision and near-zero latency. Unstructured PII has no format at all. A person name, a city, a company -- there is no pattern that matches all names and only names, because names are an open, unbounded set. The only tool that finds them is a named-entity-recognition model that has learned what a name or a place looks like from context.
+
+Neither layer can do the other job. You cannot regex your way to recognising every surname in the world, and you would not run a model inference to catch a credit card that a format pattern and a Luhn check nail instantly and certainly. So the scanner runs both layers over the text and unions their findings. This is still the layered principle -- two complementary detectors covering what each other misses -- but organised around the structure of the data rather than the novelty of the attack. The rest of the section builds the two layers, makes the scan two-sided, and then spends most of its attention on the problem that governs the whole design: keeping the false-positive rate low.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Regex Layer: Structured PII and the Luhn Check</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The regex layer matches the structured entity formats: email addresses, phone numbers, US SSNs, and credit-card numbers. For most of these, the format is specific enough that a well-written pattern has a low false-positive rate on its own -- an email with an at-sign and a domain, an SSN with its dash structure. The credit card is the exception, and it is instructive. A pattern that matches thirteen to nineteen digits will match a great many numeric strings that are not cards at all: order references, tracking codes, long identifiers. Format alone is necessary but not sufficient.
+
+The fix is the Luhn checksum. Every real credit-card number satisfies the Luhn algorithm, a simple digit-weighting check, and the overwhelming majority of random digit runs do not. So the layer confirms every card-shaped match against Luhn before reporting it, and this single step removes the largest structured-PII false-positive source. A sixteen-digit order reference that happens to match the card pattern fails the checksum and is dropped; a real card passes and is reported as high-severity. This is a general lesson the section makes concrete: for structured PII, pair the format pattern with a validity check whenever one exists, because the pattern catches the shape and the check confirms the substance. Each structured entity carries a severity -- cards and SSNs are high, emails and phones are medium -- and that severity, not the mere fact of a match, drives the verdict.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The NER Layer: Unstructured PII</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The NER layer catches the personal data that has no format: person names, locations, and organisations. It is the Chapter 12 Section 12.09 NER capability -- built on spaCy and Presidio there -- exposed to this detector behind a small interface that returns the entity type and span for each recognised entity. As with the classifiers in the earlier detectors, the interface keeps the model swappable and the detector testable with a stub, and pins the model version in configuration so a verdict is reproducible.
+
+The crucial fact about the NER layer is that its output is inherently lower-confidence and lower-severity than the regex layer, and the design must respect that. A credit card that passes Luhn is almost certainly a credit card. A token the NER model tags as a person name is probably a name, but names are ordinary words -- many surnames are also common nouns, place names double as person names, and the model makes mistakes. More importantly, even a correctly recognised name is usually not a privacy incident: mentioning that you would like to meet John Smith at a conference is not leaking personal data in any meaningful sense. So every NER entity is tagged low-severity, and the scoring treats low-severity entities very differently from structured PII. The NER layer provides coverage of a real category of PII, but its findings are weighed with the caution their confidence and their privacy significance warrant.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Two-Sided Scanning: Input and Output</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The Chapter 12 Section 12.09 scanner was output-only, and deliberately so: it was the one output-side detector in that chapter, built to catch the leakage -- OWASP LLM06 -- that the model produces in its responses, which no input-side detector can prevent. That output focus was right for its place in the book, but a PII detector in the production suite needs to cover both surfaces, because PII crosses the boundary in both directions.
+
+On the output side, the risk is leakage: the model emitting personal data it should not, whether from its training, its context, or a tool result. On the input side, the risk is ingestion and mishandling: a user pasting a customer record, a support ticket carrying an SSN, a prompt that carries personal data into logs and downstream systems that were never meant to hold it. Both are PII events a production system needs to see. So this scanner reads the surface from the detection context and scans whichever surfaces the configuration enables -- input, output, or both. The two-sided scan is the concrete extension this section makes over the Chapter 12 scanner, and it is a configuration setting rather than a fixed behaviour, so a deployment that only needs leakage scanning can run output-only and match the earlier behaviour exactly.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The False-Positive Problem and Severity-Tiered Scoring</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Everything about the scoring is shaped by one fact: names and place words are everywhere in ordinary text. A user asks to be introduced to a colleague, plans a trip to a city, mentions a company in the news -- each of these contains an entity the NER layer will recognise, and none of them is a PII incident. A scanner that flagged every recognised name or place would fire on a large fraction of all normal traffic, drown the real leaks in noise, and be switched off by an operations team it exhausts. For the PII scanner more than any other detector in the suite, the false-positive rate is not a metric to satisfy at the end but the constraint that determines the whole design.
+
+The scoring answers this with severity tiers. High-severity structured PII -- a card, an SSN -- is a strong, high-confidence signal and blocks on its own. Medium-severity structured PII -- an email, a phone number -- flags. Low-severity unstructured entities -- names, locations, organisations -- do not escalate on their own at all: a single recognised name produces an evidence note but no action, because one name is not actionable PII. Low-severity entities only escalate in aggregate, when several appear together, because a message naming a person, their employer, and their destination is a different privacy proposition from a message that mentions one colleague. This tiering is the direct analogue of the precision tiers in the injection and jailbreak detectors, applied to entity severity rather than pattern precision, and it is what lets the scanner catch the real leaks while leaving the vast benign middle -- the introductions, the travel plans, the company mentions -- untouched.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Meeting the Quality Bar: A Multi-Entity Corpus and the Name Stress Set</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The test harness validates the scanner against a corpus spanning every entity type -- structured and unstructured, across input and output surfaces -- and reports the three quality-bar metrics with a pass/fail gate. The positive cases exercise each detection path: a Luhn-valid card and an SSN for the high-severity regex path, an email and a phone for the medium path, and a message with a name, an organisation, and a location together for the low-severity aggregate path.
+
+The negative side is where the PII scanner is really tested, and it is built as a false-positive stress set aimed squarely at the design decision above. It includes single common names (introduce me to John Smith), single places (a trip to Singapore), and single organisations (a company earnings mention) -- all of which must be allowed, because a lone low-severity entity is not actionable. It includes card-shaped strings that are not cards -- order references and tracking codes with the right digit count -- which the Luhn check must reject. A PII scanner that scores well on obvious cards and obvious clean text has proven nothing; the bar is met only when it separates the real personal data from the names, places, and number strings that merely resemble it. When it does -- high accuracy, a false-positive rate inside the target, latency well under budget -- the two-sided scanner implements the unified API and is ready for the combined pipeline of Section 15.07.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Two Layers of the PII Scanner</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The PII scanner splits by data shape rather than by novelty. The regex layer handles structured PII with a fixed format; the NER layer handles unstructured PII with no format.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Property</li><li>Regex layer</li><li>NER layer</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Catches</li><li>Structured PII (email, phone, SSN, card)</li><li>Unstructured PII (name, location, org)</li></ul>
+<ul class="blist"><li>Basis</li><li>Fixed format patterns</li><li>Learned entity recognition</li></ul>
+<ul class="blist"><li>Precision</li><li>High, plus Luhn on cards</li><li>Lower -- names are ordinary words</li></ul>
+<ul class="blist"><li>Latency</li><li>Near-zero (regex)</li><li>Higher (model inference)</li></ul>
+<ul class="blist"><li>Severity of findings</li><li>High (card, SSN) or medium (email, phone)</li><li>Low (context-dependent)</li></ul>
+<ul class="blist"><li>Source</li><li>This section</li><li>Chapter 12 Section 12.09 NER (spaCy/Presidio)</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Entity Severity Tiers and Their Effect on the Verdict</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Severity, not the mere fact of a match, drives the verdict. High-severity structured PII blocks; medium flags; low-severity unstructured entities escalate only in aggregate -- the core false-positive control.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Severity</li><li>Entity types</li><li>Lone occurrence</li><li>Aggregate</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>High</li><li>Credit card (Luhn-valid), US SSN</li><li>Blocks</li><li>Blocks</li></ul>
+<ul class="blist"><li>Medium</li><li>Email address, phone number</li><li>Flags</li><li>Flags</li></ul>
+<ul class="blist"><li>Low</li><li>Person, location, organisation</li><li>Noted only, no action</li><li>Flags when several appear together</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Two-Sided Scanning: Input Versus Output PII Risk</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">PII crosses the boundary in both directions, so the suite scanner covers both surfaces, extending the output-only Chapter 12 Section 12.09 scanner.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Surface</li><li>Risk</li><li>Example</li><li>Chapter 12 Section 12.09 coverage</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Output</li><li>Leakage (OWASP LLM06)</li><li>Model emits an SSN from context or training</li><li>Covered -- the original focus</li></ul>
+<ul class="blist"><li>Input</li><li>Ingestion and mishandling</li><li>User pastes a customer record into a prompt</li><li>Not covered -- added here</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PII Corpus Requirements for Quality-Bar Validation</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The corpus must exercise every entity path and, on the negative side, the common-name and invalid-card stressors that the design is built to handle.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Case class</li><li>Purpose</li><li>Path exercised</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>High-severity positives</li><li>Luhn-valid card, SSN</li><li>Regex high tier -&gt; BLOCK</li></ul>
+<ul class="blist"><li>Medium-severity positives</li><li>Email, phone</li><li>Regex medium tier -&gt; FLAG</li></ul>
+<ul class="blist"><li>Aggregate low positives</li><li>Name + org + location together</li><li>NER aggregate -&gt; FLAG</li></ul>
+<ul class="blist"><li>Single-entity stressors</li><li>One name, one place, one org</li><li>Low tier restraint -&gt; ALLOW</li></ul>
+<ul class="blist"><li>Invalid-card stressors</li><li>Card-shaped order/tracking numbers</li><li>Luhn rejection -&gt; ALLOW</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The PII Scanner</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pii_scanner.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The two-sided regex-plus-NER PII scanner implementing the unified API from Section 15.01, extending the output-only Chapter 12 Section 12.09 scanner. A regex layer for structured PII with Luhn validation on cards, an NER layer for unstructured entities behind a swappable interface, severity-tiered scoring where a lone low-severity entity never escalates, and surface-aware scanning of input, output, or both. Runs standalone on a stub NER model and demonstrates clean, card, SSN, email, single-name, and aggregate cases across surfaces.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library re, time, dataclasses, enum, and typing only. The unified API types are reproduced inline so the file runs standalone; in the suite they are imported from detector_api_contract.py. The NER layer is a Protocol with a deterministic StubNER -- NOT a real model -- to be replaced with the Chapter 12 Section 12.09 spaCy/Presidio NER in production. The PIISeverity and Luhn logic are carried over from the 12.09 scanner.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pii_scanner.py
+# Section 15.04: PII Scanner -- Regex and NER
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The third detector in the suite. It extends the Chapter 12 Section 12.09 PII
+# scanner -- which was output-only -- into a two-sided detector that scans both
+# inputs and outputs, packaged on the unified API of Section 15.01. A regex
+# layer catches structured PII (emails, cards with Luhn, SSNs, phones) with
+# precision; an NER layer catches unstructured PII (names, locations,
+# organisations) that has no fixed format. The design centres on the false-
+# positive problem: common names and place words must not be over-flagged.
+
+import re
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional, Protocol
+
+
+# --- Unified API contract (from Section 15.01) ------------------------------
+# Reproduced here so the detector is runnable standalone. In the suite these
+# come from detector_api_contract.py and every detector imports them.
+
+class Verdict(Enum):
+    ALLOW = &#x27;allow&#x27;
+    FLAG = &#x27;flag&#x27;
+    BLOCK = &#x27;block&#x27;
+
+
+@dataclass
+class DetectionContext:
+    request_id: str
+    text: str
+    surface: str = &#x27;input&#x27;
+    session_id: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Evidence:
+    source: str
+    label: str
+    detail: str = &#x27;&#x27;
+
+
+@dataclass
+class DetectorResult:
+    detector: str
+    verdict: Verdict
+    score: float
+    confidence: float
+    latency_ms: float
+    evidence: List[Evidence] = field(default_factory=list)
+
+
+# --- PII entity model (extends Chapter 12 Section 12.09) --------------------
+
+class PIISeverity(Enum):
+    HIGH = &#x27;high&#x27;       # credit card, SSN, passport -- strong personal identifiers
+    MEDIUM = &#x27;medium&#x27;   # email, phone -- identifying but common in benign text
+    LOW = &#x27;low&#x27;         # names, locations, organisations -- context-dependent
+
+
+@dataclass
+class PIIEntity:
+    entity_type: str
+    severity: PIISeverity
+    span: str
+    source: str         # &#x27;regex&#x27; or &#x27;ner&#x27;
+
+
+# --- The regex layer: structured PII ----------------------------------------
+# Structured PII has a fixed format, so regex catches it with high precision.
+# The credit-card pattern is confirmed with a Luhn checksum to reject random
+# 16-digit strings -- the single biggest structured-PII false-positive source.
+
+EMAIL_PATTERN = re.compile(r&#x27;\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b&#x27;)
+PHONE_PATTERN = re.compile(r&#x27;\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b&#x27;)
+SSN_PATTERN = re.compile(r&#x27;\b\d{3}-\d{2}-\d{4}\b&#x27;)
+CREDIT_CARD_PATTERN = re.compile(r&#x27;\b(?:\d[ -]*?){13,19}\b&#x27;)
+
+STRUCTURED_SEVERITY = {
+    &#x27;EMAIL_ADDRESS&#x27;: PIISeverity.MEDIUM,
+    &#x27;PHONE_NUMBER&#x27;: PIISeverity.MEDIUM,
+    &#x27;US_SSN&#x27;: PIISeverity.HIGH,
+    &#x27;CREDIT_CARD&#x27;: PIISeverity.HIGH,
+}
+
+
+def luhn_valid(number: str) -&gt; bool:
+    &#x27;&#x27;&#x27;Validate a candidate card number with the Luhn checksum.&#x27;&#x27;&#x27;
+    digits = [int(c) for c in number if c.isdigit()]
+    if not 13 &lt;= len(digits) &lt;= 19:
+        return False
+    checksum = 0
+    parity = len(digits) % 2
+    for i, d in enumerate(digits):
+        if i % 2 == parity:
+            d *= 2
+            if d &gt; 9:
+                d -= 9
+        checksum += d
+    return checksum % 10 == 0
+
+
+class RegexLayer:
+    &#x27;&#x27;&#x27;Structured-PII layer. High precision through format patterns, with Luhn
+    validation on card candidates to keep the false-positive rate down.&#x27;&#x27;&#x27;
+
+    def scan(self, text: str, enabled: set) -&gt; List[PIIEntity]:
+        found: List[PIIEntity] = []
+        simple = [(&#x27;EMAIL_ADDRESS&#x27;, EMAIL_PATTERN), (&#x27;PHONE_NUMBER&#x27;, PHONE_PATTERN),
+                  (&#x27;US_SSN&#x27;, SSN_PATTERN)]
+        for etype, pattern in simple:
+            if etype not in enabled:
+                continue
+            for m in pattern.finditer(text):
+                found.append(PIIEntity(etype, STRUCTURED_SEVERITY[etype], m.group()[:40], &#x27;regex&#x27;))
+        if &#x27;CREDIT_CARD&#x27; in enabled:
+            for m in CREDIT_CARD_PATTERN.finditer(text):
+                if luhn_valid(m.group()):
+                    found.append(PIIEntity(&#x27;CREDIT_CARD&#x27;, PIISeverity.HIGH, m.group()[:40], &#x27;regex&#x27;))
+        return found
+
+
+# --- The NER layer: unstructured PII ----------------------------------------
+# Names, locations, and organisations have no fixed format, so only a named-
+# entity-recognition model catches them. Behind a Protocol so the detector is
+# testable with a stub and the real model (spaCy/Presidio from Chapter 12
+# Section 12.09) is injected in production.
+
+class NERModel(Protocol):
+    def entities(self, text: str) -&gt; List[tuple]:
+        &#x27;&#x27;&#x27;Return (entity_type, span) tuples for PERSON, LOCATION, ORGANISATION.&#x27;&#x27;&#x27;
+        ...
+
+
+class StubNER:
+    &#x27;&#x27;&#x27;Deterministic stand-in for the Chapter 12 NER model. Recognises a tiny
+    fixed vocabulary so the detector runs without spaCy/Presidio. NOT a real
+    model -- replace with the 12.09 NER layer in production.&#x27;&#x27;&#x27;
+
+    _PERSONS = (&#x27;Alice Kumar&#x27;, &#x27;John Smith&#x27;, &#x27;Maria Garcia&#x27;, &#x27;Raj Patel&#x27;)
+    _LOCATIONS = (&#x27;Bangalore&#x27;, &#x27;Frankfurt&#x27;, &#x27;Singapore&#x27;)
+    _ORGS = (&#x27;Acme Corp&#x27;, &#x27;Globex&#x27;)
+
+    def entities(self, text: str) -&gt; List[tuple]:
+        out = []
+        for name in self._PERSONS:
+            if name in text:
+                out.append((&#x27;PERSON&#x27;, name))
+        for loc in self._LOCATIONS:
+            if re.search(r&#x27;\b&#x27; + re.escape(loc) + r&#x27;\b&#x27;, text):
+                out.append((&#x27;LOCATION&#x27;, loc))
+        for org in self._ORGS:
+            if org in text:
+                out.append((&#x27;ORGANISATION&#x27;, org))
+        return out
+
+
+NER_SEVERITY = {
+    &#x27;PERSON&#x27;: PIISeverity.LOW,
+    &#x27;LOCATION&#x27;: PIISeverity.LOW,
+    &#x27;ORGANISATION&#x27;: PIISeverity.LOW,
+}
+
+
+class NERLayer:
+    def __init__(self, model: NERModel) -&gt; None:
+        self._model = model
+
+    def scan(self, text: str, enabled: set) -&gt; List[PIIEntity]:
+        found: List[PIIEntity] = []
+        for etype, span in self._model.entities(text):
+            if etype in enabled:
+                found.append(PIIEntity(etype, NER_SEVERITY.get(etype, PIISeverity.LOW),
+                                       span[:40], &#x27;ner&#x27;))
+        return found
+
+
+# --- The detector -----------------------------------------------------------
+
+@dataclass
+class PIIConfig:
+    &#x27;&#x27;&#x27;Configuration: enabled entity types, verdict thresholds by severity, the
+    surfaces to scan, and the NER model version. Managed across the suite by
+    detector_config_manager.py in Section 15.07.&#x27;&#x27;&#x27;
+    enabled_types: set = field(default_factory=lambda: {
+        &#x27;EMAIL_ADDRESS&#x27;, &#x27;PHONE_NUMBER&#x27;, &#x27;US_SSN&#x27;, &#x27;CREDIT_CARD&#x27;,
+        &#x27;PERSON&#x27;, &#x27;LOCATION&#x27;, &#x27;ORGANISATION&#x27;})
+    scan_input: bool = True
+    scan_output: bool = True
+    # A single high-severity entity blocks; medium flags; low-only never blocks
+    # on its own -- names and places are too common to block on, which is the
+    # core false-positive discipline of this detector.
+    block_on_high: bool = True
+    flag_on_medium: bool = True
+    low_needs_count: int = 3   # low-severity entities only escalate in aggregate
+    ner_model_version: str = &#x27;pii-ner-spacy-v1&#x27;
+
+
+class PIIScanner:
+    &#x27;&#x27;&#x27;Two-sided regex-plus-NER PII scanner on the unified API.&#x27;&#x27;&#x27;
+
+    name = &#x27;pii_scanner&#x27;
+
+    def __init__(self, ner_model: Optional[NERModel] = None,
+                 config: Optional[PIIConfig] = None) -&gt; None:
+        self._regex = RegexLayer()
+        self._ner = NERLayer(ner_model if ner_model is not None else StubNER())
+        self._cfg = config if config is not None else PIIConfig()
+
+    def _should_scan(self, surface: str) -&gt; bool:
+        if surface == &#x27;output&#x27;:
+            return self._cfg.scan_output
+        return self._cfg.scan_input
+
+    def _score(self, entities: List[PIIEntity]) -&gt; tuple:
+        &#x27;&#x27;&#x27;Map found entities to a 0..1 score and a verdict band. High-severity
+        structured PII is a strong signal; low-severity entities escalate only
+        in aggregate, so a single name or place does not drive a verdict.&#x27;&#x27;&#x27;
+        highs = [e for e in entities if e.severity == PIISeverity.HIGH]
+        mediums = [e for e in entities if e.severity == PIISeverity.MEDIUM]
+        lows = [e for e in entities if e.severity == PIISeverity.LOW]
+
+        if highs and self._cfg.block_on_high:
+            return 0.90, Verdict.BLOCK
+        if mediums and self._cfg.flag_on_medium:
+            return 0.55, Verdict.FLAG
+        if len(lows) &gt;= self._cfg.low_needs_count:
+            return 0.45, Verdict.FLAG
+        if lows:
+            return 0.20, Verdict.ALLOW   # noted in evidence, not actioned
+        return 0.0, Verdict.ALLOW
+
+    def detect(self, ctx: DetectionContext) -&gt; DetectorResult:
+        start = time.perf_counter()
+        evidence: List[Evidence] = []
+
+        if not self._should_scan(ctx.surface):
+            latency_ms = (time.perf_counter() - start) * 1000.0
+            return DetectorResult(self.name, Verdict.ALLOW, 0.0, 1.0, latency_ms, [])
+
+        enabled = self._cfg.enabled_types
+        entities = self._regex.scan(ctx.text, enabled) + self._ner.scan(ctx.text, enabled)
+
+        for e in entities:
+            evidence.append(Evidence(source=e.source,
+                                     label=f&#x27;{e.entity_type.lower()}_{e.severity.value}&#x27;,
+                                     detail=f&#x27;{ctx.surface}: {e.span}&#x27;))
+
+        score, verdict = self._score(entities)
+
+        # Confidence: structured PII (regex + Luhn) is near-certain; an NER-only
+        # verdict inherits the model&#x27;s typical reliability on entity spans.
+        has_structured = any(e.source == &#x27;regex&#x27; for e in entities)
+        confidence = 0.96 if has_structured else (0.80 if entities else 0.90)
+
+        latency_ms = (time.perf_counter() - start) * 1000.0
+        return DetectorResult(
+            detector=self.name,
+            verdict=verdict,
+            score=round(score, 4),
+            confidence=round(confidence, 4),
+            latency_ms=latency_ms,
+            evidence=evidence,
+        )
+
+
+if __name__ == &#x27;__main__&#x27;:
+    det = PIIScanner()
+    samples = [
+        (&#x27;clean_in&#x27;, &#x27;Please help me draft a project update for my team.&#x27;, &#x27;input&#x27;),
+        (&#x27;card_out&#x27;, &#x27;Your saved card is 4539 1488 0343 6467, expiring soon.&#x27;, &#x27;output&#x27;),
+        (&#x27;ssn_out&#x27;, &#x27;The record shows SSN 123-45-6789 on file.&#x27;, &#x27;output&#x27;),
+        (&#x27;email_in&#x27;, &#x27;Contact me at alice@example.com about the invoice.&#x27;, &#x27;input&#x27;),
+        (&#x27;one_name&#x27;, &#x27;Can you introduce me to John Smith at the conference?&#x27;, &#x27;input&#x27;),
+        (&#x27;many_low&#x27;, &#x27;John Smith from Acme Corp is flying to Singapore next week.&#x27;, &#x27;output&#x27;),
+    ]
+    for label, text, surface in samples:
+        ctx = DetectionContext(request_id=label, text=text, surface=surface)
+        r = det.detect(ctx)
+        kinds = &#x27;,&#x27;.join(sorted({e.source for e in r.evidence})) or &#x27;none&#x27;
+        print(f&#x27;{label:9} [{surface:6}] {r.verdict.value:5} score={r.score:.2f} &#x27;
+              f&#x27;conf={r.confidence:.2f} via={kinds} {r.latency_ms:.2f}ms&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PII Regex Pattern Set for Structured Entities</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pii_regex_pattern_set.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The structured-PII patterns as maintainable data, each with a severity, a checksum flag, and a false-positive note. Includes the Luhn validator and the card pattern it pairs with. Unstructured entities are not represented here -- they belong to the NER layer.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library re and dataclasses only. Self-checks that all patterns compile and that Luhn accepts a valid test card and rejects a random digit run.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pii_regex_pattern_set.py
+# Section 15.04: PII Regex Pattern Set for Structured Entities
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The structured-PII patterns as maintainable data, separate from the scanner.
+# Structured PII (fixed format) is the regex layer&#x27;s domain; unstructured PII
+# (names, places) belongs to the NER layer and is not represented here. Each
+# pattern carries a severity and a false-positive note, and the card pattern is
+# paired with a Luhn check because format alone is not enough for cards.
+
+from dataclasses import dataclass
+from typing import List, Optional
+import re
+
+
+@dataclass
+class PIIPattern:
+    entity_type: str
+    regex: str
+    severity: str               # &#x27;high&#x27; or &#x27;medium&#x27;
+    needs_checksum: bool        # True for cards -- format is necessary, not sufficient
+    fp_note: str                # false-positive risk and mitigation
+
+
+PATTERN_SET: List[PIIPattern] = [
+    PIIPattern(
+        &#x27;US_SSN&#x27;,
+        r&#x27;\b\d{3}-\d{2}-\d{4}\b&#x27;, &#x27;high&#x27;, False,
+        &#x27;Low FP with dashes required. Bare 9-digit runs are excluded to avoid IDs and order numbers.&#x27;),
+    PIIPattern(
+        &#x27;CREDIT_CARD&#x27;,
+        r&#x27;\b(?:\d[ -]*?){13,19}\b&#x27;, &#x27;high&#x27;, True,
+        &#x27;Format alone over-matches. A Luhn checksum rejects random digit runs -- the main card FP source.&#x27;),
+    PIIPattern(
+        &#x27;EMAIL_ADDRESS&#x27;,
+        r&#x27;\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b&#x27;, &#x27;medium&#x27;, False,
+        &#x27;Low FP. Emails are unambiguous but common in benign text, so medium severity, not high.&#x27;),
+    PIIPattern(
+        &#x27;PHONE_NUMBER&#x27;,
+        r&#x27;\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b&#x27;, &#x27;medium&#x27;, False,
+        &#x27;Moderate FP. Long numeric strings (order refs, IDs) can match; medium severity limits impact.&#x27;),
+]
+
+
+def luhn_valid(number: str) -&gt; bool:
+    digits = [int(c) for c in number if c.isdigit()]
+    if not 13 &lt;= len(digits) &lt;= 19:
+        return False
+    checksum, parity = 0, len(digits) % 2
+    for i, d in enumerate(digits):
+        if i % 2 == parity:
+            d *= 2
+            if d &gt; 9:
+                d -= 9
+        checksum += d
+    return checksum % 10 == 0
+
+
+def compile_set(patterns: Optional[List[PIIPattern]] = None) -&gt; List[tuple]:
+    src = patterns if patterns is not None else PATTERN_SET
+    return [(p.entity_type, re.compile(p.regex), p.severity, p.needs_checksum) for p in src]
+
+
+if __name__ == &#x27;__main__&#x27;:
+    for p in PATTERN_SET:
+        chk = &#x27; + Luhn&#x27; if p.needs_checksum else &#x27;&#x27;
+        print(f&#x27;[{p.severity:6}] {p.entity_type:14}{chk}&#x27;)
+        print(f&#x27;         {p.fp_note}&#x27;)
+    ok = all(re.compile(p.regex) for p in PATTERN_SET)
+    # sanity: a valid test card passes Luhn, a random run does not
+    print(&#x27;\nLuhn on 4539148803436467:&#x27;, luhn_valid(&#x27;4539148803436467&#x27;))
+    print(&#x27;Luhn on 1234567812345678:&#x27;, luhn_valid(&#x27;1234567812345678&#x27;))
+    print(f&#x27;{len(PATTERN_SET)} patterns, all compile: {bool(ok)}&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PII Scanner Test Harness</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pii_scanner_test_harness.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Validates the scanner against a corpus spanning every entity type on both surfaces, and reports accuracy, false-positive rate, and p99 latency with a pass/fail gate. The negative side is a false-positive stress set: single common names, places, and organisations that must be allowed, and card-shaped strings that Luhn must reject.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library only, imports the scanner under test. On the shipped configuration it reports 100% accuracy, 0% false positives, and sub-millisecond p99 on the sample corpus. The large-corpus version runs in detection_test_framework.py (Section 15.07).</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pii_scanner_test_harness.py
+# Section 15.04: PII Scanner Test Harness
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# Validates the PII scanner against a labelled corpus spanning every entity type
+# -- structured (email, phone, SSN, card) and unstructured (person, location,
+# organisation) -- on both input and output surfaces. The negative side is a
+# false-positive stress set: text with common names and place words that must
+# NOT be flagged, since over-flagging PII is this detector&#x27;s defining risk.
+
+from dataclasses import dataclass
+from typing import List
+
+from pii_scanner import PIIScanner, DetectionContext, Verdict
+
+
+@dataclass
+class LabelledCase:
+    text: str
+    surface: str
+    has_actionable_pii: bool    # ground truth: should this flag or block?
+
+
+CORPUS: List[LabelledCase] = [
+    # --- positives: structured PII ---
+    LabelledCase(&#x27;Your card 4539 1488 0343 6467 was charged today.&#x27;, &#x27;output&#x27;, True),
+    LabelledCase(&#x27;SSN on file is 123-45-6789 for verification.&#x27;, &#x27;output&#x27;, True),
+    LabelledCase(&#x27;Reach me at maria@example.com for the contract.&#x27;, &#x27;input&#x27;, True),
+    LabelledCase(&#x27;Call the office at +1 415 555 0132 tomorrow.&#x27;, &#x27;input&#x27;, True),
+    # --- positives: aggregated unstructured PII ---
+    LabelledCase(&#x27;John Smith from Acme Corp is relocating to Singapore.&#x27;, &#x27;output&#x27;, True),
+    # --- negatives: clean text ---
+    LabelledCase(&#x27;Please summarise the attached quarterly report.&#x27;, &#x27;input&#x27;, False),
+    LabelledCase(&#x27;The meeting is rescheduled to next Thursday afternoon.&#x27;, &#x27;output&#x27;, False),
+    LabelledCase(&#x27;Explain how a hash map handles collisions.&#x27;, &#x27;input&#x27;, False),
+    # --- negatives: single common name / place (false-positive stressors) ---
+    LabelledCase(&#x27;Can you introduce me to John Smith at the event?&#x27;, &#x27;input&#x27;, False),
+    LabelledCase(&#x27;I am planning a trip to Singapore next spring.&#x27;, &#x27;input&#x27;, False),
+    LabelledCase(&#x27;Acme Corp announced strong earnings this quarter.&#x27;, &#x27;output&#x27;, False),
+    # --- negatives: card-shaped but invalid (Luhn must reject) ---
+    LabelledCase(&#x27;Order reference 1234 5678 1234 5678 shipped Monday.&#x27;, &#x27;output&#x27;, False),
+    LabelledCase(&#x27;The tracking code is 9999 0000 1111 2222 for your parcel.&#x27;, &#x27;output&#x27;, False),
+]
+
+
+def evaluate(detector: PIIScanner, corpus: List[LabelledCase]) -&gt; dict:
+    latencies: List[float] = []
+    tp = tn = fp = fn = 0
+    for i, case in enumerate(corpus):
+        ctx = DetectionContext(request_id=f&#x27;case-{i}&#x27;, text=case.text, surface=case.surface)
+        r = detector.detect(ctx)
+        latencies.append(r.latency_ms)
+        flagged = r.verdict in (Verdict.FLAG, Verdict.BLOCK)
+        if case.has_actionable_pii and flagged:
+            tp += 1
+        elif case.has_actionable_pii and not flagged:
+            fn += 1
+        elif not case.has_actionable_pii and flagged:
+            fp += 1
+        else:
+            tn += 1
+    total = len(corpus)
+    accuracy = (tp + tn) / total
+    benign = fp + tn
+    fp_rate = fp / benign if benign else 0.0
+    latencies.sort()
+    p99 = latencies[min(len(latencies) - 1, int(round(0.99 * (len(latencies) - 1))))]
+    return {&#x27;accuracy&#x27;: accuracy, &#x27;false_positive_rate&#x27;: fp_rate, &#x27;p99_latency_ms&#x27;: p99,
+            &#x27;tp&#x27;: tp, &#x27;tn&#x27;: tn, &#x27;fp&#x27;: fp, &#x27;fn&#x27;: fn}
+
+
+def check_quality_bar(m: dict) -&gt; tuple:
+    reasons = []
+    if m[&#x27;accuracy&#x27;] &lt; 0.95:
+        reasons.append(f&quot;accuracy {m[&#x27;accuracy&#x27;]:.2%} &lt; 95%&quot;)
+    if m[&#x27;p99_latency_ms&#x27;] &gt; 50.0:
+        reasons.append(f&quot;p99 {m[&#x27;p99_latency_ms&#x27;]:.1f}ms &gt; 50ms&quot;)
+    if m[&#x27;false_positive_rate&#x27;] &gt; 0.05:
+        reasons.append(f&quot;FP {m[&#x27;false_positive_rate&#x27;]:.2%} &gt; 5%&quot;)
+    return (not reasons, reasons)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    det = PIIScanner()
+    m = evaluate(det, CORPUS)
+    print(f&quot;accuracy            : {m[&#x27;accuracy&#x27;]:.2%}&quot;)
+    print(f&quot;false-positive rate : {m[&#x27;false_positive_rate&#x27;]:.2%}&quot;)
+    print(f&quot;p99 latency         : {m[&#x27;p99_latency_ms&#x27;]:.3f}ms&quot;)
+    print(f&quot;confusion           : tp={m[&#x27;tp&#x27;]} tn={m[&#x27;tn&#x27;]} fp={m[&#x27;fp&#x27;]} fn={m[&#x27;fn&#x27;]}&quot;)
+    passed, reasons = check_quality_bar(m)
+    print(&#x27;quality bar         :&#x27;, &#x27;PASS&#x27; if passed else &#x27;FAIL -- &#x27; + &#x27;; &#x27;.join(reasons))</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PII Scanner Configuration</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pii_scanner_config.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Configuration for the scanner -- enabled entity types, scanned surfaces, the severity-to-verdict mapping including the low-severity aggregate threshold, and the NER model version -- as data, because PII policy is deployment-specific. Ships general, strict, and output-only profiles, the last matching the Chapter 12 Section 12.09 behaviour.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses only. validate() enforces at least one entity type, at least one surface, and a valid aggregate threshold. The low_needs_count knob is the externalised false-positive control.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pii_scanner_config.py
+# Section 15.04: PII Scanner Configuration
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# Configuration for the PII scanner: which entity types are enabled, which
+# surfaces are scanned, how each severity maps to a verdict, and the NER model
+# version. PII policy is deployment-specific -- a healthcare system enables more
+# entity types and blocks harder than a general assistant -- so these knobs are
+# externalised as data and managed across the suite in Section 15.07.
+
+from dataclasses import dataclass, field, asdict
+from typing import Dict, Any, Set
+
+
+@dataclass
+class PIIScannerConfig:
+    # Entity types the scanner looks for. Structured types are near-free;
+    # unstructured (PERSON/LOCATION/ORGANISATION) cost an NER inference.
+    enabled_types: Set[str] = field(default_factory=lambda: {
+        &#x27;EMAIL_ADDRESS&#x27;, &#x27;PHONE_NUMBER&#x27;, &#x27;US_SSN&#x27;, &#x27;CREDIT_CARD&#x27;,
+        &#x27;PERSON&#x27;, &#x27;LOCATION&#x27;, &#x27;ORGANISATION&#x27;})
+
+    # Surfaces. The two-sided scan is the point of this detector versus the
+    # output-only Chapter 12 Section 12.09 scanner.
+    scan_input: bool = True
+    scan_output: bool = True
+
+    # Severity-to-verdict mapping. The low_needs_count knob is the core false-
+    # positive control: a single name or place never escalates; only an
+    # aggregate of low-severity entities does.
+    block_on_high: bool = True
+    flag_on_medium: bool = True
+    low_needs_count: int = 3
+
+    ner_model_version: str = &#x27;pii-ner-spacy-v1&#x27;
+
+    def validate(self) -&gt; None:
+        assert self.enabled_types, &#x27;at least one entity type must be enabled&#x27;
+        assert self.scan_input or self.scan_output, &#x27;must scan at least one surface&#x27;
+        assert self.low_needs_count &gt;= 1, &#x27;low_needs_count must be &gt;= 1&#x27;
+
+    def to_dict(self) -&gt; Dict[str, Any]:
+        d = asdict(self)
+        d[&#x27;enabled_types&#x27;] = sorted(self.enabled_types)
+        return d
+
+
+# Deployment profiles. General is the balanced default. Strict (e.g. healthcare,
+# finance) enables everything, scans both sides, and escalates low-severity
+# aggregates sooner. Output_only mimics the Chapter 12 Section 12.09 behaviour
+# for teams that only need leakage scanning.
+GENERAL = PIIScannerConfig()
+STRICT = PIIScannerConfig(low_needs_count=2)
+OUTPUT_ONLY = PIIScannerConfig(scan_input=False, scan_output=True)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    for name, cfg in [(&#x27;general&#x27;, GENERAL), (&#x27;strict&#x27;, STRICT), (&#x27;output_only&#x27;, OUTPUT_ONLY)]:
+        cfg.validate()
+        d = cfg.to_dict()
+        print(f&quot;{name:11} surfaces=in:{d[&#x27;scan_input&#x27;]}/out:{d[&#x27;scan_output&#x27;]} &quot;
+              f&quot;low_needs={d[&#x27;low_needs_count&#x27;]} types={len(d[&#x27;enabled_types&#x27;])}&quot;)
+    print(&#x27;all profiles valid&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Flagging every entity the NER layer recognises, treating any name or place as actionable PII</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The NER model dutifully recognises names and places, and it feels correct to treat every recognised entity as a PII finding worth surfacing.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The scanner fires on a large fraction of ordinary traffic -- every introduction, travel plan, and company mention -- burying the real leaks in noise and getting itself disabled by an exhausted operations team.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Tag unstructured entities as low-severity and never escalate a lone one. Let a single name or place be noted in evidence but not actioned, and escalate only on an aggregate of low-severity entities.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Matching credit cards by format alone, without a Luhn checksum</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A thirteen-to-nineteen-digit pattern looks like it captures cards, and it passes the obvious tests with real card numbers.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Every long numeric string that fits the digit count -- order references, tracking codes, identifiers -- is reported as a credit card, the single biggest structured-PII false-positive source.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Confirm every card-shaped match against the Luhn checksum before reporting it. The format pattern catches the shape; the checksum confirms the substance and drops the impostors.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Scanning only the output for PII, inheriting the Chapter 12 output-only scope</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The Chapter 12 Section 12.09 scanner was output-only for good reasons, and reusing its scope is the path of least resistance.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Input-side PII -- a user pasting a customer record, an SSN in a support ticket -- flows into prompts, logs, and downstream systems unseen, even though it is a real PII event the system should catch.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Make the scan two-sided. Read the surface from the detection context and scan input, output, or both per configuration, so a deployment can still run output-only when that is all it needs.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Trying to catch names and places with regex instead of an NER model</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Regex already handles the structured entities, so it is tempting to extend it with lists or patterns for common names and cities.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The name and place lists are always incomplete, they generate false positives on common-noun collisions, and they never generalise -- the open set of names cannot be enumerated.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Use the NER layer for unstructured PII. Names, locations, and organisations have no fixed format and belong to a model that recognises them from context, not to a pattern list.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Hardcoding a single PII policy instead of configuring entity types, surfaces, and thresholds</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">One policy is simpler to ship, and the policy that fits the first deployment feels like the policy.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A healthcare or finance deployment that needs to block harder cannot, and a general assistant that would over-flag under a strict policy has no way to relax it. The detector fits one context and misfits every other.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Externalise entity types, scanned surfaces, and the severity-to-verdict mapping as configuration. Ship profiles -- general, strict, output-only -- and let each deployment set its own PII line.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Section 15.04 builds the PII scanner, extending the output-only Chapter 12 Section 12.09 scanner into a two-sided suite detector on the unified API. It is a hybrid split by data shape rather than by novelty: a regex layer catches structured PII -- emails, phones, SSNs, and credit cards confirmed by a Luhn checksum that rejects the order references and tracking codes a format pattern alone would over-match -- while an NER layer catches unstructured PII -- names, locations, organisations -- that has no fixed format and needs the Chapter 12 spaCy/Presidio model behind a swappable interface. The scanner reads the surface from the detection context and scans input, output, or both, covering the two-sided PII risk that the output-only original did not. The whole design is governed by the false-positive problem: names and places saturate ordinary text, so the scoring is severity-tiered -- high-severity structured PII blocks, medium flags, and low-severity unstructured entities never escalate on their own, only in aggregate. A single name or place is noted but not actioned, which is what keeps the scanner from firing on every introduction and travel plan. The test harness validates across every entity type on both surfaces, with a negative side built as a common-name and invalid-card stress set, confirming the quality bar with the low false-positive rate PII detection demands.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>PII detection is a hybrid split by data shape: regex for structured PII with a fixed format, NER for unstructured PII with none</li><li>The credit-card pattern needs a Luhn checksum, which rejects the order and tracking numbers that format alone over-matches</li><li>The scanner is two-sided, extending the output-only Chapter 12 Section 12.09 scanner to catch input-side ingestion as well as output-side leakage</li><li>The false-positive rate governs the design because names and places saturate ordinary text; a lone low-severity entity must never drive a verdict</li><li>Severity tiers map findings to verdicts: high structured PII blocks, medium flags, low unstructured entities escalate only in aggregate</li><li>PII policy is deployment-specific, so entity types, surfaces, and thresholds are configuration with general, strict, and output-only profiles</li></ul>
+<h2 class="sh1">Preview Section 15 05</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Toxicity Detector: Hosted Classification and Custom Models</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 15.05 builds the toxicity detector, combining a hosted toxicity classification service as a maintained baseline with custom models for the domain-specific and context-dependent toxicity the hosted service misses. It scans both inputs and outputs on the same unified API, and its central challenge, like the PII scanner, is context: content that is toxic in one context is benign in another, so the detector must weigh context rather than match words, keeping the false-positive rate inside the quality bar.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 15 Section 15.01: the unified detector API contract and quality bar</li><li>Chapter 15 Section 15.02: the hybrid detector template and two-layer combination discipline</li><li>Chapter 12 Section 12.09: the output-side PII scanner this detector extends into a two-sided suite detector</li><li>Chapter 5: the data-protection regimes that make PII a compliance concern as well as a security one</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 15.05: the toxicity detector, which also scans two-sided and centres on context</li><li>Section 15.07: the combined pipeline that orchestrates this scanner through the unified API</li><li>Chapter 16: SIEM integration, where PII detections flow into security operations with the care their sensitivity requires</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>pii-scanner</li><li>regex-plus-ner</li><li>structured-pii</li><li>unstructured-pii</li><li>luhn-check</li><li>credit-card-validation</li><li>named-entity-recognition</li><li>two-sided-scanning</li><li>severity-tiers</li><li>false-positive-control</li><li>common-name-stress-set</li><li>chapter-12-extension</li><li>unified-api</li><li>quality-bar</li><li>part-4-chapter-1</li></ul>
+</article>

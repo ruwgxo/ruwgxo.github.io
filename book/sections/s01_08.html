@@ -1,0 +1,685 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 8 · ~7 pages</div>
+<h1>Logistic Regression from Scratch</h1>
+<div class="tags"><span class="tag">logistic-regression</span><span class="tag">sigmoid</span><span class="tag">binary-classification</span><span class="tag">gradient-descent</span><span class="tag">log-loss</span><span class="tag">numpy-implementation</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Logistic regression is the workhorse of binary classification. Despite its name, 
+it&#x27;s a classification algorithm, not regression. It&#x27;s the foundation for understanding 
+neural networks, and it&#x27;s still used in production at massive scale because it&#x27;s 
+fast, interpretable, and works surprisingly well.
+
+Every major tech company uses logistic regression somewhere in their stack:
+- Google: Ad click prediction (billions of predictions per day)
+- Facebook: Spam detection, content moderation
+- Netflix: Recommendation systems
+- Security vendors: Malware detection, fraud detection
+
+This section builds logistic regression from absolute scratch using only NumPy. 
+We&#x27;ll implement the sigmoid function, derive the loss function, compute gradients 
+by hand, and train with gradient descent. By the end, you&#x27;ll have a working 
+binary classifier that you coded yourself - no scikit-learn, no magic.
+
+Understanding logistic regression at this level is critical because:
+1. It&#x27;s the building block for neural networks (chain these together = deep learning)
+2. You&#x27;ll understand why gradient descent works (foundation of all ML)
+3. You can debug model failures (know what&#x27;s happening under the hood)
+4. You can explain model predictions (important for security)</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security context:
+- Interpretable: Can explain WHY something was classified as malicious
+- Fast: Sub-millisecond predictions (critical for real-time detection)
+- Scalable: Billions of predictions per day on single machine
+- Probabilistic: Outputs calibrated probabilities for risk assessment
+- Robust: Doesn&#x27;t overfit easily (good for adversarial environments)
+
+Use cases:
+- Email spam detection (text features → spam probability)
+- Phishing URL detection (domain features → phishing probability)
+- Fraud detection (transaction features → fraud probability)
+- Intrusion detection (packet features → attack probability)
+- Malware detection (file features → malicious probability)</p>
+<h2 class="sh1">Sigmoid Function</h2>
+<h3 class="sh2">Motivation</h3>
+<p class="prose">Problem: We want to predict probabilities (values between 0 and 1)
+But: Linear function y = wx + b can output any value (-∞ to +∞)
+Solution: Sigmoid function &quot;squashes&quot; linear output to [0, 1] range</p>
+<h3 class="sh2">Formula</h3>
+<p class="prose">σ(z) = 1 / (1 + e^(-z))</p>
+<h3 class="sh2">Properties</h3>
+<h3 class="sh3">Range</h3>
+<p class="prose">[0, 1] - perfect for probabilities</p>
+<h3 class="sh3">Boundary Values</h3>
+<ul class="blist"><li>σ(0) = 0.5 (neutral point)</li><li>σ(∞) → 1 (very positive input → probability near 1)</li><li>σ(-∞) → 0 (very negative input → probability near 0)</li></ul>
+<h3 class="sh3">Shape</h3>
+<p class="prose">S-shaped curve (sigmoid = &#x27;S-shaped&#x27;)</p>
+<h3 class="sh3">Derivative</h3>
+<p class="prose">σ&#x27;(z) = σ(z) × (1 - σ(z)) - used in gradient descent!</p>
+<h3 class="sh2">Geometric Intuition</h3>
+<p class="prose">Think of z = wx + b as &quot;evidence&quot; for positive class:
+- Large positive z: Strong evidence → σ(z) ≈ 1 (high probability)
+- Near zero z: No evidence → σ(z) ≈ 0.5 (uncertain)
+- Large negative z: Strong evidence against → σ(z) ≈ 0 (low probability)
+
+Sigmoid converts evidence to probability smoothly.</p>
+<h3 class="sh2">Numpy Implementation</h3>
+<pre class="code"><code>import numpy as np
+
+def sigmoid(z):
+    &quot;&quot;&quot;
+    Sigmoid activation function: σ(z) = 1 / (1 + e^(-z))
+    
+    Args:
+        z: Input (scalar, vector, or matrix)
+    
+    Returns:
+        Output in range [0, 1]
+    &quot;&quot;&quot;
+    return 1 / (1 + np.exp(-z))
+
+# Examples
+print(f&quot;σ(0) = {sigmoid(0)}&quot;)       # 0.5
+print(f&quot;σ(5) = {sigmoid(5)}&quot;)       # 0.993 (very confident)
+print(f&quot;σ(-5) = {sigmoid(-5)}&quot;)     # 0.007 (very confident)
+
+# Vectorized operation
+z_values = np.array([-3, -1, 0, 1, 3])
+probabilities = sigmoid(z_values)
+print(f&quot;Probabilities: {probabilities}&quot;)
+# [0.047, 0.269, 0.5, 0.731, 0.953]</code></pre>
+<h3 class="sh2">Numerical Stability</h3>
+<pre class="code"><code>Problem: For very negative z (e.g., z = -1000), e^(-z) overflows
+
+Solution: Use numerically stable implementation
+
+def sigmoid_stable(z):
+    &quot;&quot;&quot;Numerically stable sigmoid&quot;&quot;&quot;
+    # For positive z: use standard formula
+    # For negative z: use σ(z) = e^z / (1 + e^z)
+    
+    pos_mask = (z &gt;= 0)
+    neg_mask = (z &lt; 0)
+    
+    result = np.zeros_like(z, dtype=float)
+    
+    # Positive z
+    result[pos_mask] = 1 / (1 + np.exp(-z[pos_mask]))
+    
+    # Negative z (alternative form)
+    exp_z = np.exp(z[neg_mask])
+    result[neg_mask] = exp_z / (1 + exp_z)
+    
+    return result</code></pre>
+<h2 class="sh1">Logistic Regression Model</h2>
+<h3 class="sh2">Model Equation</h3>
+<p class="prose">Linear combination: z = w·x + b = w₁x₁ + w₂x₂ + ... + wₙxₙ + b
+
+Probability prediction: P(y=1|x) = σ(z) = 1 / (1 + e^(-z))
+
+Where:
+- x: Input features [x₁, x₂, ..., xₙ]
+- w: Weights [w₁, w₂, ..., wₙ] (parameters to learn)
+- b: Bias (intercept, parameter to learn)
+- z: Linear combination (also called &quot;logit&quot;)
+- σ(z): Sigmoid function
+- P(y=1|x): Probability that y=1 given input x</p>
+<h3 class="sh2">Vectorized Form</h3>
+<p class="prose">For multiple samples (rows = samples, columns = features):
+
+Z = XW + b
+
+Where:
+- X: (m, n) matrix - m samples, n features
+- W: (n, 1) vector - weights for each feature
+- b: scalar - bias
+- Z: (m, 1) vector - linear outputs for all samples
+
+Predictions: P = σ(Z)</p>
+<h3 class="sh2">Interpretation</h3>
+<p class="prose">Each weight wᵢ represents importance of feature i:
+- Positive weight: Feature increases probability of positive class
+- Negative weight: Feature decreases probability of positive class
+- Weight magnitude: How strongly feature influences prediction
+
+Example (spam detection):
+- w₁ = 0.5 for &quot;exclamation_count&quot;: More exclamations → higher spam probability
+- w₂ = -0.3 for &quot;email_length&quot;: Longer emails → lower spam probability
+- b = -1.0: Base spam probability (when all features = 0)</p>
+<h3 class="sh2">Decision Boundary</h3>
+<p class="prose">Model predicts class 1 if P(y=1|x) &gt; 0.5
+This happens when z &gt; 0 (since σ(0) = 0.5)
+
+Decision boundary equation: w·x + b = 0
+
+This is a hyperplane (line in 2D, plane in 3D) separating classes</p>
+<h3 class="sh2">Example 2D</h3>
+<p class="prose">Two features: exclamations (x₁) and capitals (x₂)
+Learned weights: w₁=2, w₂=3, b=-10
+
+Decision boundary: 2x₁ + 3x₂ - 10 = 0
+Rearranged: x₂ = (10 - 2x₁) / 3
+
+Email 1: x₁=3, x₂=2
+z = 2(3) + 3(2) - 10 = 6 + 6 - 10 = 2
+P(spam) = σ(2) = 0.88 → Spam
+
+Email 2: x₁=1, x₂=1
+z = 2(1) + 3(1) - 10 = 2 + 3 - 10 = -5
+P(spam) = σ(-5) = 0.007 → Not spam</p>
+<h2 class="sh1">Binary Cross Entropy Loss</h2>
+<h3 class="sh2">Why Not Mse</h3>
+<p class="prose">Mean Squared Error (MSE): (ŷ - y)²
+
+Problem with MSE for classification:
+1. Gradient descent gets stuck (non-convex optimization landscape)
+2. Doesn&#x27;t penalize confident wrong predictions appropriately
+3. Doesn&#x27;t match probabilistic interpretation
+
+Need loss function that:
+- Is convex (single global minimum, gradient descent works)
+- Heavily penalizes confident wrong predictions
+- Matches maximum likelihood estimation</p>
+<h3 class="sh2">Cross Entropy Formula</h3>
+<p class="prose">For single sample:
+L(y, ŷ) = -[y log(ŷ) + (1-y) log(1-ŷ)]
+
+Where:
+- y: True label (0 or 1)
+- ŷ: Predicted probability (output of sigmoid)
+- L: Loss (higher = worse prediction)</p>
+<h3 class="sh2">Intuition</h3>
+<p class="prose">Case 1: True label y=1 (positive class)
+Loss = -log(ŷ)
+
+- If ŷ=1 (confident and correct): Loss = -log(1) = 0 (perfect)
+- If ŷ=0.5 (uncertain): Loss = -log(0.5) = 0.69 (moderate)
+- If ŷ=0.01 (confident but wrong): Loss = -log(0.01) = 4.6 (very bad!)
+
+Case 2: True label y=0 (negative class)
+Loss = -log(1-ŷ)
+
+- If ŷ=0 (confident and correct): Loss = -log(1) = 0 (perfect)
+- If ŷ=0.5 (uncertain): Loss = -log(0.5) = 0.69 (moderate)
+- If ŷ=0.99 (confident but wrong): Loss = -log(0.01) = 4.6 (very bad!)
+
+Key insight: Loss explodes as model becomes confident AND wrong</p>
+<h3 class="sh2">Average Loss</h3>
+<p class="prose">For m training samples:
+
+J(w, b) = -(1/m) Σᵢ [yᵢ log(ŷᵢ) + (1-yᵢ) log(1-ŷᵢ)]
+
+This is the cost function we minimize during training</p>
+<h3 class="sh2">Numpy Implementation</h3>
+<pre class="code"><code>def binary_cross_entropy(y_true, y_pred):
+    &quot;&quot;&quot;
+    Binary cross-entropy loss
+    
+    Args:
+        y_true: True labels (0 or 1), shape (m,)
+        y_pred: Predicted probabilities, shape (m,)
+    
+    Returns:
+        Average loss across samples
+    &quot;&quot;&quot;
+    m = len(y_true)
+    
+    # Clip predictions to avoid log(0)
+    epsilon = 1e-15
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    # Compute loss
+    loss = -np.mean(
+        y_true * np.log(y_pred) + 
+        (1 - y_true) * np.log(1 - y_pred)
+    )
+    
+    return loss
+
+# Example
+y_true = np.array([1, 0, 1, 1, 0])
+y_pred = np.array([0.9, 0.1, 0.8, 0.6, 0.2])
+
+loss = binary_cross_entropy(y_true, y_pred)
+print(f&quot;Loss: {loss:.4f}&quot;)  # Lower is better</code></pre>
+<h3 class="sh2">Why Cross Entropy Works</h3>
+<p class="prose">Mathematical connection: Binary cross-entropy is negative log-likelihood
+
+Minimizing cross-entropy = Maximizing likelihood of correct labels
+
+This is the &quot;right&quot; loss for probabilistic classification because it 
+derives from maximum likelihood estimation (MLE) principle.</p>
+<h2 class="sh1">Gradient Descent</h2>
+<h3 class="sh2">Goal</h3>
+<p class="prose">Find weights w and bias b that minimize loss J(w, b)</p>
+<h3 class="sh2">Gradient Descent Algorithm</h3>
+<p class="prose">Start with random w, b
+Repeat until convergence:
+    1. Compute predictions: ŷ = σ(Xw + b)
+    2. Compute loss: J = binary_cross_entropy(y, ŷ)
+    3. Compute gradients: dw, db
+    4. Update parameters: w = w - α·dw, b = b - α·db
+
+Where α is learning rate (step size)</p>
+<h3 class="sh2">Gradient Formulas</h3>
+<p class="prose">Gradient with respect to weights:
+∂J/∂w = (1/m) Xᵀ(ŷ - y)
+
+Gradient with respect to bias:
+∂J/∂b = (1/m) Σ(ŷ - y)
+
+Derivation (using chain rule):
+∂J/∂w = (∂J/∂ŷ) × (∂ŷ/∂z) × (∂z/∂w)
+      = -(y/ŷ - (1-y)/(1-ŷ)) × σ(z)(1-σ(z)) × x
+      = (ŷ - y) × x  [after simplification]</p>
+<h3 class="sh2">Update Rule</h3>
+<p class="prose">New weights: w_new = w_old - α × (1/m) Xᵀ(ŷ - y)
+New bias: b_new = b_old - α × (1/m) Σ(ŷ - y)
+
+Intuition:
+- If ŷ &gt; y (predicted too high): gradient positive → decrease w
+- If ŷ &lt; y (predicted too low): gradient negative → increase w
+- Magnitude of update proportional to error (ŷ - y)</p>
+<h3 class="sh2">Learning Rate</h3>
+<p class="prose">α (alpha) controls step size:
+
+Too large:
+- Optimization overshoots minimum
+- Loss oscillates or diverges
+- Training unstable
+
+Too small:
+- Optimization takes forever
+- Might get stuck in plateau
+- Wastes computation
+
+Typical values: 0.001 to 1.0 (depends on feature scaling)
+
+Strategy: Start with 0.01, adjust if loss doesn&#x27;t decrease</p>
+<h3 class="sh2">Convergence Criteria</h3>
+<p class="prose">Stop training when:
+1. Loss change &lt; threshold (e.g., |J_new - J_old| &lt; 0.0001)
+2. Maximum iterations reached (e.g., 1000 iterations)
+3. Gradient magnitude very small (near minimum)
+
+In practice: Monitor loss, stop when it flattens out</p>
+<h2 class="sh1">Complete Implementation</h2>
+<pre class="code"><code>import numpy as np
+
+class LogisticRegression:
+    &quot;&quot;&quot;
+    Binary logistic regression classifier
+    Built from scratch using only NumPy
+    &quot;&quot;&quot;
+    
+    def __init__(self, learning_rate=0.01, n_iterations=1000, verbose=False):
+        &quot;&quot;&quot;
+        Initialize logistic regression model
+        
+        Args:
+            learning_rate: Step size for gradient descent
+            n_iterations: Number of training iterations
+            verbose: Print training progress
+        &quot;&quot;&quot;
+        self.learning_rate = learning_rate
+        self.n_iterations = n_iterations
+        self.verbose = verbose
+        
+        # Parameters (learned during training)
+        self.weights = None
+        self.bias = None
+        
+        # Training history
+        self.losses = []
+    
+    def _sigmoid(self, z):
+        &quot;&quot;&quot;Sigmoid activation function&quot;&quot;&quot;
+        return 1 / (1 + np.exp(-np.clip(z, -500, 500)))  # Clip for stability
+    
+    def _compute_loss(self, y_true, y_pred):
+        &quot;&quot;&quot;Binary cross-entropy loss&quot;&quot;&quot;
+        m = len(y_true)
+        epsilon = 1e-15
+        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+        
+        loss = -np.mean(
+            y_true * np.log(y_pred) + 
+            (1 - y_true) * np.log(1 - y_pred)
+        )
+        return loss
+    
+    def fit(self, X, y):
+        &quot;&quot;&quot;
+        Train logistic regression model
+        
+        Args:
+            X: Training features, shape (m_samples, n_features)
+            y: Training labels, shape (m_samples,)
+        &quot;&quot;&quot;
+        m, n = X.shape
+        
+        # Initialize parameters
+        self.weights = np.zeros(n)
+        self.bias = 0
+        
+        # Gradient descent
+        for iteration in range(self.n_iterations):
+            # Forward pass: compute predictions
+            z = np.dot(X, self.weights) + self.bias
+            y_pred = self._sigmoid(z)
+            
+            # Compute loss
+            loss = self._compute_loss(y, y_pred)
+            self.losses.append(loss)
+            
+            # Backward pass: compute gradients
+            dz = y_pred - y  # Error
+            dw = (1/m) * np.dot(X.T, dz)  # Gradient w.r.t. weights
+            db = (1/m) * np.sum(dz)  # Gradient w.r.t. bias
+            
+            # Update parameters
+            self.weights -= self.learning_rate * dw
+            self.bias -= self.learning_rate * db
+            
+            # Print progress
+            if self.verbose and iteration % 100 == 0:
+                print(f&quot;Iteration {iteration}: Loss = {loss:.4f}&quot;)
+        
+        return self
+    
+    def predict_proba(self, X):
+        &quot;&quot;&quot;
+        Predict class probabilities
+        
+        Args:
+            X: Features, shape (m_samples, n_features)
+        
+        Returns:
+            Probabilities P(y=1), shape (m_samples,)
+        &quot;&quot;&quot;
+        z = np.dot(X, self.weights) + self.bias
+        return self._sigmoid(z)
+    
+    def predict(self, X, threshold=0.5):
+        &quot;&quot;&quot;
+        Predict class labels
+        
+        Args:
+            X: Features, shape (m_samples, n_features)
+            threshold: Classification threshold (default 0.5)
+        
+        Returns:
+            Predicted labels (0 or 1), shape (m_samples,)
+        &quot;&quot;&quot;
+        probabilities = self.predict_proba(X)
+        return (probabilities &gt;= threshold).astype(int)
+    
+    def score(self, X, y):
+        &quot;&quot;&quot;
+        Compute accuracy on dataset
+        
+        Args:
+            X: Features
+            y: True labels
+        
+        Returns:
+            Accuracy (fraction of correct predictions)
+        &quot;&quot;&quot;
+        predictions = self.predict(X)
+        return np.mean(predictions == y)
+
+# ========================================================================
+# USAGE EXAMPLE: Spam Detection
+# ========================================================================
+
+# Generate synthetic spam detection dataset
+np.random.seed(42)
+
+# Features: [exclamation_count, capital_count, email_length, contains_money]
+# Spam: Many exclamations, many capitals, contains money
+# Not spam: Few exclamations, few capitals, no money words
+
+# Generate 500 spam emails
+spam_features = np.random.randn(500, 4)
+spam_features[:, 0] += 5  # More exclamations
+spam_features[:, 1] += 4  # More capitals
+spam_features[:, 3] += 3  # Contains money words
+spam_labels = np.ones(500)
+
+# Generate 500 legitimate emails
+legit_features = np.random.randn(500, 4)
+legit_features[:, 0] -= 2  # Fewer exclamations
+legit_features[:, 1] -= 1  # Fewer capitals
+legit_features[:, 3] -= 2  # No money words
+legit_labels = np.zeros(500)
+
+# Combine datasets
+X = np.vstack([spam_features, legit_features])
+y = np.hstack([spam_labels, legit_labels])
+
+# Shuffle
+shuffle_idx = np.random.permutation(len(y))
+X, y = X[shuffle_idx], y[shuffle_idx]
+
+# Split into train/test (80/20)
+split = int(0.8 * len(y))
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
+
+# Train model
+model = LogisticRegression(learning_rate=0.1, n_iterations=1000, verbose=True)
+model.fit(X_train, y_train)
+
+# Evaluate
+train_acc = model.score(X_train, y_train)
+test_acc = model.score(X_test, y_test)
+
+print(f&quot;\nTraining Accuracy: {train_acc:.2%}&quot;)
+print(f&quot;Test Accuracy: {test_acc:.2%}&quot;)
+
+# Analyze learned weights
+feature_names = [&#x27;exclamation_count&#x27;, &#x27;capital_count&#x27;, &#x27;email_length&#x27;, &#x27;contains_money&#x27;]
+print(&quot;\nLearned feature weights:&quot;)
+for name, weight in zip(feature_names, model.weights):
+    print(f&quot;  {name:20s}: {weight:+.4f}&quot;)
+print(f&quot;  {&#x27;Bias&#x27;:20s}: {model.bias:+.4f}&quot;)
+
+# Make predictions on new emails
+new_emails = np.array([
+    [10, 15, 100, 5],  # Spam-like: many exclamations, capitals, money words
+    [1, 2, 200, -1],   # Legit-like: few exclamations, capitals, no money
+])
+
+probabilities = model.predict_proba(new_emails)
+predictions = model.predict(new_emails)
+
+print(&quot;\nNew email predictions:&quot;)
+for i, (prob, pred) in enumerate(zip(probabilities, predictions)):
+    label = &quot;SPAM&quot; if pred == 1 else &quot;NOT SPAM&quot;
+    print(f&quot;  Email {i+1}: {label} (confidence: {prob:.2%})&quot;)</code></pre>
+<h2 class="sh1">Advanced Topics</h2>
+<h3 class="sh2">Regularization</h3>
+<h3 class="sh3">Problem</h3>
+<p class="prose">Overfitting - model memorizes training data, fails on new data</p>
+<h3 class="sh3">Solution</h3>
+<p class="prose">Add penalty term to loss function</p>
+<h3 class="sh3">L2 Regularization</h3>
+<p class="prose">Modified loss: J = BCE_loss + λ × ||w||²
+
+Where:
+- λ (lambda): Regularization strength
+- ||w||²: Sum of squared weights
+
+Effect: Penalizes large weights, encourages simpler model
+
+Gradient update:
+w_new = w_old - α × (gradient + 2λw)</p>
+<h3 class="sh3">L1 Regularization</h3>
+<p class="prose">Modified loss: J = BCE_loss + λ × ||w||₁
+
+Where ||w||₁ = |w₁| + |w₂| + ... + |wₙ|
+
+Effect: Drives some weights to exactly zero (feature selection)</p>
+<h3 class="sh2">Mini Batch Gradient Descent</h3>
+<h3 class="sh3">Batch Gradient Descent</h3>
+<p class="prose">Use all training samples to compute gradient
+
+Pros: Smooth convergence, stable
+Cons: Slow for large datasets (millions of samples)</p>
+<h3 class="sh3">Stochastic Gradient Descent</h3>
+<p class="prose">Use one sample at a time to compute gradient
+
+Pros: Fast updates, can escape local minima
+Cons: Noisy gradient, erratic convergence</p>
+<h3 class="sh3">Mini Batch</h3>
+<p class="prose">Use subset of samples (e.g., 32, 64, 128) per iteration
+
+Pros: Balance speed and stability
+Cons: Needs batch size tuning
+
+Most common in practice: Mini-batch with batch size 32-256</p>
+<h3 class="sh2">Multiclass Extension</h3>
+<h3 class="sh3">Softmax Regression</h3>
+<p class="prose">Extension to K classes (K &gt; 2)
+
+Model:
+For each class k: z_k = w_k · x + b_k
+Probabilities: P(y=k|x) = exp(z_k) / Σⱼ exp(z_j)
+
+Loss: Categorical cross-entropy
+L = -Σₖ yₖ log(ŷₖ)
+
+This is multinomial logistic regression (covered in Section 11)</p>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Not scaling features before training</p>
+<h3 class="sh3">Problem</h3>
+<p class="prose">Features with different scales cause gradient descent issues:
+- Large-scale features dominate gradients
+- Small learning rate needed (slow convergence)
+- Or large learning rate causes oscillation</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Feature 1: exclamation_count (range 0-10)
+Feature 2: email_length (range 10-10000)
+
+Gradient w.r.t. feature 2 is 1000x larger!</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Standardize features: (X - mean) / std before training</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Using 0.5 threshold without considering class imbalance</p>
+<h3 class="sh3">Problem</h3>
+<p class="prose">Dataset: 99% legitimate, 1% spam
+Model predicts everything as legitimate (P(spam) &lt; 0.5 always)
+Accuracy = 99% but detects zero spam!</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Adjust threshold based on:
+- Cost of false positives vs false negatives
+- Base rate of positive class
+- Use ROC curve to find optimal threshold (Section 11)</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Training for too long (overfitting)</p>
+<h3 class="sh3">Symptom</h3>
+<p class="prose">Training loss keeps decreasing
+Test loss starts increasing
+Gap between train and test accuracy widens</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">- Monitor validation loss, stop when it starts increasing
+- Use regularization (L2 penalty)
+- Reduce model complexity</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Not checking gradient computation</p>
+<h3 class="sh3">Problem</h3>
+<p class="prose">Gradient descent fails silently if gradients wrong
+Loss doesn&#x27;t decrease or increases
+Model doesn&#x27;t learn</p>
+<h3 class="sh3">Fix</h3>
+<pre class="code"><code>Gradient checking: Compare analytical gradient to numerical gradient
+
+def gradient_check(model, X, y, epsilon=1e-7):
+    &quot;&quot;&quot;Verify gradient computation is correct&quot;&quot;&quot;
+    # Compute analytical gradient
+    y_pred = model._sigmoid(np.dot(X, model.weights) + model.bias)
+    dw_analytical = (1/len(y)) * np.dot(X.T, y_pred - y)
+    
+    # Compute numerical gradient (finite differences)
+    dw_numerical = np.zeros_like(model.weights)
+    for i in range(len(model.weights)):
+        w_plus = model.weights.copy()
+        w_plus[i] += epsilon
+        loss_plus = compute_loss_with_weights(X, y, w_plus, model.bias)
+        
+        w_minus = model.weights.copy()
+        w_minus[i] -= epsilon
+        loss_minus = compute_loss_with_weights(X, y, w_minus, model.bias)
+        
+        dw_numerical[i] = (loss_plus - loss_minus) / (2 * epsilon)
+    
+    # Compare
+    diff = np.linalg.norm(dw_analytical - dw_numerical)
+    print(f&quot;Gradient difference: {diff}&quot;)
+    assert diff &lt; 1e-5, &quot;Gradient computation incorrect!&quot;</code></pre>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Model Interpretability</h3>
+<h3 class="sh3">Advantage</h3>
+<p class="prose">Logistic regression weights show feature importance</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Learned weights for spam detection:
+- exclamation_count: +2.5 (strong spam indicator)
+- email_length: -0.3 (longer emails slightly less likely spam)
+- contains_money: +3.1 (very strong spam indicator)
+
+Can explain to user: &quot;Classified as spam due to 10 exclamations + money words&quot;</p>
+<h3 class="sh3">Security Benefit</h3>
+<p class="prose">- Transparency: Can audit model decisions
+- Trust: Users understand why alert triggered
+- Debugging: Identify which features cause misclassifications
+- Compliance: Explainable AI for regulations (GDPR, etc.)</p>
+<h3 class="sh2">Adversarial Evasion</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Adversary reverse-engineers model from predictions</p>
+<h3 class="sh3">Strategy</h3>
+<p class="prose">1. Probe model with many inputs
+2. Observe probability outputs
+3. Infer approximate weights
+4. Craft input that crosses decision boundary</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Spam filter weights inferred:
+w_exclamation = +2.0
+w_money = +3.0
+
+Malicious email: [exclamations=10, money=5] → P(spam) = 0.95
+Modified: [exclamations=1, money=0] → P(spam) = 0.10
+Evades detection!</p>
+<h3 class="sh3">Defense</h3>
+<ul class="blist"><li>Use many features (harder to manipulate all)</li><li>Use non-linear models (harder to reverse engineer)</li><li>Add noise to predictions (differential privacy)</li><li>Retrain with adversarial examples</li></ul>
+<h3 class="sh2">Feature Importance Attack</h3>
+<h3 class="sh3">Risk</h3>
+<p class="prose">Revealing feature weights reveals attack surface</p>
+<h3 class="sh3">Scenario</h3>
+<p class="prose">Security blog post: &quot;Our malware detector uses these features...&quot;
+Lists: file size, entropy, API calls, network connections
+Weights: entropy (weight=5.0) most important
+
+Adversary response: Pack malware to reduce entropy
+Result: Evades detection</p>
+<h3 class="sh3">Mitigation</h3>
+<p class="prose">- Don&#x27;t publish feature weights publicly
+- Use ensemble models (multiple diverse models)
+- Rotate features periodically
+- Monitor for evasion attempts</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Logistic regression = linear model + sigmoid function + cross-entropy loss</li><li>Sigmoid squashes linear output to [0,1] for probability interpretation</li><li>Binary cross-entropy heavily penalizes confident wrong predictions</li><li>Gradient descent finds weights that minimize loss</li><li>Decision boundary is hyperplane: w·x + b = 0</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement logistic regression from scratch using only NumPy</li><li>Derive and compute gradients for gradient descent</li><li>Train model with gradient descent (forward pass, loss, backward pass, update)</li><li>Tune learning rate to ensure convergence</li><li>Interpret learned weights as feature importance</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Interpretable models better for security (can explain decisions)</li><li>Feature weights reveal attack surface (adversary knows what to manipulate)</li><li>Linear boundaries vulnerable to evasion (adversary crosses boundary easily)</li><li>Regularization helps prevent overfitting to poisoned data</li><li>Always scale features (improves convergence and robustness)</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Logistic regression is foundation of neural networks (stack these = deep learning)</li><li>Gradient descent is foundation of all modern ML (same algorithm, different models)</li><li>You now understand how training works from first principles</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Training loop and convergence (when to stop training, debugging)</li><li>Connect to security: Section 11 covers evaluation metrics (precision, recall, ROC)</li><li>You&#x27;ve built your first real classifier from scratch!</li></ul>
+</article>

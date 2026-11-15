@@ -1,0 +1,1226 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 10 · Section 8 · ~6 pages</div>
+<h1>Physical Adversarial Examples: Patches, Stop Signs, and 3D Objects</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Physical adversarial attacks apply perturbations to the real world before the sensor -- patches, stickers, and 3D objects that fool deployed vision systems without any API access.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Every previous attack in Chapter 10 operates through an API: the adversary sends a digital
+input and receives a model output. Physical adversarial attacks break this assumption entirely.
+The perturbation is applied to the physical environment -- a printed sticker on a stop sign,
+a patterned patch on clothing, an adversarially shaped 3D object. The camera captures the
+scene and feeds it to the model; the adversary never touches the API. Section 10.8 establishes
+this qualitatively different threat surface, its Expectation over Transformation (EOT)
+optimisation primitive, and the regional anomaly detection approach that differs fundamentally
+from the per-pixel squeezer and consistency checker that cover digital adversarial examples.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 10.8 is the physical tier of the Section 10.2 taxonomy. It closes the access tier
+dimension: white-box (10.3-10.5), grey/black-box (10.6), transfer (10.7), physical (10.8).
+The patch detector built here is Track 7&#x27;&#x27;s spatial anomaly primitive -- distinct from the
+pixel-level feature squeezer covering digital attacks.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 10.3: FGSM (patch optimisation uses gradient ascent on the patch tensor -- the same gradient primitive)</li><li>Section 10.2: physical/transfer access tier in the adversarial taxonomy (Section 10.8 fills the physical cells)</li><li>Section 10.1: Lp norm constraints (physical patches use a different constraint: patch is localised, not norm-bounded)</li><li>Chapter 2 Section 2.3: backpropagation (EOT optimisation requires gradients through the transformation pipeline)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Threat Beyond the API: Physical World as Attack Surface</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Every attack from Section 10.3 through 10.7 assumes the adversary has access to the
+model&#x27;&#x27;s inference API: they can submit a digital input and observe the output. This
+assumption holds for cloud-deployed classifiers, safety filters, and content moderation
+systems. It does not hold for many production deployments of vision models.
+
+An autonomous vehicle&#x27;&#x27;s object detector receives camera frames, not API requests. A
+facial recognition access control system processes photos from an entrance camera. A
+surveillance system flags anomalous behaviour from CCTV feeds. A drone detection system
+processes radar or optical sensor data. None of these systems have a queryable API that
+an adversary can reach from the internet. The model is deployed behind a physical sensor,
+not behind an HTTP endpoint.
+
+Physical adversarial attacks target the sensor stage rather than the API stage. The
+adversary places a perturbation in the physical world -- a printed pattern on an object,
+stickers on a surface, a specially painted vehicle -- and the sensor captures the
+perturbed scene as part of its normal operation. The model then classifies the captured
+image. From the model&#x27;&#x27;s perspective, the input is a legitimate camera frame; the
+adversarial perturbation is embedded in the scene, not injected into the API call.
+
+This changes the threat model in two ways. First, the adversary does not need any API
+access, query budget, or surrogate model. They need physical access to objects in the
+sensor&#x27;&#x27;s field of view. Second, the defence cannot operate at the API boundary -- it
+must operate at the image processing stage, after capture but before classification.
+The Track 7 primitives from Sections 10.11-10.12 operate at that stage, but adversarial
+patches require a different primitive (regional spatial anomaly detection) rather than
+the per-pixel squeezing designed for digital adversarial noise.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Patches: Brown et al. 2017</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Brown, Mané, Roy, Abadi, and Gilmer introduced adversarial patches in their 2017 paper.
+The key idea is simpler and more alarming than digital adversarial examples: train a
+single image patch that, when placed anywhere in a scene, causes the classifier to
+output a chosen wrong class -- regardless of what else is in the image.
+
+The patch is a rectangular image region P of fixed pixel dimensions, optimised to be
+universal: the same P fools the classifier for any background image and at any position
+within the image. The optimisation objective is:
+P* = argmax_P E_{x~X, t~T}[log P(y_target | A(P, x, l, s))]
+where A(P, x, l, s) applies patch P to image x at location l and scale s, and T is a
+distribution of transformations.
+
+Universal adversarial patches have two properties that make them practically dangerous.
+First, they are printable: the patch is a valid image that can be rendered on paper, fabric,
+or any surface. Second, they are background-agnostic: the adversary does not need to know
+what the scene looks like -- the patch dominates the classifier&#x27;&#x27;s decision regardless of
+background content. A patch optimised to cause a toaster misclassification causes every
+image containing that patch to be classified as a toaster, regardless of what else is in
+the frame.
+
+The practical attack scenario: print the patch on sticker paper, apply it to the target
+object (a stop sign, a person&#x27;&#x27;s clothing, a vehicle), and the deployed classifier
+misclassifies that object whenever it is in the camera&#x27;&#x27;s field of view. The adversary
+needs to deploy the sticker once; they do not need ongoing API access.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Expectation over Transformation: Making Patches Survive the Physical World</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A patch optimised only for a digital image (fixed position, fixed scale, no variation)
+fails when printed and photographed. The physical world introduces variation that the
+digital optimisation did not account for: the patch shifts position as the camera angle
+changes, its perceived colour shifts under different lighting, it rotates as the object
+rotates, its apparent size changes with distance, and printer ink reproduces colours
+differently from screen pixels.
+
+Expectation over Transformation (EOT), introduced by Athalye, Engstrom, Ilyas, and Kwok
+in 2018, solves this by optimising the patch over a distribution of transformations rather
+than for a single configuration. The EOT objective averages the adversarial loss over N
+sampled transformations at each optimisation step:
+L_EOT(P) = (1/N) sum_{i=1}^{N} J(f(t_i(A(P, x, l_i, s_i))), y_target)
+where t_i samples a random transformation from a specified distribution T.
+
+The transformation distribution T includes: random position within the image frame,
+random scale (simulating different viewing distances), random brightness perturbation
+(simulating lighting variation), random contrast adjustment, and potentially random
+rotation (for 3D object scenarios). The optimised patch is adversarial across all
+sampled transformation combinations -- not just for a single camera angle at a single
+distance under a single lighting condition.
+
+The practical consequence is a patch that remains adversarial across real-world viewing
+conditions. Athalye et al. demonstrated that EOT-optimised patches printed on paper and
+photographed under varied lighting and angles maintained high attack success rates, while
+non-EOT patches degraded rapidly. For production security threat modelling, this means
+the physical threat is not merely theoretical: EOT-optimised patches work in deployment
+conditions, not just in constrained laboratory setups.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Stop Signs and 3D Objects: Landmark Physical Attacks</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Two physical adversarial attacks from 2018 demonstrate the practical scope of the threat.
+
+Eykholt et al. 2018 (&quot;Robust Physical Perturbations in the Real World&quot;) attached small
+black and white stickers to stop signs and demonstrated misclassification by YOLO and
+Faster RCNN autonomous vehicle detectors. The attack evaded detection rates dropped from
+100% to near 0% when the adversarial stickers were present. Critically, the stickers
+were camouflaged as graffiti -- visually inconspicuous to human observers, but adversarial
+to the neural network detector. The stop sign attack demonstrates that the threat applies
+to safety-critical autonomous systems and that the patches need not be obviously unusual.
+
+Athalye, Engstrom, Ilyas, and Kwok 2018 (&quot;Synthesising Robust Adversarial Examples&quot;)
+applied EOT to 3D objects: a 3D-printed turtle was misclassified as a rifle by Inception
+v3 from all viewing angles tested. The 3D adversarial object was painted with a texture
+optimised to be adversarial across the full range of viewing angles in the transformation
+distribution. This demonstrated that the threat extends to physical objects themselves,
+not just applied stickers -- an adversary can manufacture objects that fool deployed vision
+systems at any angle.
+
+Both attacks share a structure: EOT optimisation over a transformation distribution,
+physical deployment without API access, and adversarial success that is robust to the
+variation inherent in real-world sensor capture. They differ in the physical medium
+(printed sticker vs painted 3D surface) and the target system (traffic sign detection vs
+image classification), but the underlying optimisation framework is the same.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Universal vs Input-Specific Patches</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Universal adversarial patches (one patch fools the classifier for any scene) are the
+dominant physical threat in production because they require a single offline optimisation
+step. The adversary computes the patch once, prints it, and deploys it indefinitely. The
+patch works on any background image; it does not need to be regenerated for each target
+scene. This is the physical-world analogue of universal adversarial triggers for text
+(Section 10.9): one perturbation that works universally rather than a per-input optimised
+perturbation.
+
+Input-specific patches are optimised for a particular target image -- the patch is
+designed to make a specific person&#x27;&#x27;s photo classified as a different identity, for
+instance, or a specific vehicle classified as a different class. These achieve higher
+attack success on the target image but do not generalise to other images. The adversary
+must know the exact image in advance and regenerate the patch for each new target.
+Input-specific patches are relevant for targeted identity spoofing in facial recognition
+but less relevant for general-purpose adversarial patch deployment.
+
+The trade-off between universality and effectiveness: universal patches are somewhat less
+effective per image than input-specific patches because they must be optimised to dominate
+many different background images. Input-specific patches are more effective but require
+per-target optimisation and knowledge of the target image. For production threat modelling,
+universal patches are the higher-priority threat because they scale: one patch deployment
+affects all images it appears in.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Threat Model: Physical Adversarial Attacks Across Production Systems</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Four production deployment categories carry the highest exposure to physical adversarial
+attacks.
+
+Autonomous vehicle perception systems process camera frames continuously from a forward-
+facing camera. The adversary has prolonged physical access to the traffic environment:
+stop signs, lane markings, speed limit signs, and pedestrian crossings are all potentially
+patchable surfaces. The Eykholt et al. stop sign attack demonstrates that the attack is
+practical in this threat environment. The defender cannot monitor the physical environment
+in real time; the detection must happen at the image processing stage.
+
+Facial recognition access control systems process photos from entrance cameras. The adversary
+needs to present their face with an adversarial perturbation (glasses with adversarial
+patterns, or an adversarial makeup pattern) to bypass identity verification. The physical
+patch is applied to the adversary&#x27;&#x27;s own face -- they have complete control over the attack
+surface. Defence approaches include: liveness detection, 3D face shape analysis, infrared
+imaging (patches designed for RGB cameras may not affect infrared sensors).
+
+Physical security surveillance systems use object detection models to flag prohibited items
+(weapons, restricted objects). An adversarial patch on the prohibited object can cause it
+to be classified as a benign object. The adversary applies the patch before entering the
+camera&#x27;&#x27;s field of view. Detection approaches: multi-camera redundancy, radar or X-ray
+supplemental sensors that cannot be deceived by optical patches.
+
+Industrial quality control systems use vision models to inspect products on production
+lines. A competitor or insider threat could introduce adversarially patterned objects
+that pass inspection despite being defective. This threat is less commonly modelled
+but is technically identical to the stop sign attack with an industrial classifier as
+the target system.</p>
+<h3 class="sh2">Part 7</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection: Regional Spatial Anomaly Analysis</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Digital adversarial examples (Sections 10.3-10.7) distribute perturbations across all
+pixels of an image -- fine-grained noise that is spatially uniform. Feature squeezing
+(Section 10.11) and consistency checking (Section 10.12) are effective against this
+distributed perturbation. Adversarial patches are qualitatively different: the perturbation
+is localised in a specific rectangular region of the image and typically has high contrast
+and high spatial frequency content relative to natural image regions.
+
+Patch detection exploits this spatial structure. Natural images have locally consistent
+texture statistics: a sky region has smooth gradients, a grass region has fine texture,
+a face has specific geometric structure. An adversarial patch inserted into a scene has
+texture statistics inconsistent with the local neighbourhood -- it may have unnaturally
+sharp edges, periodic patterns, or colour combinations not present in any training class.
+A regional anomaly detector that computes texture statistics in sliding windows and flags
+regions with anomalous spatial frequency content provides a detection primitive specifically
+suited to patch attacks.
+
+A complementary detection approach uses prediction change under patch masking. For each
+proposed image region, mask the region (replace with mean colour or inpainting) and check
+whether the model&#x27;&#x27;s prediction changes significantly. A region whose masking changes the
+prediction from the adversarial wrong class back to the correct class is a candidate
+adversarial patch location. This approach requires multiple model forward passes (one per
+candidate region) and is more expensive than texture analysis but more precise.
+
+Both patch detection approaches are distinct from the Track 7 squeezer and consistency
+checker. Section 10.13 adds patch detection as a spatial anomaly primitive in the Track 7
+pre-inference stage alongside the per-pixel feature squeezers. The combined Track 7 covers
+both distributed digital noise (squeezer + consistency) and localised physical patches
+(spatial anomaly detector).</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Landmark Physical Adversarial Attack Papers</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Key papers establishing the physical adversarial attack field with method, target system, and key finding</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Paper</li><li>Year</li><li>Method</li><li>Target system</li><li>Key finding</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Brown et al.</li><li>2017</li><li>Universal adversarial patch (gradient ascent on patch tensor)</li><li>ImageNet classifier (Inception)</li><li>One printable patch causes any image to be classified as target class</li></ul>
+<ul class="blist"><li>Eykholt et al.</li><li>2018</li><li>Physical stickers on stop signs (EOT)</li><li>YOLO, Faster RCNN (traffic sign detection)</li><li>Stop signs with stickers misclassified as other signs at near-100% rate</li></ul>
+<ul class="blist"><li>Athalye et al.</li><li>2018</li><li>EOT-optimised 3D-printed objects</li><li>Inception v3 (object classification)</li><li>Turtle classified as rifle from all viewing angles</li></ul>
+<ul class="blist"><li>Thys et al.</li><li>2019</li><li>Adversarial patch on person (clothing)</li><li>YOLO person detector</li><li>Person wearing patch becomes invisible to person detector</li></ul>
+<ul class="blist"><li>Sharif et al.</li><li>2016</li><li>Adversarial glasses frames (printed pattern)</li><li>VGG Face (facial recognition)</li><li>Person with adversarial glasses impersonates any target identity</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">EOT Transformation Distribution: Types and Robustness Coverage</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Physical-world variation sources, corresponding EOT transformation type, and what robustness each provides</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Physical variation</li><li>EOT transformation</li><li>Robustness provided</li><li>Typical range</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Viewing distance</li><li>Random patch scale within image</li><li>Patch works at multiple distances from camera</li><li>10-35% of image width</li></ul>
+<ul class="blist"><li>Camera angle</li><li>Random patch position within image bounds</li><li>Patch works when not perfectly centred</li><li>Any valid (row, col) position</li></ul>
+<ul class="blist"><li>Lighting level</li><li>Random brightness multiplication</li><li>Patch works under bright and dim lighting</li><li>Multiply by 0.6 to 1.4</li></ul>
+<ul class="blist"><li>Lighting colour</li><li>Random colour jitter (HSV shift)</li><li>Patch works under warm and cool lighting</li><li>Hue +/- 0.1, Saturation 0.8-1.2</li></ul>
+<ul class="blist"><li>Printer colour accuracy</li><li>Random additive colour noise</li><li>Patch works despite ink-vs-screen colour shift</li><li>Normal noise, std=0.05</li></ul>
+<ul class="blist"><li>Camera blur</li><li>Gaussian blur with random sigma</li><li>Patch works despite focus or motion blur</li><li>sigma 0 to 1.0</li></ul>
+<ul class="blist"><li>3D viewing angle</li><li>Perspective warp transformation</li><li>Patch works when viewed from off-axis</li><li>+/- 30 degree perspective change</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Physical Adversarial Attack Threat Model: Production Systems</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Four production deployment categories with adversary, physical attack vector, ATLAS mapping, and detection approach</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>System</li><li>Adversary</li><li>Attack vector</li><li>ATLAS</li><li>Detection approach</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Autonomous vehicle perception</li><li>Road adversary, insider</li><li>Stickers/paint on traffic infrastructure</li><li>AML.T0043</li><li>Multi-camera redundancy; patch localisation; temporal consistency</li></ul>
+<ul class="blist"><li>Facial recognition access control</li><li>Intruder with printed pattern</li><li>Adversarial glasses, makeup, or printed mask</li><li>AML.T0043</li><li>Liveness detection; IR sensor; 3D face shape analysis</li></ul>
+<ul class="blist"><li>Physical security surveillance</li><li>Insider threat with prohibited item</li><li>Patch applied to concealed item</li><li>AML.T0043</li><li>Supplemental sensors (X-ray, mmWave); patch region detector</li></ul>
+<ul class="blist"><li>Industrial quality control</li><li>Competitor, insider</li><li>Adversarially patterned defective product</li><li>AML.T0043</li><li>Multi-spectral imaging; spatial anomaly detector; redundant classifier</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Universal Adversarial Patch Generator with EOT</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">adversarial_patch.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Generates a universal adversarial patch using Expectation over Transformation, optimising the patch over a distribution of positions, scales, and brightness values to survive physical-world variation</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch, torch.nn.functional. Import ToyLinear from fgsm_attack.py for demo.
+Patch is a (C, H_patch, W_patch) tensor optimised via Adam.
+EOT: at each step, sample N_transforms (position, scale, brightness) and average loss.
+Patch clamped to [0, 1] after each step (valid pixel values required for printing).</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># adversarial_patch.py
+# Section 10.8: Universal Adversarial Patch with EOT
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+# Reference: Brown et al. 2017; Athalye et al. 2018 (EOT)
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+from dataclasses import dataclass
+from typing import Tuple
+import random
+
+
+@dataclass
+class EOTConfig:
+    n_transforms: int = 10        # Number of transformations sampled per step
+    scale_min: float = 0.10       # Min patch scale as fraction of image dimension
+    scale_max: float = 0.30       # Max patch scale as fraction of image dimension
+    brightness_min: float = 0.7   # Min brightness multiplier
+    brightness_max: float = 1.3   # Max brightness multiplier
+    noise_std: float = 0.04       # Additive colour noise std (printer variation)
+
+
+def apply_patch_to_batch(
+    images: Tensor,
+    patch: Tensor,
+    row: int,
+    col: int,
+    ph: int,
+    pw: int,
+) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    Apply patch to a batch of images at position (row, col) with size (ph, pw).
+    Resizes patch to (ph, pw) via bilinear interpolation.
+    Returns patched batch with same shape as images.
+    &#x27;&#x27;&#x27;
+    patched = images.clone()
+    # Resize patch to target size
+    patch_resized = F.interpolate(
+        patch.unsqueeze(0), size=(ph, pw),
+        mode=&#x27;bilinear&#x27;, align_corners=False,
+    ).squeeze(0)
+    # Clamp patch region boundaries to image dimensions
+    r_end = min(row + ph, images.size(-2))
+    c_end = min(col + pw, images.size(-1))
+    patch_crop = patch_resized[:, :r_end - row, :c_end - col]
+    patched[:, :, row:r_end, col:c_end] = torch.clamp(patch_crop, 0.0, 1.0)
+    return patched
+
+
+def sample_eot_transform(
+    images: Tensor,
+    patch: Tensor,
+    cfg: EOTConfig,
+) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    Apply one random EOT transformation to the batch.
+    Samples: scale, position, brightness, additive noise.
+    &#x27;&#x27;&#x27;
+    img_h, img_w = images.size(-2), images.size(-1)
+
+    # Random scale
+    scale = random.uniform(cfg.scale_min, cfg.scale_max)
+    ph = max(2, int(img_h * scale))
+    pw = max(2, int(img_w * scale))
+
+    # Random position (ensure patch fits within image)
+    row = random.randint(0, max(0, img_h - ph))
+    col = random.randint(0, max(0, img_w - pw))
+
+    # Apply patch
+    patched = apply_patch_to_batch(images, patch, row, col, ph, pw)
+
+    # Random brightness
+    brightness = random.uniform(cfg.brightness_min, cfg.brightness_max)
+    patched = torch.clamp(patched * brightness, 0.0, 1.0)
+
+    # Random noise (printer colour variation)
+    noise = torch.randn_like(patched) * cfg.noise_std
+    patched = torch.clamp(patched + noise, 0.0, 1.0)
+
+    return patched
+
+
+def generate_patch(
+    model: nn.Module,
+    images: Tensor,
+    y_target: Tensor,
+    patch_size: Tuple[int, int] = (8, 8),
+    n_steps: int = 100,
+    lr: float = 0.05,
+    eot_cfg: EOTConfig = None,
+) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    Generate a universal adversarial patch optimised via EOT.
+    Patch optimises: E_{t~T}[J(f(t(A(P, x))), y_target)] over the batch.
+
+    Args:
+        model:      PyTorch classifier (eval mode)
+        images:     Batch of background images (N, C, H, W); patch will be applied to these
+        y_target:   Target class for adversarial misclassification (scalar)
+        patch_size: (height, width) of the patch in pixels
+        n_steps:    Adam optimisation steps
+        lr:         Adam learning rate
+        eot_cfg:    EOT configuration; defaults to EOTConfig()
+    Returns:
+        patch: (C, H_patch, W_patch) tensor, optimised patch, values in [0, 1]
+    &#x27;&#x27;&#x27;
+    if eot_cfg is None:
+        eot_cfg = EOTConfig()
+
+    n_channels = images.size(1)
+    criterion = nn.CrossEntropyLoss()
+
+    # Initialise patch as random noise
+    patch = torch.rand(n_channels, patch_size[0], patch_size[1]).requires_grad_(True)
+    optimiser = torch.optim.Adam([patch], lr=lr)
+
+    # Expand target to batch size
+    target_batch = y_target.expand(images.size(0))
+
+    for step in range(n_steps):
+        optimiser.zero_grad()
+        total_loss = torch.tensor(0.0)
+
+        for _ in range(eot_cfg.n_transforms):
+            patched = sample_eot_transform(images, patch, eot_cfg)
+            logits = model(patched)
+            loss = criterion(logits, target_batch)
+            total_loss = total_loss + loss
+
+        avg_loss = total_loss / eot_cfg.n_transforms
+        avg_loss.backward()
+        optimiser.step()
+
+        # Keep patch in valid pixel range (printable constraint)
+        with torch.no_grad():
+            patch.clamp_(0.0, 1.0)
+
+    return patch.detach()
+
+
+def patch_attack_success_rate(
+    model: nn.Module,
+    patch: Tensor,
+    images: Tensor,
+    y_true: Tensor,
+    n_trials: int = 20,
+    eot_cfg: EOTConfig = None,
+) -&gt; float:
+    &#x27;&#x27;&#x27;Fraction of (image, transform) pairs where patch causes misclassification.&#x27;&#x27;&#x27;
+    if eot_cfg is None:
+        eot_cfg = EOTConfig()
+    total_correct = 0
+    total = 0
+    with torch.no_grad():
+        for _ in range(n_trials):
+            patched = sample_eot_transform(images, patch, eot_cfg)
+            preds = model(patched).argmax(dim=1)
+            total_correct += (preds == y_true).sum().item()
+            total += images.size(0)
+    return 1.0 - (total_correct / total)
+
+
+def demo() -&gt; None:
+    try:
+        from fgsm_attack import ToyLinear
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        return
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+
+    images = torch.rand(8, 1, 28, 28)
+    y_true = torch.randint(0, 10, (8,))
+    y_target = torch.tensor([0])
+
+    # Baseline: no patch
+    with torch.no_grad():
+        clean_preds = model(images).argmax(1)
+    clean_acc = (clean_preds == y_true).float().mean().item()
+
+    print(&#x27;Universal Adversarial Patch with EOT&#x27;)
+    print(f&#x27;Clean accuracy (no patch): {clean_acc:.3f}&#x27;)
+
+    # Generate patch
+    eot_cfg = EOTConfig(n_transforms=5, scale_min=0.15, scale_max=0.30)
+    patch = generate_patch(model, images, y_target, patch_size=(6, 6),
+                           n_steps=50, lr=0.05, eot_cfg=eot_cfg)
+    print(f&#x27;Patch shape: {tuple(patch.shape)}&#x27;)
+
+    # Evaluate
+    rate = patch_attack_success_rate(model, patch, images, y_true, n_trials=20, eot_cfg=eot_cfg)
+    print(f&#x27;Patch attack success rate (EOT, {eot_cfg.n_transforms} transforms): {rate:.3f}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Patch Applicator: Position, Scale, and Transformation Sweep</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">patch_applicator.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Applies a generated adversarial patch to test images at varied positions, scales, and brightness values; measures attack success across the transformation parameter space</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch, matplotlib. Import adversarial_patch functions as needed.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># patch_applicator.py
+# Section 10.8: Adversarial Patch Applicator and Transformation Sweep
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import matplotlib.pyplot as plt
+import numpy as np
+from typing import List
+from adversarial_patch import apply_patch_to_batch, generate_patch, EOTConfig
+
+
+def sweep_scale(
+    model,
+    patch: torch.Tensor,
+    images: torch.Tensor,
+    y_true: torch.Tensor,
+    scales: List[float],
+    fixed_row: int = 0,
+    fixed_col: int = 0,
+) -&gt; List[float]:
+    &#x27;&#x27;&#x27;Measure attack success at each patch scale with fixed position.&#x27;&#x27;&#x27;
+    success_rates = []
+    img_h, img_w = images.size(-2), images.size(-1)
+    with torch.no_grad():
+        for scale in scales:
+            ph = max(2, int(img_h * scale))
+            pw = max(2, int(img_w * scale))
+            row = min(fixed_row, img_h - ph)
+            col = min(fixed_col, img_w - pw)
+            patched = apply_patch_to_batch(images, patch, row, col, ph, pw)
+            preds = model(patched).argmax(dim=1)
+            rate = (preds != y_true).float().mean().item()
+            success_rates.append(rate)
+    return success_rates
+
+
+def sweep_brightness(
+    model,
+    patch: torch.Tensor,
+    images: torch.Tensor,
+    y_true: torch.Tensor,
+    brightness_levels: List[float],
+    scale: float = 0.25,
+) -&gt; List[float]:
+    &#x27;&#x27;&#x27;Measure attack success at each brightness level (simulates lighting variation).&#x27;&#x27;&#x27;
+    success_rates = []
+    img_h, img_w = images.size(-2), images.size(-1)
+    ph, pw = max(2, int(img_h * scale)), max(2, int(img_w * scale))
+    with torch.no_grad():
+        for b_level in brightness_levels:
+            patched = apply_patch_to_batch(images, patch, 0, 0, ph, pw)
+            patched = torch.clamp(patched * b_level, 0.0, 1.0)
+            preds = model(patched).argmax(dim=1)
+            rate = (preds != y_true).float().mean().item()
+            success_rates.append(rate)
+    return success_rates
+
+
+def plot_transformation_sweep(
+    scales: List[float],
+    scale_rates: List[float],
+    brightness_levels: List[float],
+    brightness_rates: List[float],
+    save_path: str = &#x27;patch_transformation_sweep.png&#x27;,
+) -&gt; None:
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    ax1.plot([s * 100 for s in scales], scale_rates,
+             color=&#x27;#e74c3c&#x27;, linewidth=2, marker=&#x27;o&#x27;, markersize=5)
+    ax1.set_xlabel(&#x27;Patch scale (% of image dimension)&#x27;, fontsize=11)
+    ax1.set_ylabel(&#x27;Attack success rate&#x27;, fontsize=11)
+    ax1.set_title(&#x27;Patch Attack Success vs Scale\n(larger patch = higher success)&#x27;, fontsize=11)
+    ax1.set_ylim(0, 1.05)
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(brightness_levels, brightness_rates,
+             color=&#x27;#2980b9&#x27;, linewidth=2, marker=&#x27;s&#x27;, markersize=5)
+    ax2.set_xlabel(&#x27;Brightness multiplier (lighting variation)&#x27;, fontsize=11)
+    ax2.set_ylabel(&#x27;Attack success rate&#x27;, fontsize=11)
+    ax2.set_title(&#x27;Patch Attack Success vs Brightness\n(EOT patch survives lighting change)&#x27;, fontsize=11)
+    ax2.set_ylim(0, 1.05)
+    ax2.axvline(1.0, color=&#x27;grey&#x27;, linestyle=&#x27;--&#x27;, alpha=0.5, label=&#x27;Neutral lighting&#x27;)
+    ax2.legend(fontsize=9)
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches=&#x27;tight&#x27;)
+    print(f&#x27;Saved: {save_path}&#x27;)
+    plt.show()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    try:
+        from fgsm_attack import ToyLinear
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        raise SystemExit
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    images = torch.rand(16, 1, 28, 28)
+    y_true = torch.randint(0, 10, (16,))
+    y_target = torch.tensor([0])
+
+    eot_cfg = EOTConfig(n_transforms=5)
+    patch = generate_patch(model, images, y_target,
+                           patch_size=(6, 6), n_steps=40, lr=0.05, eot_cfg=eot_cfg)
+
+    scales = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40]
+    scale_rates = sweep_scale(model, patch, images, y_true, scales)
+
+    brightness_levels = [0.5, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.4, 1.6]
+    brightness_rates = sweep_brightness(model, patch, images, y_true, brightness_levels)
+
+    print(f&#x27;{&quot;Scale%&quot;:&lt;10} {&quot;Success&quot;}&#x27;)
+    for s, r in zip(scales, scale_rates):
+        print(f&#x27;{s*100:&lt;10.0f} {r:.3f}&#x27;)
+
+    print(f&#x27;\n{&quot;Brightness&quot;:&lt;12} {&quot;Success&quot;}&#x27;)
+    for b, r in zip(brightness_levels, brightness_rates):
+        print(f&#x27;{b:&lt;12.1f} {r:.3f}&#x27;)
+
+    plot_transformation_sweep(scales, scale_rates, brightness_levels, brightness_rates)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Physical Robustness Benchmark: EOT vs Digital-Only Patch</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">physical_robustness_benchmark.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Compares EOT-optimised patches against patches optimised without EOT (digital-only); demonstrates that EOT robustness is essential for physical-world attack success across lighting and scale variation</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch, matplotlib. Import from adversarial_patch.py.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># physical_robustness_benchmark.py
+# Section 10.8: EOT vs Digital-Only Patch Robustness Comparison
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import matplotlib.pyplot as plt
+from adversarial_patch import (generate_patch, EOTConfig,
+                               apply_patch_to_batch, patch_attack_success_rate)
+
+
+def generate_digital_only_patch(model, images, y_target, patch_size=(6, 6),
+                                n_steps=100, lr=0.05):
+    &#x27;&#x27;&#x27;Generate patch without EOT: fixed position and scale, no transformation.&#x27;&#x27;&#x27;
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    n_ch = images.size(1)
+    img_h, img_w = images.size(-2), images.size(-1)
+    ph, pw = patch_size
+    row, col = 0, 0
+    target_batch = y_target.expand(images.size(0))
+    criterion = nn.CrossEntropyLoss()
+
+    patch = torch.rand(n_ch, ph, pw).requires_grad_(True)
+    optimiser = torch.optim.Adam([patch], lr=lr)
+
+    for _ in range(n_steps):
+        optimiser.zero_grad()
+        patched = apply_patch_to_batch(images, patch, row, col, ph, pw)
+        loss = criterion(model(patched), target_batch)
+        loss.backward()
+        optimiser.step()
+        with torch.no_grad():
+            patch.clamp_(0.0, 1.0)
+
+    return patch.detach()
+
+
+def benchmark_robustness(model, images, y_true, y_target,
+                          transform_severities, n_trials=10):
+    &#x27;&#x27;&#x27;
+    Compare EOT patch vs digital-only patch across transformation severities.
+    severity: brightness multiplier deviation from 1.0 (0 = no variation).
+    &#x27;&#x27;&#x27;
+    eot_cfg = EOTConfig(n_transforms=8, brightness_min=0.6, brightness_max=1.4)
+    patch_eot = generate_patch(model, images, y_target,
+                               patch_size=(6, 6), n_steps=60, lr=0.05, eot_cfg=eot_cfg)
+    patch_digital = generate_digital_only_patch(model, images, y_target,
+                                                patch_size=(6, 6), n_steps=60, lr=0.05)
+
+    eot_rates, dig_rates = [], []
+    img_h, img_w = images.size(-2), images.size(-1)
+    ph = int(img_h * 0.25)
+    pw = int(img_w * 0.25)
+
+    for severity in transform_severities:
+        eot_success, dig_success, total = 0, 0, 0
+        with torch.no_grad():
+            for _ in range(n_trials):
+                import random
+                b = 1.0 + random.uniform(-severity, severity)
+                row = random.randint(0, img_h - ph)
+                col = random.randint(0, img_w - pw)
+
+                for patch, count_list in [(patch_eot, eot_success), (patch_digital, dig_success)]:
+                    patched = apply_patch_to_batch(images, patch, row, col, ph, pw)
+                    patched = torch.clamp(patched * b, 0.0, 1.0)
+                    preds = model(patched).argmax(1)
+                    if patch is patch_eot:
+                        eot_success += (preds != y_true).sum().item()
+                    else:
+                        dig_success += (preds != y_true).sum().item()
+                total += images.size(0)
+
+        eot_rates.append(eot_success / total)
+        dig_rates.append(dig_success / total)
+
+    return eot_rates, dig_rates
+
+
+def plot_robustness_comparison(severities, eot_rates, dig_rates,
+                               save_path=&#x27;eot_vs_digital_robustness.png&#x27;):
+    plt.figure(figsize=(9, 5))
+    plt.plot(severities, eot_rates, color=&#x27;#27ae60&#x27;, linewidth=2,
+             marker=&#x27;o&#x27;, markersize=5, label=&#x27;EOT patch (robust to variation)&#x27;)
+    plt.plot(severities, dig_rates, color=&#x27;#e74c3c&#x27;, linewidth=2,
+             marker=&#x27;s&#x27;, markersize=5, linestyle=&#x27;--&#x27;,
+             label=&#x27;Digital-only patch (brittle to variation)&#x27;)
+    plt.xlabel(&#x27;Transformation severity (brightness deviation)&#x27;, fontsize=11)
+    plt.ylabel(&#x27;Attack success rate&#x27;, fontsize=11)
+    plt.title(&#x27;EOT vs Digital-Only Patch: Physical Robustness\n(EOT maintains success under physical-world variation)&#x27;, fontsize=11)
+    plt.legend(fontsize=10)
+    plt.grid(True, alpha=0.3)
+    plt.ylim(0, 1.05)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches=&#x27;tight&#x27;)
+    print(f&#x27;Saved: {save_path}&#x27;)
+    plt.show()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    try:
+        from fgsm_attack import ToyLinear
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        raise SystemExit
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    images = torch.rand(8, 1, 28, 28)
+    y_true = torch.randint(0, 10, (8,))
+    y_target = torch.tensor([0])
+
+    severities = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+    print(&#x27;Benchmarking EOT vs digital-only patch robustness...&#x27;)
+    eot_r, dig_r = benchmark_robustness(model, images, y_true, y_target, severities)
+
+    print(f&#x27;\n{&quot;Severity&quot;:&lt;12} {&quot;EOT patch&quot;:&lt;14} {&quot;Digital only&quot;}&#x27;)
+    print(&#x27;-&#x27; * 42)
+    for s, er, dr in zip(severities, eot_r, dig_r):
+        print(f&#x27;{s:&lt;12.1f} {er:&lt;14.3f} {dr:.3f}&#x27;)
+
+    plot_robustness_comparison(severities, eot_r, dig_r)</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Patch Detector: Regional Spatial Anomaly Analysis</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">patch_detector.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Detects adversarial patches using two complementary approaches: regional texture anomaly analysis (high-frequency content inconsistent with natural image statistics) and masked-region prediction change (masking the patch region restores correct classification)</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch, torch.nn.functional. Import from adversarial_patch.py for demo.
+Two detection primitives: texture_anomaly_score (fast, no model forward pass) and
+masked_region_prediction_change (slower, requires model forward passes per region).</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># patch_detector.py
+# Section 10.8: Adversarial Patch Detector
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+from typing import Tuple, List
+
+
+def local_texture_variance(image: Tensor, window_size: int = 4) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    Compute local texture variance in sliding windows.
+    High variance in a localised region may indicate adversarial patch.
+    Returns a spatial map of same H x W as input.
+    &#x27;&#x27;&#x27;
+    # Compute local mean via average pooling
+    padding = window_size // 2
+    local_mean = F.avg_pool2d(
+        image, kernel_size=window_size, stride=1, padding=padding,
+    )
+    local_sq_mean = F.avg_pool2d(
+        image ** 2, kernel_size=window_size, stride=1, padding=padding,
+    )
+    local_var = torch.clamp(local_sq_mean - local_mean ** 2, min=0.0)
+    # Average across channels
+    return local_var.mean(dim=1, keepdim=True)  # (N, 1, H, W)
+
+
+def texture_anomaly_score(
+    image: Tensor,
+    threshold: float = 0.05,
+    window_size: int = 4,
+) -&gt; Tuple[float, Tensor]:
+    &#x27;&#x27;&#x27;
+    Compute texture anomaly score for an image.
+    Returns (max_regional_variance, variance_map).
+    High max_regional_variance -&gt; possible patch present.
+    &#x27;&#x27;&#x27;
+    var_map = local_texture_variance(image, window_size)
+    max_var = var_map.max().item()
+    return max_var, var_map
+
+
+def masked_region_prediction_change(
+    model: nn.Module,
+    image: Tensor,
+    n_masks: int = 16,
+    mask_frac: float = 0.25,
+    threshold: float = 0.5,
+) -&gt; Tuple[bool, List[Tuple[int, int, int, int]]]:
+    &#x27;&#x27;&#x27;
+    Detect adversarial patch by masking image regions and checking prediction change.
+    For each candidate region: replace with mean colour, check if prediction changes.
+    If prediction changes on a region: that region is a candidate patch location.
+
+    Returns:
+        detected: bool (True if any region change exceeds threshold probability)
+        flagged_regions: list of (row, col, h, w) for candidate patch regions
+    &#x27;&#x27;&#x27;
+    img_h, img_w = image.size(-2), image.size(-1)
+    ph = max(2, int(img_h * mask_frac))
+    pw = max(2, int(img_w * mask_frac))
+    mean_val = image.mean().item()
+
+    with torch.no_grad():
+        base_pred = model(image).argmax(dim=1)
+        base_conf = F.softmax(model(image), dim=1).max(dim=1).values
+
+    flagged = []
+    step_h = max(1, img_h // 4)
+    step_w = max(1, img_w // 4)
+
+    for row in range(0, img_h - ph + 1, step_h):
+        for col in range(0, img_w - pw + 1, step_w):
+            masked = image.clone()
+            masked[:, :, row:row + ph, col:col + pw] = mean_val
+            with torch.no_grad():
+                masked_pred = model(masked).argmax(dim=1)
+            # If prediction changes after masking: region was adversarially important
+            if (masked_pred != base_pred).any():
+                flagged.append((row, col, ph, pw))
+
+    detected = len(flagged) &gt; 0
+    return detected, flagged
+
+
+def detect_patch(
+    model: nn.Module,
+    image: Tensor,
+    texture_threshold: float = 0.06,
+    use_masking: bool = True,
+) -&gt; dict:
+    &#x27;&#x27;&#x27;
+    Combined patch detection: texture anomaly + masked region prediction change.
+    Returns detection result dict.
+    &#x27;&#x27;&#x27;
+    tex_score, var_map = texture_anomaly_score(image, threshold=texture_threshold)
+    texture_flagged = tex_score &gt; texture_threshold
+
+    masking_flagged, flagged_regions = False, []
+    if use_masking:
+        masking_flagged, flagged_regions = masked_region_prediction_change(
+            model, image, n_masks=16, mask_frac=0.25,
+        )
+
+    return {
+        &#x27;texture_score&#x27;: tex_score,
+        &#x27;texture_flagged&#x27;: texture_flagged,
+        &#x27;masking_flagged&#x27;: masking_flagged,
+        &#x27;flagged_regions&#x27;: flagged_regions,
+        &#x27;detected&#x27;: texture_flagged or masking_flagged,
+    }
+
+
+def demo() -&gt; None:
+    try:
+        from fgsm_attack import ToyLinear
+        from adversarial_patch import generate_patch, apply_patch_to_batch, EOTConfig
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py and adversarial_patch.py&#x27;)
+        return
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    images = torch.rand(4, 1, 28, 28)
+    y_true = torch.randint(0, 10, (4,))
+    y_target = torch.tensor([0])
+
+    # Generate patch
+    patch = generate_patch(model, images, y_target, patch_size=(6, 6),
+                           n_steps=30, lr=0.05, eot_cfg=EOTConfig(n_transforms=3))
+    # Apply patch
+    patched = apply_patch_to_batch(images, patch, row=0, col=0, ph=7, pw=7)
+
+    print(&#x27;Patch detector results:&#x27;)
+    for i in range(min(2, images.size(0))):
+        print(f&#x27;\n  Sample {i} (natural image):&#x27;)
+        res = detect_patch(model, images[i:i+1], texture_threshold=0.06)
+        print(f&#x27;    texture_score={res[&quot;texture_score&quot;]:.4f} &#x27;
+              f&#x27;detected={res[&quot;detected&quot;]}&#x27;)
+        print(f&#x27;  Sample {i} (patched image):&#x27;)
+        res_p = detect_patch(model, patched[i:i+1], texture_threshold=0.06)
+        print(f&#x27;    texture_score={res_p[&quot;texture_score&quot;]:.4f} &#x27;
+              f&#x27;detected={res_p[&quot;detected&quot;]} &#x27;
+              f&#x27;flagged_regions={len(res_p[&quot;flagged_regions&quot;])}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Physical Threat Model</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">physical_threat_model.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Structured threat model for physical adversarial attacks across four production vision system deployments; maps to ATLAS AML.T0043 with detection and mitigation recommendations</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies.
+Reference-document generator: outputs structured threat model entries for
+security documentation and architecture review.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># physical_threat_model.py
+# Section 10.8: Physical Adversarial Attack Threat Model
+# 20260524 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class PhysicalThreatEntry:
+    system: str
+    adversary_profile: str
+    attack_vector: str
+    attack_method: str
+    atlas_technique: str
+    patch_type: str
+    eot_required: bool
+    detection_approaches: List[str]
+    mitigations: List[str]
+    notes: str = &#x27;&#x27;
+
+
+PHYSICAL_THREAT_MODEL: List[PhysicalThreatEntry] = [
+    PhysicalThreatEntry(
+        system=&#x27;Autonomous vehicle perception (traffic sign detection)&#x27;,
+        adversary_profile=&#x27;Road adversary; nation-state; safety researcher&#x27;,
+        attack_vector=&#x27;Physical stickers applied to traffic infrastructure&#x27;,
+        attack_method=&#x27;EOT-optimised patch on stop sign, speed limit sign, lane marking&#x27;,
+        atlas_technique=&#x27;AML.T0043 (Adversarial Patch)&#x27;,
+        patch_type=&#x27;Universal (one patch fools detector regardless of background)&#x27;,
+        eot_required=True,
+        detection_approaches=[
+            &#x27;Multi-camera redundancy: require independent confirmation from multiple sensors&#x27;,
+            &#x27;Temporal consistency: sign classification should be stable across frames&#x27;,
+            &#x27;Patch localisation: anomalous texture region in sign image area&#x27;,
+            &#x27;HD map comparison: sign should match known sign at GPS location&#x27;,
+        ],
+        mitigations=[
+            &#x27;Adversarial training on patch-augmented images&#x27;,
+            &#x27;Supplemental sensor fusion (LIDAR, radar) independent of optical patch&#x27;,
+            &#x27;Regular physical inspection of traffic infrastructure&#x27;,
+            &#x27;Report adversarial patches to traffic authority&#x27;,
+        ],
+        notes=&#x27;Eykholt et al. 2018 demonstrated attack against YOLO and Faster RCNN&#x27;,
+    ),
+    PhysicalThreatEntry(
+        system=&#x27;Facial recognition access control&#x27;,
+        adversary_profile=&#x27;Intruder; insider; red team&#x27;,
+        attack_vector=&#x27;Adversarial pattern applied to face or worn as glasses/mask&#x27;,
+        attack_method=&#x27;Input-specific or universal patch optimised for identity spoofing&#x27;,
+        atlas_technique=&#x27;AML.T0043 (Adversarial Patch)&#x27;,
+        patch_type=&#x27;Input-specific for targeted identity impersonation; universal for bypass&#x27;,
+        eot_required=True,
+        detection_approaches=[
+            &#x27;Liveness detection: depth camera, eye blink, challenge-response&#x27;,
+            &#x27;Infrared imaging: adversarial patterns for RGB cameras may not affect IR&#x27;,
+            &#x27;3D face shape analysis: patches are 2D; 3D geometry is harder to fake&#x27;,
+            &#x27;Patch localisation: anomalous texture in face region (glasses area, etc.)&#x27;,
+        ],
+        mitigations=[
+            &#x27;Multi-factor authentication beyond face recognition&#x27;,
+            &#x27;Adversarial training on face datasets with patch augmentation&#x27;,
+            &#x27;Multi-spectral camera (RGB + IR + depth) for robustness to optical patches&#x27;,
+            &#x27;Reject inputs with localised texture anomaly score above threshold&#x27;,
+        ],
+        notes=&#x27;Sharif et al. 2016 demonstrated adversarial glasses against VGG Face&#x27;,
+    ),
+    PhysicalThreatEntry(
+        system=&#x27;Physical security surveillance (prohibited item detection)&#x27;,
+        adversary_profile=&#x27;Insider threat; external adversary with physical access&#x27;,
+        attack_vector=&#x27;Adversarial patch applied to prohibited item before entering sensor view&#x27;,
+        attack_method=&#x27;EOT-optimised universal patch causing item to be misclassified as benign&#x27;,
+        atlas_technique=&#x27;AML.T0043 (Adversarial Patch)&#x27;,
+        patch_type=&#x27;Universal (one patch conceals any instance of the prohibited item class)&#x27;,
+        eot_required=True,
+        detection_approaches=[
+            &#x27;Supplemental sensor: X-ray, millimetre-wave not affected by optical patches&#x27;,
+            &#x27;Patch localisation: anomalous texture region on object surface&#x27;,
+            &#x27;Consistency: same object from multiple camera angles should agree on classification&#x27;,
+        ],
+        mitigations=[
+            &#x27;Never rely on single-sensor classification for security-critical decisions&#x27;,
+            &#x27;Physical search as fallback for uncertain classifications&#x27;,
+            &#x27;Adversarially trained object detector with patch augmentation in training data&#x27;,
+        ],
+        notes=&#x27;Pure optical detection is insufficient for high-security physical access&#x27;,
+    ),
+    PhysicalThreatEntry(
+        system=&#x27;Industrial vision quality control&#x27;,
+        adversary_profile=&#x27;Competitor; insider; supply chain adversary&#x27;,
+        attack_vector=&#x27;Adversarially patterned surface on defective product&#x27;,
+        attack_method=&#x27;EOT patch on product surface causes defective item to pass inspection&#x27;,
+        atlas_technique=&#x27;AML.T0043 (Adversarial Patch)&#x27;,
+        patch_type=&#x27;Universal or input-specific depending on defect type&#x27;,
+        eot_required=True,
+        detection_approaches=[
+            &#x27;Patch localisation: texture anomaly on product surface&#x27;,
+            &#x27;Multi-spectral imaging: adversarial patterns for RGB may not survive IR/UV&#x27;,
+            &#x27;Temporal consistency: product should classify consistently across inspection passes&#x27;,
+        ],
+        mitigations=[
+            &#x27;Random adversarial test items injected into production line for detector calibration&#x27;,
+            &#x27;Adversarial training with patch-augmented defective product images&#x27;,
+            &#x27;Human audit of borderline classifications&#x27;,
+        ],
+        notes=&#x27;Less commonly threat-modelled but structurally identical to stop sign attack&#x27;,
+    ),
+]
+
+
+def print_threat_model(entries: List[PhysicalThreatEntry]) -&gt; None:
+    for entry in entries:
+        print(f&#x27;\n{&quot;=&quot; * 60}&#x27;)
+        print(f&#x27;System:           {entry.system}&#x27;)
+        print(f&#x27;Adversary:        {entry.adversary_profile}&#x27;)
+        print(f&#x27;Attack vector:    {entry.attack_vector}&#x27;)
+        print(f&#x27;Method:           {entry.attack_method}&#x27;)
+        print(f&#x27;ATLAS:            {entry.atlas_technique}&#x27;)
+        print(f&#x27;Patch type:       {entry.patch_type}&#x27;)
+        print(f&#x27;EOT required:     {entry.eot_required}&#x27;)
+        print(f&#x27;Detection:&#x27;)
+        for d in entry.detection_approaches:
+            print(f&#x27;  - {d}&#x27;)
+        print(f&#x27;Mitigations:&#x27;)
+        for m in entry.mitigations:
+            print(f&#x27;  - {m}&#x27;)
+        if entry.notes:
+            print(f&#x27;Notes:            {entry.notes}&#x27;)
+
+
+def atlas_coverage_summary(entries: List[PhysicalThreatEntry]) -&gt; None:
+    techniques = {}
+    for e in entries:
+        techniques[e.atlas_technique] = techniques.get(e.atlas_technique, 0) + 1
+    print(&#x27;\nATLAS coverage:&#x27;)
+    for tech, count in techniques.items():
+        print(f&#x27;  {tech}: {count} threat entries&#x27;)
+    print(f&#x27;\nAll {len(entries)} entries require EOT-optimised patches for physical deployment.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Physical Adversarial Attack Threat Model&#x27;)
+    print_threat_model(PHYSICAL_THREAT_MODEL)
+    atlas_coverage_summary(PHYSICAL_THREAT_MODEL)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Optimising a patch without EOT and expecting it to work when physically printed and photographed</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">EOT adds complexity: it requires multiple forward passes per optimisation step and
+more configuration parameters. Engineers skip it to simplify the implementation,
+reasoning that if the patch works in a digital simulation it will work physically.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The non-EOT patch is optimised for exactly one configuration: fixed position, fixed
+scale, flat lighting, no printer colour shift. When printed and photographed with even
+slight variation in viewing angle or lighting, attack success rate drops from 80-90%
+to near 0%. The patch is adversarial only at the specific digital configuration it was
+trained for. Reporting non-EOT patch success rates overstates the real-world threat.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Always include EOT with at minimum position, scale, and brightness variation in the
+transformation distribution. The EOTConfig dataclass in adversarial_patch.py provides
+sensible defaults. For 3D objects add rotation/perspective transforms. Never report
+physical attack success rates from digital-only patches -- benchmark robustness using
+physical_robustness_benchmark.py which tests across transformation severity levels.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Not clamping the patch tensor to [0, 1] after each optimisation step, producing physically unrealisable pixel values</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Adam updates the patch parameters without any constraint. Engineers implement the
+optimisation loop and forget that unclamped patch values outside [0, 1] cannot be
+represented by a printer or screen. The optimisation succeeds in digital simulation
+but the physical patch cannot reproduce values outside the valid range.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The patch contains pixel values &lt; 0 (cannot print as black) and &gt; 1 (cannot print
+as white on a standard display). When the patch is clipped to [0, 1] for printing,
+the attack success rate drops significantly because the out-of-range values carried
+the adversarial signal. The benchmark in digital simulation overestimates the actual
+printed patch effectiveness.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Add patch.clamp_(0.0, 1.0) inside torch.no_grad() immediately after each optimiser
+step. This is implemented in the generate_patch function in adversarial_patch.py.
+Clamp AFTER the Adam step, not before: clamping before the step removes gradient
+signal from boundary pixels. The correct order is: step(), then clamp_().</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Applying per-pixel feature squeezing as the sole Track 7 detection primitive for physical adversarial patches</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Feature squeezing (Section 10.11) is presented as the primary Track 7 input-side
+primitive. Engineers configure it as the universal adversarial detection layer and
+do not add a separate patch detection primitive, assuming squeezing handles all
+adversarial input types.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Per-pixel feature squeezing applies a transformation (Gaussian blur, bit-depth
+reduction) uniformly across the entire image. An adversarial patch in a localised
+region is partially smoothed, but the patch gradient is concentrated in a small
+area -- the squeezer reduces it less effectively than it reduces distributed
+per-pixel noise. Patch attack success rates after squeezing remain 40-70%, much
+higher than squeezing&#x27;&#x27;s effectiveness against FGSM and PGD.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Add regional spatial anomaly detection (patch_detector.py) as a separate Track 7
+spatial primitive alongside the per-pixel squeezer. The two are complementary:
+squeezer catches distributed digital noise; the spatial detector catches localised
+patch anomalies. The Section 10.13 gateway includes both as part of Track 7&#x27;&#x27;s
+pre-inference detection stage.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating adversarial patches as a digital attack problem and applying the same threat model as FGSM/PGD</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Physical adversarial patches are sometimes described as &quot;adversarial examples applied
+to physical objects.&quot; Engineers map this to the digital adversarial example framework:
+the patch is just a localised pixel perturbation, Track 7 handles pixel perturbations,
+therefore Track 7 handles patches.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The threat model mismatch causes defenders to focus detection resources on the API
+boundary (query patterns, input distribution shifts) rather than the sensor boundary
+(regional image anomalies, sensor fusion). Physical attack adversaries bypass the API
+entirely; API-focused detection misses them completely. The production deployment
+remains undefended against physical patches while digital adversarial detection
+resources are well-covered.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Maintain separate threat model entries for physical and digital adversarial attacks.
+Physical attacks require: sensor-stage detection (regional anomaly analysis at the
+image processing stage), sensor fusion (supplemental non-optical sensors), and
+physical environment controls (inspection, tamper detection). Digital attack
+detection (Track 7 squeezer/consistency) is a distinct layer. The physical_threat_model.py
+deliverable provides the framework for separating these threat entries.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Using a patch size much smaller than necessary, producing a patch that is imperceptible but ineffective</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Engineers trying to make patches &quot;stealthy&quot; choose very small patch sizes (e.g., 2%
+of image width) that are visually inconspicuous. The patch occupies few pixels and
+cannot dominate the classifier&#x27;&#x27;s decision over the background image.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Universal adversarial patches require enough spatial extent to override the background
+image content in the model&#x27;&#x27;s feature representations. Too-small patches produce attack
+success rates near random chance. The optimisation loss decreases (the patch learns
+something), but the patch effect is insufficient to reliably flip the classification.
+Stealthiness and effectiveness are in direct tension for universal patches.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Set patch size to at minimum 10-15% of the image dimension for reliable universal
+attack success on standard classifiers. Test success rate vs scale using
+patch_applicator.py before finalising patch size. The realistic physical threat
+(sticker on a stop sign, pattern on clothing) is typically large enough to be
+practical -- stop sign stickers in the Eykholt et al. attack were clearly visible
+as markings even if not obviously adversarial to humans.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Physical adversarial attacks apply perturbations to the real world before the sensor --
+patches, stickers, and 3D objects that fool deployed vision systems without API access.
+Adversarial patches (Brown et al. 2017) are universal: one printed patch causes any
+background image to be misclassified as a target class. Expectation over Transformation
+(EOT) is essential for physical deployment: optimising over distributions of position,
+scale, brightness, and noise makes the patch robust to real-world viewing variation. Stop
+sign attacks (Eykholt et al. 2018) and 3D adversarial objects (Athalye et al. 2018) are
+documented successful physical attacks against production-grade detectors. Patch detection
+requires regional spatial anomaly analysis (localised texture anomalies) and masked-region
+prediction change -- distinct from the per-pixel squeezer effective against digital noise.
+ATLAS AML.T0043 covers adversarial patches.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Physical attacks bypass the API entirely: the adversary perturbs the physical world before the sensor; no query budget required</li><li>EOT is not optional for physical deployment: non-EOT patches fail in the real world; optimise over position, scale, brightness, and noise</li><li>Universal patches are the dominant threat: one patch works on any background; the adversary deploys once and affects all images</li><li>Patch detection requires regional analysis (spatial anomaly) not per-pixel squeezing -- the two are complementary, not interchangeable</li><li>ATLAS AML.T0043; four production systems exposed: autonomous vehicles, facial recognition, surveillance, industrial inspection</li><li>Sensor fusion is the most robust mitigation: optical patches do not affect LIDAR, radar, X-ray, or IR sensors</li></ul>
+<h2 class="sh1">Preview Section 10 09</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 10.9: Adversarial Attacks on LLMs -- Token Substitution, HotFlip, and Semantic Perturbation</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 10.9 translates the adversarial example framework from continuous pixel space to
+discrete token space. L-norm constraints do not apply to tokenised text; the analogues
+are token edit distance (number of substitutions) and semantic similarity (cosine distance
+between sentence embeddings). HotFlip (Ebrahimi et al. 2018) uses the Jacobian of the
+loss with respect to the one-hot token indicator to identify which character flip most
+reduces classifier confidence -- the discrete analogue of FGSM. TextFooler (Jin et al.
+2020) uses greedy word substitution with semantic similarity constraints and a POS filter
+to produce semantically valid adversarial text. BERT-Attack (Li et al. 2020) uses a masked
+language model to propose contextually appropriate substitutions. Universal adversarial
+triggers (Wallace et al. 2019) are fixed token sequences that, appended to any input,
+universally cause LLM safety classifier misclassification -- the text analogue of the
+universal adversarial patch in Section 10.8. Section 10.9 closes the loop between
+automated adversarial attacks and the human jailbreak techniques from Chapter 7.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 10.3: FGSM (patch optimisation uses gradient ascent on patch tensor; same gradient primitive)</li><li>Section 10.2: physical/transfer access tier (Section 10.8 fills the physical cells in the taxonomy)</li><li>Section 10.1: attack surface beyond API established here</li><li>Chapter 2 Section 2.3: backpropagation through transformation pipeline (EOT requires this)</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 10.11: feature squeezing (per-pixel primitive; patch detector in 10.8 is complementary, not replacement)</li><li>Section 10.13: Track 7 gateway (patch detector added as spatial anomaly primitive alongside squeezer)</li><li>Section 10.9: LLM adversarial attacks (universal adversarial trigger is the text analogue of universal patch)</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>adversarial-patch</li><li>physical-adversarial</li><li>eot</li><li>expectation-over-transformation</li><li>universal-patch</li><li>stop-sign-attack</li><li>eykholt-2018</li><li>brown-2017</li><li>athalye-2018</li><li>atlas-aml-t0043</li><li>patch-detector</li><li>regional-anomaly</li><li>sensor-fusion</li><li>autonomous-vehicle</li><li>facial-recognition</li></ul>
+</article>

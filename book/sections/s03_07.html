@@ -1,0 +1,1160 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 7 · ~7 pages</div>
+<h1>Scaled Dot-Product Attention</h1>
+<div class="tags"><span class="tag">scaled-dot-product-attention</span><span class="tag">attention-scaling</span><span class="tag">softmax-saturation</span><span class="tag">matrix-operations</span><span class="tag">attention-masking</span><span class="tag">causal-attention</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Scaled Dot-Product Attention</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.7</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Scaled dot-product attention is the specific attention variant used in transformers 
+(Vaswani et al., 2017). It takes the dot product score function from Section 3.6 
+and adds a critical scaling factor: divide by √d_k before softmax. This simple 
+modification prevents softmax saturation when dimensions are large, enabling stable 
+training of deep transformers.
+
+The matrix formulation - Attention(Q, K, V) = softmax(QK^T / √d_k)V - enables highly 
+efficient computation using GPUs. Attention masking allows preventing certain positions 
+from attending to others (crucial for autoregressive models like GPT).
+
+For security engineers: Understanding scaling reveals numerical stability vulnerabilities. 
+Attention masks create boundaries that can be exploited (force attention or prevent 
+it). The matrix operations expose timing side-channels. Mastery of these mechanics 
+is essential for both using and attacking transformer-based LLMs.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand why dot product magnitude grows with dimension d_k</li><li>Grasp softmax saturation and why it breaks gradient flow</li><li>Learn how scaling by √d_k prevents saturation</li><li>Understand matrix formulation for parallel computation</li><li>Learn attention masking for causal (autoregressive) models</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement scaled dot-product attention from scratch (NumPy)</li><li>Demonstrate softmax saturation with and without scaling</li><li>Implement efficient batched attention using matrix operations</li><li>Create attention masks (padding, causal)</li><li>Analyze computational complexity O(n²d)</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Identify numerical stability vulnerabilities in attention</li><li>Understand how masking creates security boundaries</li><li>Recognize timing side-channels in matrix operations</li><li>Detect attention mask bypass attempts</li><li>Audit attention score distributions for anomalies</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.6: Attention mechanism, Query-Key-Value, score functions</li><li>Linear algebra: matrix multiplication, transpose</li><li>Softmax function and gradient flow</li><li>Numerical stability in deep learning</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy matrix operations and broadcasting</li><li>Understanding of computational complexity</li><li>Debugging numerical issues in neural networks</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 6</h3>
+<p class="prose">Section 3.6 introduced attention as weighted sum with Query-Key-Value formulation. 
+We compared score functions and noted dot product is simplest (no parameters). 
+Now we see why dot product needs scaling and how to implement it efficiently.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.8 introduces multi-head attention: running multiple scaled dot-product 
+attention operations in parallel to learn different attention patterns simultaneously.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why Scaling Is Necessary: The Softmax Saturation Problem</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Dot product scores grow in magnitude as dimension d_k increases. For large d_k 
+(e.g., 512), scores can be very large, causing softmax to saturate: one position 
+gets weight ~1.0, all others ~0.0. This creates vanishing gradients - the model 
+can&#x27;t learn. Scaling by √d_k keeps scores in a reasonable range.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Dot Product Magnitude Growth</h3>
+<h4 class="sh3">Problem Statement</h4>
+<p class="prose">For random unit vectors Q, k ∈ ℝ^d_k:
+
+E[Q^T k] = 0       (expected value is zero)
+Var[Q^T k] = d_k   (variance grows with dimension!)
+
+Standard deviation: σ = √d_k</p>
+<h4 class="sh3">Concrete Example</h4>
+<h4 class="sh3">Dimension 64</h4>
+<h4 class="sh3">D K</h4>
+<p class="prose">64</p>
+<h4 class="sh3">Std Dev</h4>
+<p class="prose">√64 = 8</p>
+<h4 class="sh3">Typical Scores</h4>
+<p class="prose">-24 to +24 (3σ range)</p>
+<h4 class="sh3">Dimension 512</h4>
+<h4 class="sh3">D K</h4>
+<p class="prose">512</p>
+<h4 class="sh3">Std Dev</h4>
+<p class="prose">√512 ≈ 22.6</p>
+<h4 class="sh3">Typical Scores</h4>
+<p class="prose">-68 to +68 (3σ range)</p>
+<h4 class="sh3">Dimension 1024</h4>
+<h4 class="sh3">D K</h4>
+<p class="prose">1024</p>
+<h4 class="sh3">Std Dev</h4>
+<p class="prose">√1024 = 32</p>
+<h4 class="sh3">Typical Scores</h4>
+<p class="prose">-96 to +96 (3σ range)</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Large d_k → large score magnitudes → softmax saturation</p>
+<h3 class="sh3">Softmax Saturation Explained</h3>
+<h4 class="sh3">What Happens</h4>
+<p class="prose">Consider scores: [20, 0, -20] (typical for d_k=512)
+
+Softmax: exp(20) / [exp(20) + exp(0) + exp(-20)]
+
+exp(20) ≈ 485,165,195
+exp(0) = 1
+exp(-20) ≈ 0.0000000021
+
+Weights: [1.0, 0.0, 0.0] (effectively)</p>
+<h4 class="sh3">Gradient Problem</h4>
+<p class="prose">When softmax is saturated (one weight ≈ 1, others ≈ 0):
+
+∂softmax/∂scores ≈ 0 for all positions
+→ Gradients vanish
+→ Model can&#x27;t learn where to attend
+
+Training becomes unstable or fails entirely</p>
+<h4 class="sh3">Visualization</h4>
+<h4 class="sh3">Unsaturated Softmax</h4>
+<p class="prose">Scores: [1, 0, -1]
+Weights: [0.67, 0.24, 0.09]
+→ All positions get some weight
+→ Gradients flow to all positions</p>
+<h4 class="sh3">Saturated Softmax</h4>
+<p class="prose">Scores: [20, 0, -20]
+Weights: [1.0, 0.0, 0.0]
+→ Only one position gets weight
+→ Gradients vanish for others</p>
+<h3 class="sh3">Scaling Solution</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">score = (Q^T k) / √d_k</p>
+<h4 class="sh3">Effect On Variance</h4>
+<p class="prose">Original: Var[Q^T k] = d_k
+After scaling: Var[(Q^T k) / √d_k] = d_k / d_k = 1
+
+Variance normalized to 1 regardless of dimension!</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Scores stay in reasonable range (-10 to +10) even for large d_k
+→ Softmax remains in responsive region
+→ Gradients flow properly
+→ Training is stable</p>
+<h4 class="sh3">Comparison</h4>
+<h4 class="sh3">Without Scaling</h4>
+<h4 class="sh3">D K 512</h4>
+<p class="prose">Scores ~ [-68, +68] → severe saturation</p>
+<h4 class="sh3">Training</h4>
+<p class="prose">Unstable or fails</p>
+<h4 class="sh3">With Scaling</h4>
+<h4 class="sh3">D K 512</h4>
+<p class="prose">Scores ~ [-3, +3] → gentle softmax</p>
+<h4 class="sh3">Training</h4>
+<p class="prose">Stable convergence</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Demonstrate Saturation</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+def demonstrate_softmax_saturation():
+    &quot;&quot;&quot;Show how large dot products cause softmax saturation.&quot;&quot;&quot;
+    
+    print(&quot;=== Softmax Saturation Demonstration ===\n&quot;)
+    
+    # Test different dimensions
+    dimensions = [8, 64, 512, 1024]
+    
+    for d_k in dimensions:
+        # Random unit vectors
+        Q = np.random.randn(d_k)
+        Q = Q / np.linalg.norm(Q)
+        
+        # Multiple keys
+        num_keys = 5
+        K = np.random.randn(num_keys, d_k)
+        K = K / np.linalg.norm(K, axis=1, keepdims=True)
+        
+        # Compute dot products (unscaled)
+        scores_unscaled = np.dot(K, Q)
+        
+        # Compute dot products (scaled)
+        scores_scaled = scores_unscaled / np.sqrt(d_k)
+        
+        # Apply softmax
+        def softmax(x):
+            exp_x = np.exp(x - np.max(x))
+            return exp_x / exp_x.sum()
+        
+        weights_unscaled = softmax(scores_unscaled)
+        weights_scaled = softmax(scores_scaled)
+        
+        print(f&quot;Dimension d_k = {d_k}:&quot;)
+        print(f&quot;  Unscaled scores: {scores_unscaled}&quot;)
+        print(f&quot;  Unscaled weights: {weights_unscaled}&quot;)
+        print(f&quot;  Max weight: {weights_unscaled.max():.6f}&quot;)
+        
+        print(f&quot;  Scaled scores: {scores_scaled}&quot;)
+        print(f&quot;  Scaled weights: {weights_scaled}&quot;)
+        print(f&quot;  Max weight: {weights_scaled.max():.6f}&quot;)
+        
+        # Measure saturation (entropy)
+        def entropy(probs):
+            return -np.sum(probs * np.log(probs + 1e-10))
+        
+        max_entropy = np.log(num_keys)
+        entropy_unscaled = entropy(weights_unscaled)
+        entropy_scaled = entropy(weights_scaled)
+        
+        print(f&quot;  Entropy (unscaled): {entropy_unscaled:.3f} / {max_entropy:.3f} &quot;
+              f&quot;({&#x27;SATURATED&#x27; if entropy_unscaled &lt; 0.5 else &#x27;OK&#x27;})&quot;)
+        print(f&quot;  Entropy (scaled):   {entropy_scaled:.3f} / {max_entropy:.3f} &quot;
+              f&quot;({&#x27;SATURATED&#x27; if entropy_scaled &lt; 0.5 else &#x27;OK&#x27;})&quot;)
+        print()
+    
+    print(&quot;Observation:&quot;)
+    print(&quot;  Without scaling: High dimensions → low entropy (saturated)&quot;)
+    print(&quot;  With scaling: Entropy remains reasonable across dimensions&quot;)
+
+demonstrate_softmax_saturation()</code></pre>
+<h3 class="sh3">Gradient Flow Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def compare_gradient_flow():
+    &quot;&quot;&quot;Compare gradient flow with and without scaling.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Gradient Flow Comparison ===\n&quot;)
+    
+    d_k = 512
+    
+    # Simulate saturated softmax (unscaled)
+    scores_unscaled = np.array([20.0, 0.0, -20.0])
+    exp_unscaled = np.exp(scores_unscaled - np.max(scores_unscaled))
+    weights_unscaled = exp_unscaled / exp_unscaled.sum()
+    
+    # Simulate normal softmax (scaled)
+    scores_scaled = np.array([2.0, 0.0, -2.0])
+    exp_scaled = np.exp(scores_scaled - np.max(scores_scaled))
+    weights_scaled = exp_scaled / exp_scaled.sum()
+    
+    print(&quot;Unscaled (saturated):&quot;)
+    print(f&quot;  Scores: {scores_unscaled}&quot;)
+    print(f&quot;  Weights: {weights_unscaled}&quot;)
+    
+    # Approximate gradient
+    # ∂softmax_i/∂score_j ≈ α_i(δ_ij - α_j)
+    grad_unscaled = weights_unscaled[1] * (1 - weights_unscaled[1])
+    
+    print(f&quot;  Gradient for middle position: {grad_unscaled:.6f}&quot;)
+    print(f&quot;  → VANISHED (&lt; 10⁻⁶)!&quot;)
+    
+    print(&quot;\nScaled (normal):&quot;)
+    print(f&quot;  Scores: {scores_scaled}&quot;)
+    print(f&quot;  Weights: {weights_scaled}&quot;)
+    
+    grad_scaled = weights_scaled[1] * (1 - weights_scaled[1])
+    
+    print(f&quot;  Gradient for middle position: {grad_scaled:.6f}&quot;)
+    print(f&quot;  → HEALTHY gradient flow&quot;)
+    
+    print(f&quot;\nGradient ratio: {grad_scaled / (grad_unscaled + 1e-10):.0f}x larger with scaling&quot;)
+
+compare_gradient_flow()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Numerical Stability Attacks</h3>
+<p class="prose">Adversaries can exploit numerical instabilities:
+- Craft inputs causing extreme dot products (overflow/underflow)
+- Force softmax saturation to make model focus on adversarial position
+- Or force uniform attention (prevent focusing on safety-relevant content)
+- Defense: Monitor attention score distributions, clip extremes</p>
+<h3 class="sh3">Scaling Factor Manipulation</h3>
+<p class="prose">If scaling factor is adjustable parameter:
+- Adversaries might manipulate it during fine-tuning
+- Too small: causes saturation (gradient vanishing)
+- Too large: uniform attention (no focus)
+- Defense: Fix scaling factor to √d_k, don&#x27;t make it learnable</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Matrix Formulation: Efficient Parallel Computation</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The matrix formulation of scaled dot-product attention enables computing attention 
+for entire sequences in parallel using GPU matrix operations. Instead of computing 
+one query-key pair at a time, we compute all pairs simultaneously with a single 
+matrix multiplication: Attention(Q, K, V) = softmax(QK^T / √d_k)V.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">From Loops To Matrices</h3>
+<h4 class="sh3">Loop Version</h4>
+<p class="prose">For each query position i:
+  For each key position j:
+    score[i,j] = dot(Q[i], K[j]) / √d_k
+  weights[i] = softmax(scores[i])
+  output[i] = Σ weights[i,j] × V[j]
+
+Complexity: O(n²d) operations, but sequential</p>
+<h4 class="sh3">Matrix Version</h4>
+<p class="prose">Scores = (Q @ K^T) / √d_k     # (n, n) matrix
+Weights = softmax(Scores)      # row-wise softmax
+Output = Weights @ V           # (n, d_v) result
+
+Complexity: Same O(n²d), but fully parallel!</p>
+<h3 class="sh3">Mathematical Formulation</h3>
+<h4 class="sh3">Components</h4>
+<h4 class="sh3">Queries</h4>
+<p class="prose">Q ∈ ℝ^(n × d_k) - n query vectors</p>
+<h4 class="sh3">Keys</h4>
+<p class="prose">K ∈ ℝ^(n × d_k) - n key vectors</p>
+<h4 class="sh3">Values</h4>
+<p class="prose">V ∈ ℝ^(n × d_v) - n value vectors</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Attention(Q, K, V) = softmax(QK^T / √d_k) V
+
+Where:
+- QK^T ∈ ℝ^(n × n) - pairwise scores matrix
+- softmax applied row-wise (each row = attention for one query)
+- Result ∈ ℝ^(n × d_v) - attended outputs</p>
+<h4 class="sh3">Step By Step</h4>
+<h4 class="sh3">Step 1</h4>
+<p class="prose">Scores = QK^T / √d_k
+Shape: (n, n)
+Entry (i,j): relevance of key j to query i</p>
+<h4 class="sh3">Step 2</h4>
+<p class="prose">Weights = softmax(Scores, axis=1)
+Shape: (n, n)
+Row i: attention distribution for query i</p>
+<h4 class="sh3">Step 3</h4>
+<p class="prose">Output = Weights @ V
+Shape: (n, d_v)
+Row i: weighted sum of values for query i</p>
+<h3 class="sh3">Computational Complexity</h3>
+<h4 class="sh3">Operations Breakdown</h4>
+<h4 class="sh3">Qk Transpose</h4>
+<p class="prose">O(n² × d_k) - matrix multiplication</p>
+<h4 class="sh3">Scaling</h4>
+<p class="prose">O(n²) - element-wise division</p>
+<h4 class="sh3">Softmax</h4>
+<p class="prose">O(n²) - for all n rows</p>
+<h4 class="sh3">Weighted Sum</h4>
+<p class="prose">O(n² × d_v) - matrix multiplication</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">O(n² × d) where d = max(d_k, d_v)</p>
+<h4 class="sh3">Memory Complexity</h4>
+<h4 class="sh3">Attention Matrix</h4>
+<p class="prose">O(n²) - store all pairwise scores</p>
+<h4 class="sh3">Activations</h4>
+<p class="prose">O(nd) - query, key, value matrices</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">O(n² + nd)</p>
+<h4 class="sh3">Quadratic Scaling</h4>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Complexity quadratic in sequence length n</p>
+<h4 class="sh3">Examples</h4>
+<h4 class="sh3">N 100</h4>
+<p class="prose">O(10,000 × d) operations</p>
+<h4 class="sh3">N 1000</h4>
+<p class="prose">O(1,000,000 × d) operations (100x more!)</p>
+<h4 class="sh3">N 10000</h4>
+<p class="prose">O(100,000,000 × d) operations (10,000x more!)</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Context window limited by quadratic cost
+This is why early transformers had n ≤ 512
+Modern approaches: sparse attention, linear attention</p>
+<h3 class="sh3">Batching And Parallel Computation</h3>
+<h4 class="sh3">Batch Processing</h4>
+<p class="prose">Process multiple sequences simultaneously:
+
+Q ∈ ℝ^(batch × n × d_k)
+K ∈ ℝ^(batch × n × d_k)
+V ∈ ℝ^(batch × n × d_v)
+
+Attention(Q, K, V) computed for all batch items in parallel</p>
+<h4 class="sh3">Gpu Efficiency</h4>
+<p class="prose">Matrix operations highly optimized on GPUs:
+- Thousands of cores compute elements in parallel
+- Matrix multiplication uses optimized BLAS libraries
+- Achieves near-peak GPU throughput
+
+Result: 100x+ speedup over sequential CPU implementation</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Scaled Dot Product Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class ScaledDotProductAttention:
+    &quot;&quot;&quot;
+    Scaled dot-product attention (Vaswani et al., 2017).
+    
+    Attention(Q, K, V) = softmax(QK^T / √d_k) V
+    &quot;&quot;&quot;
+    
+    def __init__(self):
+        pass
+    
+    def forward(self, Q: np.ndarray, K: np.ndarray, V: np.ndarray,
+               mask: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;
+        Compute scaled dot-product attention.
+        
+        Args:
+            Q: Queries (seq_len_q, d_k) or (batch, seq_len_q, d_k)
+            K: Keys (seq_len_k, d_k) or (batch, seq_len_k, d_k)
+            V: Values (seq_len_k, d_v) or (batch, seq_len_k, d_v)
+            mask: Optional mask (seq_len_q, seq_len_k) or (batch, seq_len_q, seq_len_k)
+        
+        Returns:
+            output: Attention output (seq_len_q, d_v) or (batch, seq_len_q, d_v)
+            attention_weights: Attention weights (seq_len_q, seq_len_k) or (batch, seq_len_q, seq_len_k)
+        &quot;&quot;&quot;
+        d_k = Q.shape[-1]
+        
+        # Step 1: Compute scores QK^T / √d_k
+        scores = np.matmul(Q, K.transpose(-2, -1)) / np.sqrt(d_k)
+        
+        # Step 2: Apply mask (if provided)
+        if mask is not None:
+            scores = np.where(mask == 0, -1e9, scores)
+        
+        # Step 3: Apply softmax
+        attention_weights = self.softmax(scores, axis=-1)
+        
+        # Step 4: Compute weighted sum of values
+        output = np.matmul(attention_weights, V)
+        
+        return output, attention_weights
+    
+    def softmax(self, x: np.ndarray, axis: int = -1) -&gt; np.ndarray:
+        &quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;
+        exp_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=axis, keepdims=True)
+    
+    def __call__(self, Q: np.ndarray, K: np.ndarray, V: np.ndarray,
+                mask: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(Q, K, V, mask)
+
+
+# Example usage
+seq_len = 10
+d_k = 64
+d_v = 64
+
+# Create attention layer
+attention = ScaledDotProductAttention()
+
+# Random queries, keys, values
+Q = np.random.randn(seq_len, d_k)
+K = np.random.randn(seq_len, d_k)
+V = np.random.randn(seq_len, d_v)
+
+# Compute attention
+output, weights = attention(Q, K, V)
+
+print(f&quot;Input shapes:&quot;)
+print(f&quot;  Q: {Q.shape}&quot;)
+print(f&quot;  K: {K.shape}&quot;)
+print(f&quot;  V: {V.shape}&quot;)
+print(f&quot;\nOutput shapes:&quot;)
+print(f&quot;  Output: {output.shape}&quot;)
+print(f&quot;  Attention weights: {weights.shape}&quot;)
+print(f&quot;\nAttention weight properties:&quot;)
+print(f&quot;  Min: {weights.min():.6f}&quot;)
+print(f&quot;  Max: {weights.max():.6f}&quot;)
+print(f&quot;  Row sums (should be 1.0): {weights.sum(axis=1)[:3]}&quot;)</code></pre>
+<h3 class="sh3">Batched Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_batched_attention():
+    &quot;&quot;&quot;Show batched attention for parallel processing.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Batched Attention ===\n&quot;)
+    
+    batch_size = 4
+    seq_len = 8
+    d_k = 64
+    d_v = 64
+    
+    # Batch of queries, keys, values
+    Q = np.random.randn(batch_size, seq_len, d_k)
+    K = np.random.randn(batch_size, seq_len, d_k)
+    V = np.random.randn(batch_size, seq_len, d_v)
+    
+    attention = ScaledDotProductAttention()
+    output, weights = attention(Q, K, V)
+    
+    print(f&quot;Batch size: {batch_size}&quot;)
+    print(f&quot;Sequence length: {seq_len}&quot;)
+    print(f&quot;Key dimension: {d_k}&quot;)
+    print(f&quot;\nBatched computation:&quot;)
+    print(f&quot;  Input: ({batch_size}, {seq_len}, {d_k})&quot;)
+    print(f&quot;  Output: {output.shape}&quot;)
+    print(f&quot;  Attention weights: {weights.shape}&quot;)
+    print(f&quot;\nAll {batch_size} sequences processed in parallel!&quot;)
+    
+    # Verify each batch item has proper attention weights
+    for i in range(batch_size):
+        row_sums = weights[i].sum(axis=1)
+        print(f&quot;  Batch {i}: attention weights sum = {row_sums[0]:.6f}&quot;)
+
+demonstrate_batched_attention()</code></pre>
+<h3 class="sh3">Complexity Analysis</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def analyze_complexity():
+    &quot;&quot;&quot;Analyze computational and memory complexity.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Computational Complexity Analysis ===\n&quot;)
+    
+    d = 512  # Model dimension
+    sequence_lengths = [128, 512, 1024, 2048, 4096]
+    
+    print(f&quot;Model dimension d = {d}\n&quot;)
+    print(&quot;Sequence | Operations    | Memory      | Time (relative)&quot;)
+    print(&quot;---------|---------------|-------------|----------------&quot;)
+    
+    base_time = None
+    
+    for n in sequence_lengths:
+        # Operations: O(n² × d)
+        ops = n * n * d
+        
+        # Memory: O(n² + nd)
+        mem = n * n + n * d
+        
+        # Relative time (normalized to n=128)
+        if base_time is None:
+            base_time = ops
+            rel_time = 1.0
+        else:
+            rel_time = ops / base_time
+        
+        print(f&quot;{n:8d} | {ops:13.2e} | {mem:11.2e} | {rel_time:14.1f}x&quot;)
+    
+    print(&quot;\nObservation: Quadratic scaling in sequence length!&quot;)
+    print(&quot;  Doubling length → 4x operations, 4x memory&quot;)
+    print(&quot;  This limits context windows in early transformers&quot;)
+
+analyze_complexity()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Timing Side Channels</h3>
+<p class="prose">Matrix operations expose timing information:
+- Different sequence lengths → different computation time
+- Adversaries can infer input length from timing
+- Attention weight sparsity affects memory access patterns
+- Defense: Constant-time implementations, padding to fixed length</p>
+<h3 class="sh3">Memory Access Patterns</h3>
+<p class="prose">O(n²) attention matrix creates observable memory patterns:
+- Cache behavior depends on attention structure
+- Sparse vs dense attention has different memory footprint
+- Side-channel attacks can extract attention patterns
+- Defense: Secure computing environments, oblivious attention</p>
+<h3 class="sh3">Quadratic Complexity Dos</h3>
+<p class="prose">O(n²) scaling enables DoS attacks:
+- Adversary sends maximum-length inputs
+- 4096 tokens: 16M operations (vs 16K for 128 tokens)
+- Can overwhelm compute resources
+- Defense: Rate limiting, input length limits, timeout</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Attention Masking: Causal and Padding Masks</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Attention masks allow controlling which positions can attend to which. Padding 
+masks prevent attending to padding tokens (non-content). Causal masks enforce 
+left-to-right processing in autoregressive models (GPT), preventing &quot;looking ahead&quot; 
+at future tokens. Masks are implemented by setting scores to -∞ before softmax.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Masking Mechanism</h3>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Prevent certain attention connections</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code>Before softmax, set masked positions to -∞:
+
+scores = QK^T / √d_k
+scores = where(mask == 0, -∞, scores)  # Mask out positions
+weights = softmax(scores)
+
+After softmax: masked positions have weight ≈ 0</code></pre>
+<h4 class="sh3">Why Negative Infinity</h4>
+<p class="prose">exp(-∞) = 0
+→ Masked positions get zero weight in softmax
+→ No information flows from masked positions</p>
+<h3 class="sh3">Padding Mask</h3>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Ignore padding tokens (not real content)</p>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Sequences have different lengths, padded to same length:
+
+Seq 1: [w1, w2, w3, PAD, PAD]  (3 real tokens)
+Seq 2: [w1, w2, w3, w4, w5]    (5 real tokens)
+
+Don&#x27;t want attention to padding tokens!</p>
+<h4 class="sh3">Mask Creation</h4>
+<p class="prose">For sequence [real, real, PAD, PAD]:
+
+Padding mask = [1, 1, 0, 0]
+→ Positions 2-3 masked (can&#x27;t attend to them)</p>
+<h4 class="sh3">Application</h4>
+<p class="prose">Scores matrix (before softmax):
+[[s11, s12, -∞, -∞],   # Query 1: can&#x27;t attend to PAD
+ [s21, s22, -∞, -∞],   # Query 2: can&#x27;t attend to PAD
+ [-∞,  -∞,  -∞, -∞],   # Query 3 (PAD): can&#x27;t attend anywhere
+ [-∞,  -∞,  -∞, -∞]]   # Query 4 (PAD): can&#x27;t attend anywhere</p>
+<h3 class="sh3">Causal Mask</h3>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Prevent attending to future positions (autoregressive)</p>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Decoder generating tokens left-to-right:
+When predicting token t, can only see tokens 1, 2, ..., t-1
+Cannot &quot;look ahead&quot; at future tokens!</p>
+<h4 class="sh3">Mask Structure</h4>
+<p class="prose">Lower triangular matrix (allow attending to past):
+
+[[1, 0, 0, 0],  # Token 1: can see only token 1
+ [1, 1, 0, 0],  # Token 2: can see tokens 1-2
+ [1, 1, 1, 0],  # Token 3: can see tokens 1-3
+ [1, 1, 1, 1]]  # Token 4: can see tokens 1-4</p>
+<h4 class="sh3">Application</h4>
+<p class="prose">Scores matrix (before softmax):
+[[s11, -∞,  -∞,  -∞ ],
+ [s21, s22, -∞,  -∞ ],
+ [s31, s32, s33, -∞ ],
+ [s41, s42, s43, s44]]</p>
+<h4 class="sh3">Why Necessary</h4>
+<p class="prose">Without causal mask, model sees all tokens:
+- During training: sees the answer it&#x27;s supposed to predict
+- Learns to &quot;cheat&quot; by looking ahead
+- At inference: can&#x27;t look ahead → distribution mismatch
+
+Causal mask enforces: training = inference conditions</p>
+<h3 class="sh3">Combined Masks</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Autoregressive model with variable-length sequences</p>
+<h4 class="sh3">Combination</h4>
+<p class="prose">Need both padding mask AND causal mask:
+
+Padding mask: where real tokens are
+Causal mask: lower triangular (no future)
+Combined: padding_mask AND causal_mask</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Sequence: [w1, w2, w3, PAD, PAD]
+
+Padding: [[1, 1, 1, 0, 0],
+          [1, 1, 1, 0, 0],
+          [1, 1, 1, 0, 0],
+          [0, 0, 0, 0, 0],
+          [0, 0, 0, 0, 0]]
+
+Causal:  [[1, 0, 0, 0, 0],
+          [1, 1, 0, 0, 0],
+          [1, 1, 1, 0, 0],
+          [1, 1, 1, 1, 0],
+          [1, 1, 1, 1, 1]]
+
+Combined: [[1, 0, 0, 0, 0],   # Token 1: only self
+           [1, 1, 0, 0, 0],   # Token 2: self + token 1
+           [1, 1, 1, 0, 0],   # Token 3: self + 1-2
+           [0, 0, 0, 0, 0],   # PAD: nothing
+           [0, 0, 0, 0, 0]]   # PAD: nothing</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Attention Masks</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def create_padding_mask(seq: np.ndarray, pad_token: int = 0) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    Create padding mask from sequence.
+    
+    Args:
+        seq: Token sequence (seq_len,) or (batch, seq_len)
+        pad_token: Padding token ID
+    
+    Returns:
+        mask: Binary mask (seq_len, seq_len) or (batch, seq_len, seq_len)
+            1 = can attend, 0 = cannot attend (masked)
+    &quot;&quot;&quot;
+    if seq.ndim == 1:
+        # Single sequence
+        seq_len = len(seq)
+        # Mask: can attend to non-padding positions
+        mask = (seq != pad_token).astype(float)
+        # Broadcast to (seq_len, seq_len)
+        mask = mask[np.newaxis, :] * mask[:, np.newaxis]
+    else:
+        # Batch of sequences
+        batch_size, seq_len = seq.shape
+        mask = (seq != pad_token).astype(float)
+        # Broadcast to (batch, seq_len, seq_len)
+        mask = mask[:, np.newaxis, :] * mask[:, :, np.newaxis]
+    
+    return mask
+
+
+def create_causal_mask(seq_len: int) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    Create causal mask (lower triangular).
+    
+    Args:
+        seq_len: Sequence length
+    
+    Returns:
+        mask: Causal mask (seq_len, seq_len)
+            1 = can attend (past), 0 = cannot attend (future)
+    &quot;&quot;&quot;
+    # Lower triangular matrix
+    mask = np.tril(np.ones((seq_len, seq_len)))
+    return mask
+
+
+def combine_masks(padding_mask: np.ndarray, 
+                 causal_mask: np.ndarray) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    Combine padding and causal masks.
+    
+    Args:
+        padding_mask: Padding mask (seq_len, seq_len) or (batch, seq_len, seq_len)
+        causal_mask: Causal mask (seq_len, seq_len)
+    
+    Returns:
+        combined_mask: Logical AND of both masks
+    &quot;&quot;&quot;
+    if padding_mask.ndim == 2:
+        # Single sequence
+        combined = padding_mask * causal_mask
+    else:
+        # Batch
+        batch_size = padding_mask.shape[0]
+        # Broadcast causal mask to batch
+        causal_mask = causal_mask[np.newaxis, :, :]
+        combined = padding_mask * causal_mask
+    
+    return combined
+
+
+# Example usage
+print(&quot;=== Attention Masking ===\n&quot;)
+
+# Padding mask example
+seq = np.array([1, 2, 3, 0, 0])  # 3 real tokens, 2 padding
+padding_mask = create_padding_mask(seq, pad_token=0)
+
+print(&quot;Sequence (0 = PAD):&quot;, seq)
+print(&quot;\nPadding mask (1 = can attend, 0 = masked):&quot;)
+print(padding_mask.astype(int))
+
+# Causal mask example
+seq_len = 5
+causal_mask = create_causal_mask(seq_len)
+
+print(f&quot;\nCausal mask (seq_len={seq_len}):&quot;)
+print(causal_mask.astype(int))
+
+# Combined mask
+combined_mask = combine_masks(padding_mask, causal_mask)
+
+print(&quot;\nCombined mask (padding AND causal):&quot;)
+print(combined_mask.astype(int))
+print(&quot;\nRow 3 (token 3): can attend to tokens 1-3 (not PAD, not future)&quot;)</code></pre>
+<h3 class="sh3">Masked Attention Demo</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_masked_attention():
+    &quot;&quot;&quot;Show how masking affects attention.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Masked Attention Demonstration ===\n&quot;)
+    
+    seq_len = 5
+    d_k = 8
+    
+    # Create sample data
+    Q = np.random.randn(seq_len, d_k)
+    K = np.random.randn(seq_len, d_k)
+    V = np.random.randn(seq_len, d_k)
+    
+    attention = ScaledDotProductAttention()
+    
+    # No mask
+    output_no_mask, weights_no_mask = attention(Q, K, V)
+    
+    print(&quot;Without mask:&quot;)
+    print(&quot;  Attention weights (each position can attend to all):&quot;)
+    print(weights_no_mask[:3, :])  # Show first 3 rows
+    
+    # With causal mask
+    causal_mask = create_causal_mask(seq_len)
+    output_causal, weights_causal = attention(Q, K, V, mask=causal_mask)
+    
+    print(&quot;\nWith causal mask:&quot;)
+    print(&quot;  Attention weights (lower triangular - can&#x27;t see future):&quot;)
+    print(weights_causal[:3, :])  # Show first 3 rows
+    
+    print(&quot;\nObserve:&quot;)
+    print(&quot;  - Without mask: All positions have non-zero weight&quot;)
+    print(&quot;  - With mask: Future positions have zero weight&quot;)
+
+demonstrate_masked_attention()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Mask Bypass Attacks</h3>
+<p class="prose">Adversaries attempt to bypass causal masking:
+- Exploit implementation bugs (mask not applied correctly)
+- Find positions where mask is weaker or missing
+- Craft inputs that leak future information despite mask
+- Defense: Rigorous testing of mask implementation, formal verification</p>
+<h3 class="sh3">Mask Leakage</h3>
+<p class="prose">Mask structure itself can leak information:
+- Padding mask reveals true sequence length
+- Different mask patterns for different input types
+- Timing differences based on mask complexity
+- Defense: Consistent masking, constant-time operations</p>
+<h3 class="sh3">Causal Mask Security</h3>
+<p class="prose">Causal mask enforces critical security boundary:
+- Prevents model from &quot;cheating&quot; by seeing future
+- Breaking causal mask = catastrophic training failure
+- Or worse: model learns to predict from future (data leak)
+- Defense: Verify causal mask in all attention layers</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Implementation Details and Numerical Stability</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Practical implementation of scaled dot-product attention requires careful attention 
+to numerical stability. Softmax can overflow/underflow, gradients can vanish, and 
+floating-point precision matters. Understanding these details is critical for both 
+implementation and security analysis.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Numerical Stability Considerations</h3>
+<h4 class="sh3">Softmax Overflow Underflow</h4>
+<h4 class="sh3">Problem</h4>
+<p class="prose">exp(x) overflows for large x (x &gt; 88)
+exp(x) underflows for small x (x &lt; -88)</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Subtract max before exp (softmax invariant):
+
+softmax(x) = exp(x) / Σ exp(x)
+           = exp(x - max(x)) / Σ exp(x - max(x))
+
+Keeps exponents in safe range</p>
+<h4 class="sh3">Scaling Factor Precision</h4>
+<h4 class="sh3">Issue</h4>
+<p class="prose">√d_k must be computed carefully</p>
+<h4 class="sh3">Considerations</h4>
+<ul class="blist"><li>Use float32 or float64 (not float16)</li><li>Precompute and cache √d_k (don&#x27;t recompute)</li><li>Ensure consistent precision across operations</li></ul>
+<h4 class="sh3">Gradient Clipping</h4>
+<h4 class="sh3">Issue</h4>
+<p class="prose">Gradients can explode in deep networks</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Clip gradients to maximum norm:
+
+if ||grad|| &gt; max_norm:
+  grad = grad × (max_norm / ||grad||)
+
+Prevents gradient explosion in attention</p>
+<h3 class="sh3">Memory Optimization</h3>
+<h4 class="sh3">Attention Matrix Size</h4>
+<h4 class="sh3">Problem</h4>
+<p class="prose">O(n²) memory for attention weights</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">n = 4096 tokens
+Attention weights: 4096 × 4096 = 16M floats
+Memory: 16M × 4 bytes = 64 MB per layer
+Deep model (24 layers): 1.5 GB just for attention weights!</p>
+<h4 class="sh3">Solutions</h4>
+<h4 class="sh3">Gradient Checkpointing</h4>
+<p class="prose">Recompute activations during backward pass</p>
+<h4 class="sh3">Sparse Attention</h4>
+<p class="prose">Only compute subset of attention weights</p>
+<h4 class="sh3">Low Rank Factorization</h4>
+<p class="prose">Approximate attention with lower-rank matrices</p>
+<h4 class="sh3">Kv Caching</h4>
+<h4 class="sh3">Optimization</h4>
+<p class="prose">Cache computed key/value projections during generation</p>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Autoregressive generation (GPT):
+- Generate token 1, token 2, ..., token n
+- Each step: recompute attention over all previous tokens
+- But K, V for previous tokens don&#x27;t change!</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Cache K, V from previous steps:
+- Step 1: Compute K1, V1 → cache
+- Step 2: Compute K2, V2 → cache + [K1, K2], [V1, V2]
+- Step n: Only compute Kn, Vn → use cached K1...Kn-1, V1...Vn-1
+
+Speedup: ~2-3x for long sequences</p>
+<h3 class="sh3">Implementation Best Practices</h3>
+<h4 class="sh3">Use Framework Implementations</h4>
+<h4 class="sh3">Pytorch</h4>
+<p class="prose">torch.nn.functional.scaled_dot_product_attention</p>
+<h4 class="sh3">Tensorflow</h4>
+<p class="prose">tf.nn.scaled_dot_product_attention</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Highly optimized, numerically stable, GPU-accelerated</p>
+<h4 class="sh3">Validate Shapes</h4>
+<h4 class="sh3">Critical</h4>
+<p class="prose">Attention very sensitive to shape mismatches</p>
+<h4 class="sh3">Checks</h4>
+<ul class="blist"><li>Q and K last dim must match (d_k)</li><li>K and V first dim must match (seq_len)</li><li>Mask shape must broadcast correctly</li><li>Batch dimensions must align</li></ul>
+<h4 class="sh3">Test Edge Cases</h4>
+<h4 class="sh3">Single Token</h4>
+<p class="prose">Sequence length = 1 (no attention needed)</p>
+<h4 class="sh3">All Masked</h4>
+<p class="prose">All positions masked (what happens?)</p>
+<h4 class="sh3">Very Long</h4>
+<p class="prose">Maximum context length (memory limits)</p>
+<h4 class="sh3">Numerical Extremes</h4>
+<p class="prose">Very large or very small values</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Production Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class ProductionScaledDotProductAttention:
+    &quot;&quot;&quot;
+    Production-ready scaled dot-product attention.
+    
+    Includes:
+    - Numerical stability (safe softmax)
+    - Proper masking
+    - Shape validation
+    - Efficient computation
+    &quot;&quot;&quot;
+    
+    def __init__(self, dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            dropout: Dropout rate for attention weights
+        &quot;&quot;&quot;
+        self.dropout = dropout
+    
+    def forward(self, Q: np.ndarray, K: np.ndarray, V: np.ndarray,
+               mask: np.ndarray = None, training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;
+        Compute scaled dot-product attention with all optimizations.
+        
+        Args:
+            Q: Queries (batch, seq_len_q, d_k)
+            K: Keys (batch, seq_len_k, d_k)
+            V: Values (batch, seq_len_k, d_v)
+            mask: Optional mask (batch, seq_len_q, seq_len_k)
+            training: Whether in training mode (for dropout)
+        
+        Returns:
+            output: Attention output (batch, seq_len_q, d_v)
+            attention_weights: Attention weights (batch, seq_len_q, seq_len_k)
+        &quot;&quot;&quot;
+        # Validate shapes
+        self._validate_shapes(Q, K, V, mask)
+        
+        d_k = Q.shape[-1]
+        
+        # Compute scores with scaling
+        scores = np.matmul(Q, K.transpose(0, 2, 1)) / np.sqrt(d_k)
+        
+        # Apply mask (if provided)
+        if mask is not None:
+            # Masked positions get -1e9 (close to -inf)
+            scores = np.where(mask == 0, -1e9, scores)
+        
+        # Stable softmax
+        attention_weights = self._stable_softmax(scores, axis=-1)
+        
+        # Apply dropout (if training)
+        if training and self.dropout &gt; 0:
+            attention_weights = self._dropout(attention_weights, self.dropout)
+        
+        # Compute output
+        output = np.matmul(attention_weights, V)
+        
+        return output, attention_weights
+    
+    def _validate_shapes(self, Q: np.ndarray, K: np.ndarray, 
+                        V: np.ndarray, mask: np.ndarray = None):
+        &quot;&quot;&quot;Validate tensor shapes.&quot;&quot;&quot;
+        assert Q.shape[-1] == K.shape[-1], f&quot;Q and K dimension mismatch: {Q.shape[-1]} vs {K.shape[-1]}&quot;
+        assert K.shape[-2] == V.shape[-2], f&quot;K and V sequence length mismatch: {K.shape[-2]} vs {V.shape[-2]}&quot;
+        
+        if mask is not None:
+            assert mask.shape[-2] == Q.shape[-2], f&quot;Mask query dim mismatch&quot;
+            assert mask.shape[-1] == K.shape[-2], f&quot;Mask key dim mismatch&quot;
+    
+    def _stable_softmax(self, x: np.ndarray, axis: int = -1) -&gt; np.ndarray:
+        &quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;
+        # Subtract max for stability
+        x_max = np.max(x, axis=axis, keepdims=True)
+        exp_x = np.exp(x - x_max)
+        return exp_x / np.sum(exp_x, axis=axis, keepdims=True)
+    
+    def _dropout(self, x: np.ndarray, rate: float) -&gt; np.ndarray:
+        &quot;&quot;&quot;Apply dropout.&quot;&quot;&quot;
+        keep_prob = 1 - rate
+        mask = np.random.binomial(1, keep_prob, x.shape) / keep_prob
+        return x * mask
+
+
+# Example usage
+print(&quot;\n=== Production Attention Implementation ===\n&quot;)
+
+batch_size = 2
+seq_len = 6
+d_k = 64
+d_v = 64
+
+attention = ProductionScaledDotProductAttention(dropout=0.1)
+
+Q = np.random.randn(batch_size, seq_len, d_k)
+K = np.random.randn(batch_size, seq_len, d_k)
+V = np.random.randn(batch_size, seq_len, d_v)
+
+# Create causal mask
+causal_mask = create_causal_mask(seq_len)
+causal_mask = causal_mask[np.newaxis, :, :]  # Add batch dim
+
+output, weights = attention.forward(Q, K, V, mask=causal_mask, training=False)
+
+print(f&quot;Batch size: {batch_size}&quot;)
+print(f&quot;Sequence length: {seq_len}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print(f&quot;Attention weights shape: {weights.shape}&quot;)
+print(f&quot;\nProduction features:&quot;)
+print(&quot;  ✓ Shape validation&quot;)
+print(&quot;  ✓ Numerical stability (safe softmax)&quot;)
+print(&quot;  ✓ Proper masking support&quot;)
+print(&quot;  ✓ Dropout for regularization&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Floating Point Precision Attacks</h3>
+<p class="prose">Adversaries exploit numerical precision limits:
+- Craft inputs causing overflow/underflow
+- Exploit differences between float16/float32/float64
+- Trigger denormal numbers (slow computation)
+- Defense: Use consistent precision, validate ranges</p>
+<h3 class="sh3">Cache Timing Attacks</h3>
+<p class="prose">KV caching creates timing side-channels:
+- Cache hit vs miss has different latency
+- Can infer if tokens were seen before
+- Adversaries probe cache state through timing
+- Defense: Constant-time caching, cache obfuscation</p>
+<h3 class="sh3">Implementation Bugs</h3>
+<p class="prose">Common attention implementation bugs:
+- Mask not applied correctly (causal leak)
+- Shape broadcasting errors (wrong attention pattern)
+- Softmax stability issues (NaN propagation)
+- Defense: Extensive testing, formal verification, use tested libraries</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Scaling by √d_k prevents softmax saturation for large dimensions</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Without scaling, gradients vanish and training fails</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Matrix formulation Attention(Q,K,V) = softmax(QK^T/√d_k)V enables parallel computation</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">100x+ speedup using GPU matrix operations</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention complexity is O(n²d) - quadratic in sequence length</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Limits context window size, creates DoS vulnerability</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention masks control which positions can attend to which</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Critical for autoregressive models (causal mask) and padding</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Numerical stability requires careful implementation (stable softmax, precision)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Overflow/underflow causes failures, security vulnerabilities</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement scaled dot-product attention with √d_k scaling</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Demonstrate softmax saturation without scaling, stability with scaling</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement efficient matrix formulation for batched computation</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Process multiple sequences in parallel using matrix ops</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Create padding and causal masks</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Verify masked positions get zero attention weight</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Analyze computational complexity and memory usage</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Show O(n²d) scaling, memory requirements for different sequence lengths</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement numerically stable softmax</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Handle extreme values without overflow/underflow</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Scaling factor affects numerical stability and gradient flow</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Monitor attention score distributions, detect saturation</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Quadratic complexity creates DoS vulnerability</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Limit input length, rate limit, timeout long computations</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Attention masks enforce security boundaries</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Verify causal mask prevents future leakage, test thoroughly</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Matrix operations expose timing and memory side-channels</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Use constant-time implementations, secure computing environments</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Numerical precision affects security (overflow, underflow, precision)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Validate input ranges, use consistent precision, test edge cases</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting to scale by √d_k</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always divide scores by √d_k before softmax</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not using stable softmax (subtracting max)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">exp(x - max(x)) / sum(exp(x - max(x)))</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Incorrect mask application (masking after softmax)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Apply mask BEFORE softmax by setting scores to -∞</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Wrong mask shape (broadcasting errors)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Carefully check mask dimensions match attention matrix</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using float16 for large attention matrices</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use float32 or float64 for numerical stability</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 6</h3>
+<ul class="blist"><li>Attention mechanism and Query-Key-Value formulation</li><li>Dot product score function (simplest, no parameters)</li><li>Softmax normalization creating attention weights</li></ul>
+<h3 class="sh3">From Chapter 2</h3>
+<ul class="blist"><li>Gradient flow and numerical stability</li><li>Matrix operations and computational complexity</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.8: Multi-head attention (parallel attention heads)</li><li>Running multiple scaled dot-product attentions in parallel</li><li>Different heads learning different patterns</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Multi-head attention (h parallel attention heads)</li><li>Head-specific projections (different Q/K/V for each head)</li><li>Concatenation and output projection</li><li>Why multiple heads capture different patterns</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement multi-head attention layer</li><li>Visualize what different heads learn</li><li>Understand head specialization</li><li>Build complete transformer block</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Scaled dot-product attention (Vaswani et al., 2017) is the specific attention 
+variant that powers transformers and modern LLMs. The key innovation: dividing 
+dot product scores by √d_k before softmax. This simple scaling factor prevents 
+softmax saturation when dimensions are large (d_k = 512), enabling stable gradient 
+flow and successful training.
+
+The matrix formulation - Attention(Q, K, V) = softmax(QK^T / √d_k)V - enables 
+massively parallel computation on GPUs. Instead of computing attention sequentially, 
+we compute all query-key pairs simultaneously with a single matrix multiplication. 
+This gives 100x+ speedup but has O(n²) complexity that limits context windows.
+
+Attention masking allows fine-grained control: padding masks ignore non-content 
+tokens, causal masks enforce left-to-right processing in autoregressive models 
+(GPT). Masks are implemented by setting scores to -∞ before softmax, ensuring 
+masked positions get zero weight.
+
+From a security perspective: scaling affects numerical stability (adversaries can 
+exploit overflow/underflow), quadratic complexity enables DoS attacks (long inputs 
+overwhelm compute), attention masks enforce critical security boundaries (breaking 
+causal mask = catastrophic), and matrix operations expose timing side-channels 
+(cache behavior leaks information).
+
+Next: Section 3.8 introduces multi-head attention - the idea of running multiple 
+scaled dot-product attention operations in parallel, each learning different 
+attention patterns. This is the key to transformers&#x27; power and flexibility.</p>
+</article>

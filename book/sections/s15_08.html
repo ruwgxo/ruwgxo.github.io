@@ -1,0 +1,1017 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 15 · Section 8 · ~6 pages</div>
+<h1>Section 15.08: Chapter 15 Summary</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Chapter 15 took the deployed-but-empty gateway of Chapter 14 and populated it: five hybrid detectors, one unified contract, one quality bar, and the pipeline that turns them into a single decision -- and this section draws the recurring ideas together, assesses them, and hands the suite to Chapter 16, which answers the question the chapter deliberately did not: who finds out.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">The chapter built eight things in sequence, and read one section at a time they look like eight separate pieces of work. They are not. The same four or five ideas recur in every detector, wearing different clothes each time, and a reader who leaves with five detector implementations but not those ideas has taken the least transferable part of the chapter. The precision tiers in the injection detector, the severity tiers in the PII scanner, and the context factor in the toxicity detector are the same idea. The session signal in the jailbreak detector and the campaign signal in the exfiltration detector are the same idea. This section names them.
+
+It also closes the arc. Chapter 14 argued a correct architecture is not a running service. Section 15.01 argued a deployed gateway is not a populated one. Section 15.07 argued five correct detectors are not a detection capability. Each time the missing thing was assembly, and each time the chapter did the assembly. This section confirms the last of those gaps is closed -- the gateway is populated, the suite meets the bar as an assembled system -- and then names the gap that remains, which is the same shape one level out: a detection capability that nobody is watching is not yet a security capability. That is Chapter 16.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 15.08 is the chapter closer. It synthesises Sections 15.01 through 15.07, supplies the assessment and checklists that make the chapter usable as a reference rather than a narrative, and hands off to Chapter 16 SIEM integration. It introduces no new detection capability; everything here is consolidation of what the chapter already built.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Sections 15.01 through 15.07: the full Chapter 15 arc this section synthesises</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 15.01 in Review: The Map, the Contract, and the Bar</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 15.01 opened Part 4 by naming the state Chapter 14 left the system in: a gateway that was complete as infrastructure and empty as a detection capability. Its hooks were wired to nothing, its latency budget was spent by no detector, its failure policy protected against the failure of detectors that had not been written. The section then made three commitments the rest of the chapter honoured. The suite would be six entries -- five content detectors and the pipeline that orchestrates them -- each making concrete a detection concept from Chapters 11 through 13 rather than inventing new theory. Every detector would be a hybrid, the Chapter 11 layered-detection principle applied inside a single detector. And every detector would implement one unified API and meet one quality bar.
+
+The contract was detect(ctx) -&gt; DetectorResult, carrying a verdict, a score, a confidence, a latency, and evidence. The bar was three targets held together: 95%+ accuracy, sub-50ms latency, sub-5% false positives, where missing any one makes a detector unshippable for a different reason. Both artifacts were defined in that section precisely because everything after depended on them, and both earned their keep -- the contract in Section 15.07, where the pipeline orchestrates five wildly different detectors while knowing nothing about any of them, and the bar in every section, where it repeatedly forced a design change rather than accepting a detector that scored well on the easy metric.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 15.02 in Review: The Injection Detector and the Template</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The prompt injection detector was built first because it shows the hybrid at its clearest, and it became the template every other detector reused. The known instruction-override phrasings are fixed, well-documented, and hostile almost whenever they appear, which is exactly what a regex catches cleanly in microseconds. The endless paraphrases of those same intents have no fixed form at all, which is exactly what a trained classifier generalises to. Neither layer alone is a production detector: patterns are blind to paraphrase, and the classifier is slower and noisier on the known attacks a signature catches for free.
+
+The detector also introduced the idea that turned out to matter most in the whole chapter: precision tiers. Not all patterns are equally precise. A system-prompt probe is hostile whenever it matches and can block alone; the role-reassignment pattern matches act as an unrestricted AI and also act as a friendly tour guide, so it must not. Tiering the patterns -- high blocks alone, medium needs corroboration -- was not a refinement added at the end. It emerged because the test harness caught a false positive on a benign role request and a false negative on a paraphrase, and the fix was a design change rather than a weakened corpus. The section also handled indirect injection by scanning retrieved content alongside the user input, closing the blind spot where the most dangerous injections live.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 15.03 in Review: Jailbreak and the Beyond-the-Request Signal</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The jailbreak detector reused the injection template almost wholesale -- tiered templates, a swappable classifier, the same combination discipline -- because jailbreak detection has the same known-versus-novel structure. Named personas like DAN and explicit restriction-removal framings are high-precision and block alone. Role-play and hypothetical framings are medium-precision because they are shared with the enormous space of legitimate creative use, and a detector that blocked every pretend or roleplay would be useless.
+
+What the section added was the first signal that looks beyond the current request. The multi-turn jailbreak assembles the attack across a conversation: each turn is benign in isolation and passes any per-turn detector, and the escalation across turns is the attack. Per-turn detection is blind to this by construction, not by weakness -- there is nothing in a single turn to catch. The Chapter 13 Section 13.09 session threat score closes that gap, letting the detector block a benign-looking turn because of the trajectory it sits in. The section also extended the corroboration rule: a medium framing counts when either the classifier or the session signal supports it, which is what separates roleplay as the next step of a crescendo from roleplay in a first innocent message.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 15.04 in Review: PII and the False-Positive Constraint</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The PII scanner split its hybrid along a different seam: not known versus novel, but structured versus unstructured. Structured PII has a fixed format -- an email, an SSN, a card -- which is what regex captures. Unstructured PII has no format at all: names and places are an open, unbounded set that only an NER model recognises. The section also made the scanner two-sided, extending the output-only Chapter 12 Section 12.09 scanner to catch input-side ingestion as well as output-side leakage. And it showed why format alone is not enough for cards: the Luhn checksum is what rejects the order references and tracking codes that a digit-count pattern over-matches.
+
+Most importantly, this is the section where the false-positive rate visibly drove the entire design rather than being checked at the end. Names and place words saturate ordinary text. A scanner that flagged every John or Singapore would fire on a large fraction of normal traffic, bury the real leaks, and be switched off. So the scoring is severity-tiered: high-severity structured PII blocks, medium flags, and a lone low-severity entity produces an evidence note and no action at all. Only an aggregate of low-severity entities escalates. That single decision -- one name is not actionable PII -- is what keeps the detector usable.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 15.05 in Review: Toxicity, Build-Versus-Buy, and Context</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The toxicity detector was the first to reach outside the system. Broad toxicity classification is commoditised: hosted moderation services do it well, train on more data than any team can gather, and stay current as a maintained product. Rebuilding it in-house would be slower and worse, so the detector buys the baseline. That is a genuine architectural shift, and it brought a consequence no earlier detector had: the baseline is a network dependency that costs latency and will fail, so the detector needs an explicit fail-open or fail-closed policy rather than an implicit assumption of availability.
+
+A general service also has two systematic blind spots, and the custom layer exists for exactly them. It does not know one platform domain-specific abuse. And it classifies text in isolation, so it scores a slur identically in a hateful message and in a research paper quoting that slur to condemn it. The context factor answers the second, and its asymmetry is the design: it can only ever reduce the score, never inflate it. Escalation comes from toxicity signals; de-escalation comes from benign context. That is the same restraint idea as the precision tiers and the severity tiers, in a third costume.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 15.06 in Review: Exfiltration, Proof, and the Campaign</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The exfiltration detector was the only output-only one, because exfiltration is judged by what leaves rather than by what was asked. An attacker who defeats every input-side detector has still not succeeded until the data goes out in a response, which makes this the independent last line that catches successful attacks however they succeeded. Its rules are tiered like the injection patterns: credential and key material blocks alone, while generic references to keys and paths are medium-tier, because talking about secrets is not leaking secrets and a detector that cannot tell the difference is unusable for any technical audience.
+
+The section contributed two ideas found nowhere else in the chapter. The canary is the only signal in the suite that is proof rather than probability: a unique meaningless string planted where only the system can see it has no benign path into a response, so its appearance establishes extraction as a fact. It therefore short-circuits the combination rather than being weighed into it, and configuration validation forbids ever tuning it below a block. The campaign signal is the second: a patient attacker taking one record at a time produces thousands of individually benign responses, and only the Chapter 13 Section 13.07 rate and coverage signals see the totality. That signal must be able to block a response containing nothing wrong, which is the same structure as the multi-turn jailbreak one scale out.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">7</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 15.07 in Review: The Pipeline and the Payoff</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 15.07 stopped building detectors and assembled them, and it is where the contract from Section 15.01 either paid off or stood exposed as decoration. It paid off, visibly: the pipeline contains no injection patterns, no NER, no Luhn, no hosted-service client, no canary registry, no rate analysis. It calls detect and reads DetectorResult, and that is the entirety of its knowledge about five detectors that internally could not be more different. A sixth detector would need no orchestration changes at all.
+
+The scheduling answered the budget. Five detectors run serially would spend the sum of their latencies against a budget sized for roughly one, so independent detectors run in parallel and cost only the slowest, while gating detectors run first and short-circuit on a block -- which means the pipeline gets cheaper under attack rather than more expensive. The combination rule answered a subtler question: the pipeline verdict is the most severe verdict, never a vote or an average, because the detectors answer five different questions and a clean PII scan is not evidence against an injection block. Averaging would let four detectors that correctly found nothing outvote the one that correctly found an attack. And the deciding detector confidence is propagated rather than blended, so a canary block at 0.99 stays distinguishable from a rate block at 0.92 for the triage that Chapter 16 builds.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">8</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Four Recurring Ideas</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Read one section at a time the chapter looks like five detectors and a pipeline. It is really four ideas, each appearing in several costumes, and these are the transferable part.
+
+The first is the hybrid: every detector has a precision layer and a coverage layer, because each covers exactly what the other misses. Regex plus classifier, regex plus NER, hosted baseline plus custom model, rules plus aggregate statistics -- four different seams, one principle, which is Chapter 11 layered detection applied inside a single detector.
+
+The second is restraint. Every detector has a mechanism that stops a weak signal from acting alone: precision tiers in injection and jailbreak and exfiltration, severity tiers in PII, the context factor in toxicity. In every case the mechanism exists because some signal is real at the surface but shared with legitimate use, and acting on it alone would destroy the false-positive rate and get the detector turned off. Restraint is not timidity; it is what keeps a detector deployed.
+
+The third is the beyond-the-request signal. Two attacks in this chapter are invisible per request by construction -- the multi-turn jailbreak and the exfiltration campaign -- because every individual unit is benign and the totality is the crime. Both are answered the same way: a signal over the session or the aggregate, able to act on a request that contains nothing wrong.
+
+The fourth is the shared contract, which is what makes the other three composable into a system rather than five clever solutions that cannot be assembled.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">9</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">How Chapter 15 Completes the Gateway and Joins Part 3 to Part 4</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 14 ended with a gateway that had PRE and POST hooks, a latency budget, a failure policy, a circuit breaker, sampling, and observability -- and toy detectors in the hooks, functions taking a string and returning a bool. Section 15.01 called it deployed and empty and promised Part 4 would fill it. Section 15.07 did: the input-side detectors run at the pre-processing hook so a block prevents the model call entirely, the output-side detectors run at the post-processing hook on the response about to be returned, and the pipeline registers as one gateway detector per hook so the suite gets one timeout and one breaker.
+
+The division of labour is deliberate. The gateway owns the deployment engineering it was built for -- timeouts, circuit breaking, sampling, the deployment-level failure policy -- and the pipeline does not duplicate any of it. The pipeline owns detection: scheduling, isolation, combination. The boolean the gateway receives is a deliberately lossy view for one consumer, and the full PipelineResult is retained because Chapter 16 needs it. This is the join between the two parts: Part 3 engineered where detection runs and under what conditions, Part 4 built what runs there, and the two meet at the hook.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">10</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">What the Measured Figures Do and Do Not Say</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Every section in this chapter reported its harness output, and every one showed high accuracy and a zero false-positive rate on its sample corpus at sub-millisecond latency. Those figures are worth stating plainly for what they are and are not. They demonstrate that the harness works, that the gate rejects a detector that misses the bar, and that the design decisions -- the tiers, the context factor, the aggregate signals -- do the job they were introduced to do against the specific cases that motivated them. That is real and it is the point of the demonstration.
+
+They are not a claim about production performance, and reading them as one would be a mistake this chapter has warned against in five different sections. The corpora are small and hand-built. The models are deterministic stubs standing in for real classifiers, hosted services, NER models, and session accumulators, and the real ones carry real latency and real error. A production corpus is larger, messier, and adversarial in ways a hand-built one is not. The bar is the target -- 95%+ accuracy, sub-50ms, sub-5% false positives -- and every detector must be re-validated against a real labelled corpus with the real models and the real latency before it ships. The chapter built the harness that will tell you when it does.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">11</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Quick Reference: The Suite at a Glance</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The five detectors, their hybrids, and their distinguishing contributions, for lookup rather than reading.
+
+Prompt injection (15.02): tiered regex plus the Chapter 12 classifier, input-side, scanning retrieved content for indirect injection. Contributed the precision-tier idea and the template every other detector reused.
+
+Jailbreak (15.03): tiered templates plus the Chapter 12 jailbreak classifier plus the Chapter 13.09 session score, input-side. Contributed the beyond-the-request signal and corroboration from either of two sources.
+
+PII scanner (15.04): structured regex with Luhn plus NER for unstructured entities, two-sided, extending the output-only Chapter 12.09 scanner. Contributed severity tiers and the clearest case of the false-positive rate driving a design.
+
+Toxicity (15.05): a bought hosted baseline plus custom domain models plus a context factor, two-sided. Contributed build-versus-buy, the network-failure policy, and the asymmetric context adjustment.
+
+Data exfiltration (15.06): tiered rules plus Chapter 13.06 canaries plus Chapter 13.07 rate and coverage, output-only. Contributed the canary as proof rather than probability, and the campaign signal.
+
+Combined pipeline (15.07): parallel and sequential scheduling, fault isolation, most-severe verdict combination, confidence propagation, gateway placement, suite configuration, and end-to-end testing.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">12</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 16 Preview: From Detection to Security Operations</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 15 answered what runs in the gateway. It did not answer who finds out, and that omission is the whole of Chapter 16.
+
+Consider what the suite currently produces and where it goes. Every verdict carries evidence naming exactly what fired -- and no analyst ever reads it. The confidence distinguishes a canary-driven block at 0.99 from a rate-driven one at 0.92 -- and no triage queue exists to act on the difference. The degraded list marks a partial verdict -- and nobody is told the capability is degraded. The full PipelineResult is deliberately retained rather than collapsed to the gateway boolean -- and nothing consumes it. A detection that fires into a log nobody reads has changed nothing about the security of the system: the attack was still caught and still unanswered.
+
+This is the same shape of gap the chapter has now closed twice. Chapter 14 built a gateway that was complete as infrastructure and empty as detection. Chapter 15 fills it and produces a suite that is complete as detection and inert as security. Chapter 16 closes that gap by integrating the suite with SIEM platforms: the detections become alerts, the alerts reach the people who work the security estate, the evidence makes them actionable, the confidence decides what gets looked at first, and the AI detections finally correlate with the rest of the telemetry rather than living in an isolated log of their own. Then Chapter 17 tunes what is running, and Chapter 18 tests all of it against real cases.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Five Detectors and Their Hybrids</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Every detector is a hybrid, but the seam differs. Four different splits, one principle: a precision layer and a coverage layer, each covering what the other misses.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Detector</li><li>Section</li><li>Precision layer</li><li>Coverage layer</li><li>Surfaces</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>Prompt injection</li><li>15.02</li><li>Tiered regex signatures</li><li>Chapter 12 classifier</li><li>input</li></ul>
+<ul class="blist"><li>Jailbreak</li><li>15.03</li><li>Tiered templates</li><li>Classifier + session score</li><li>input</li></ul>
+<ul class="blist"><li>PII scanner</li><li>15.04</li><li>Structured regex + Luhn</li><li>NER for unstructured</li><li>input, output</li></ul>
+<ul class="blist"><li>Toxicity</li><li>15.05</li><li>Hosted moderation baseline</li><li>Custom domain models</li><li>input, output</li></ul>
+<ul class="blist"><li>Data exfiltration</li><li>15.06</li><li>Tiered rules + canaries</li><li>Rate and coverage</li><li>output</li></ul>
+<h3 class="sh2">Table</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Restraint Mechanism in Each Detector</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Every detector has a mechanism stopping a weak signal from acting alone, because some signal is always real at the surface and shared with legitimate use. This is the same idea in five costumes.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Detector</li><li>Mechanism</li><li>The signal it restrains</li><li>What it protects</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>Prompt injection</li><li>Precision tiers</li><li>act as a ...</li><li>Benign role requests</li></ul>
+<ul class="blist"><li>Jailbreak</li><li>Precision tiers + dual corroboration</li><li>roleplay, hypothetically</li><li>Fiction, tutoring, creative writing</li></ul>
+<ul class="blist"><li>PII scanner</li><li>Severity tiers, low needs aggregate</li><li>A single recognised name</li><li>Introductions, travel plans, company mentions</li></ul>
+<ul class="blist"><li>Toxicity</li><li>Context factor (de-escalate only)</li><li>A quoted or reclaimed slur</li><li>Research, journalism, in-game banter</li></ul>
+<ul class="blist"><li>Data exfiltration</li><li>Precision tiers</li><li>api_key:, /etc/ references</li><li>Documentation and technical discussion</li></ul>
+<h3 class="sh2">Table</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Two Beyond-the-Request Attacks</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Two attacks in this chapter are invisible per request by construction. Both are answered by a signal that can act on a request containing nothing wrong.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Attack</li><li>Detector</li><li>Why per-request fails</li><li>Signal</li><li>Source</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>Multi-turn jailbreak</li><li>15.03</li><li>Every turn is benign in isolation</li><li>Accumulated session threat score</li><li>Chapter 13.09</li></ul>
+<ul class="blist"><li>Exfiltration campaign</li><li>15.06</li><li>Every response is benign in isolation</li><li>Rate and coverage over the session</li><li>Chapter 13.07</li></ul>
+<h3 class="sh2">Table</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Consolidated Chapter 15 Mistakes</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">The failures that recur across the chapter, each drawn from the section that names it, with the outcome each produces.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Mistake</li><li>Section</li><li>Outcome</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>Single-layer detector (patterns only, or ML only)</li><li>15.02</li><li>Blind to paraphrase, or slow and noisy on the known</li></ul>
+<ul class="blist"><li>Treating every signal as equally precise</li><li>15.02, 15.03, 15.06</li><li>False positives on benign use; the detector gets disabled</li></ul>
+<ul class="blist"><li>Per-request detection only</li><li>15.03, 15.06</li><li>Multi-turn jailbreaks and campaigns pass completely</li></ul>
+<ul class="blist"><li>Flagging every recognised entity</li><li>15.04</li><li>Fires on ordinary traffic; real leaks buried</li></ul>
+<ul class="blist"><li>Matching words instead of weighing context</li><li>15.05</li><li>Research and quotation punished as if they were attacks</li></ul>
+<ul class="blist"><li>Treating proof as one probability among many</li><li>15.06</li><li>A proven extraction averaged down below the block threshold</li></ul>
+<ul class="blist"><li>Voting or averaging detector verdicts</li><li>15.07</li><li>Four clean detectors outvote the one that found the attack</li></ul>
+<ul class="blist"><li>Serial detector execution</li><li>15.07</li><li>The suite blows a budget every individual detector met</li></ul>
+<ul class="blist"><li>Trusting per-detector passes as a suite pass</li><li>15.07</li><li>The assembled system fails a bar all its parts passed</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">production_detector_suite_architecture.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">The whole chapter in one structure: the five detectors with their hybrid layers, surfaces, restraint mechanisms, and beyond-the-request signals; the pipeline; and the Chapter 14 gateway they populate. Renders the PRE and POST hook placement directly, showing which detectors run where.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses and typing only. The render function derives the hook diagram from the detector surface declarations, so the diagram cannot drift from the data.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># production_detector_suite_architecture.py
+# Section 15.08: The Production Detector Suite Architecture
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The whole of Chapter 15 in one structure: five detectors, the pipeline that
+# orchestrates them, and the Chapter 14 gateway they populate. This is the map
+# from Section 15.01 with every entry now built.
+
+from dataclasses import dataclass, field
+from typing import List, Tuple
+
+
+@dataclass
+class DetectorNode:
+    name: str
+    section: str
+    layer_a: str                # the precision layer (patterns/regex/hosted/rules)
+    layer_b: str                # the coverage layer (ML/NER/custom/aggregate)
+    surfaces: Tuple[str, ...]
+    restraint: str              # the mechanism that keeps false positives down
+    beyond_request: str         # the signal beyond the current request, if any
+
+
+SUITE: List[DetectorNode] = [
+    DetectorNode(&#x27;prompt_injection&#x27;, &#x27;15.02&#x27;,
+                 &#x27;Tiered regex signatures&#x27;, &#x27;Chapter 12 injection classifier&#x27;,
+                 (&#x27;input&#x27;,), &#x27;Precision tiers: medium patterns need ML corroboration&#x27;,
+                 &#x27;None -- per request, plus retrieved content&#x27;),
+    DetectorNode(&#x27;jailbreak&#x27;, &#x27;15.03&#x27;,
+                 &#x27;Tiered template signatures&#x27;, &#x27;Chapter 12 jailbreak classifier&#x27;,
+                 (&#x27;input&#x27;,), &#x27;Precision tiers: roleplay framings need corroboration&#x27;,
+                 &#x27;Chapter 13.09 session threat score (multi-turn)&#x27;),
+    DetectorNode(&#x27;pii_scanner&#x27;, &#x27;15.04&#x27;,
+                 &#x27;Structured regex + Luhn&#x27;, &#x27;NER for unstructured entities&#x27;,
+                 (&#x27;input&#x27;, &#x27;output&#x27;), &#x27;Severity tiers: lone low-severity entity never escalates&#x27;,
+                 &#x27;None -- per request&#x27;),
+    DetectorNode(&#x27;toxicity&#x27;, &#x27;15.05&#x27;,
+                 &#x27;Hosted moderation baseline&#x27;, &#x27;Custom domain models&#x27;,
+                 (&#x27;input&#x27;, &#x27;output&#x27;), &#x27;Context factor: can only de-escalate, never inflate&#x27;,
+                 &#x27;None -- per request&#x27;),
+    DetectorNode(&#x27;data_exfiltration&#x27;, &#x27;15.06&#x27;,
+                 &#x27;Tiered sensitive-content rules + canaries&#x27;, &#x27;Chapter 13.07 rate and coverage&#x27;,
+                 (&#x27;output&#x27;,), &#x27;Precision tiers: config references need corroboration&#x27;,
+                 &#x27;Chapter 13.07 campaign signal (multi-request)&#x27;),
+]
+
+
+@dataclass
+class Layer:
+    name: str
+    built_in: str
+    role: str
+
+
+STACK: List[Layer] = [
+    Layer(&#x27;Chapter 14 gateway&#x27;, &#x27;Section 14.11&#x27;,
+          &#x27;PRE and POST hooks, latency budget, failure policy, breaker, sampling, observability&#x27;),
+    Layer(&#x27;Combined pipeline&#x27;, &#x27;Section 15.07&#x27;,
+          &#x27;Registers as one gateway detector per hook; schedules, isolates, and combines&#x27;),
+    Layer(&#x27;The five detectors&#x27;, &#x27;Sections 15.02-15.06&#x27;,
+          &#x27;Each implements detect(ctx) -&gt; DetectorResult and nothing else is required&#x27;),
+    Layer(&#x27;Unified API contract&#x27;, &#x27;Section 15.01&#x27;,
+          &#x27;The one contract that makes the layer above able to ignore the layer below&#x27;),
+]
+
+
+def render() -&gt; str:
+    lines: List[str] = []
+    lines.append(&#x27;PRODUCTION DETECTOR SUITE (Chapter 15)&#x27;)
+    lines.append(&#x27;=&#x27; * 62)
+    lines.append(&#x27;&#x27;)
+    lines.append(&#x27;  Chapter 14 Production Gateway (14.11) -- deployed in Part 3&#x27;)
+    lines.append(&#x27;  |&#x27;)
+    lines.append(&#x27;  +-- PRE hook  [surface=input]  --&gt; Combined Pipeline (15.07)&#x27;)
+    lines.append(&#x27;  |                                    |&#x27;)
+    for d in SUITE:
+        if &#x27;input&#x27; in d.surfaces:
+            lines.append(f&#x27;  |                                    +-- {d.name} ({d.section})&#x27;)
+    lines.append(&#x27;  |&#x27;)
+    lines.append(&#x27;  +-- POST hook [surface=output] --&gt; Combined Pipeline (15.07)&#x27;)
+    lines.append(&#x27;                                       |&#x27;)
+    for d in SUITE:
+        if &#x27;output&#x27; in d.surfaces:
+            lines.append(f&#x27;                                       +-- {d.name} ({d.section})&#x27;)
+    lines.append(&#x27;&#x27;)
+    lines.append(&#x27;  Every detector implements: detect(ctx) -&gt; DetectorResult   (15.01)&#x27;)
+    lines.append(&#x27;  Every detector held to:    95%+ accuracy, &lt;50ms, &lt;5% FP    (15.01)&#x27;)
+    return &#x27;\n&#x27;.join(lines)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(render())
+    print()
+    print(&#x27;THE STACK&#x27;)
+    print(&#x27;-&#x27; * 62)
+    for layer in STACK:
+        print(f&#x27;{layer.name} [{layer.built_in}]&#x27;)
+        print(f&#x27;    {layer.role}&#x27;)
+    print()
+    print(&#x27;DETECTOR HYBRIDS&#x27;)
+    print(&#x27;-&#x27; * 62)
+    for d in SUITE:
+        print(f&#x27;{d.name} ({d.section})  surfaces={&quot;/&quot;.join(d.surfaces)}&#x27;)
+        print(f&#x27;    precision layer : {d.layer_a}&#x27;)
+        print(f&#x27;    coverage layer  : {d.layer_b}&#x27;)
+        print(f&#x27;    restraint       : {d.restraint}&#x27;)
+        print(f&#x27;    beyond request  : {d.beyond_request}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">detector_suite_reference_card.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Each detector with the threat it answers, the earlier-chapter concept it makes concrete, its hybrid approach, its deliverable, and its measured metrics -- with an explicit caveat that the figures come from sample corpora with stub models and are a demonstration of the gate rather than a production claim.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses and typing only. The measurement caveat is carried in the module and printed with the card, so the numbers are never separated from their qualification.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># detector_suite_reference_card.py
+# Section 15.08: Detector Suite Reference Card
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# Each detector with its hybrid approach, the threat it answers, the chapter
+# concept it made concrete, and its quality metrics. The one-page lookup for
+# the whole suite.
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class CardEntry:
+    detector: str
+    section: str
+    threat: str
+    made_concrete: str          # the earlier-chapter concept this realises
+    hybrid: str
+    deliverable: str
+    accuracy: str
+    fp_rate: str
+    latency: str
+
+
+CARD: List[CardEntry] = [
+    CardEntry(&#x27;Prompt Injection&#x27;, &#x27;15.02&#x27;,
+              &#x27;Instruction override, direct and indirect&#x27;,
+              &#x27;Chapter 12 injection classifier&#x27;,
+              &#x27;Tiered regex + DistilBERT classifier&#x27;,
+              &#x27;prompt_injection_detector.py&#x27;,
+              &#x27;100%&#x27;, &#x27;0%&#x27;, &#x27;sub-ms&#x27;),
+    CardEntry(&#x27;Jailbreak&#x27;, &#x27;15.03&#x27;,
+              &#x27;Restriction removal, single- and multi-turn&#x27;,
+              &#x27;Chapter 12 jailbreak classifier + Chapter 13.09 session signal&#x27;,
+              &#x27;Tiered templates + classifier + session score&#x27;,
+              &#x27;jailbreak_detector.py&#x27;,
+              &#x27;100%&#x27;, &#x27;0%&#x27;, &#x27;sub-ms&#x27;),
+    CardEntry(&#x27;PII Scanner&#x27;, &#x27;15.04&#x27;,
+              &#x27;Personal data on input and output (OWASP LLM06)&#x27;,
+              &#x27;Chapter 12.09 output PII scanner, extended two-sided&#x27;,
+              &#x27;Structured regex + Luhn, NER for unstructured&#x27;,
+              &#x27;pii_scanner.py&#x27;,
+              &#x27;100%&#x27;, &#x27;0%&#x27;, &#x27;sub-ms&#x27;),
+    CardEntry(&#x27;Toxicity&#x27;, &#x27;15.05&#x27;,
+              &#x27;Abusive content in and out&#x27;,
+              &#x27;Hosted moderation baseline, first bought capability&#x27;,
+              &#x27;Hosted service + custom domain models + context factor&#x27;,
+              &#x27;toxicity_detector.py&#x27;,
+              &#x27;100%&#x27;, &#x27;0%&#x27;, &#x27;sub-ms&#x27;),
+    CardEntry(&#x27;Data Exfiltration&#x27;, &#x27;15.06&#x27;,
+              &#x27;Sensitive content leaving; extraction campaigns&#x27;,
+              &#x27;Chapter 13.06 canaries + Chapter 13.07 rate and coverage&#x27;,
+              &#x27;Tiered rules + canaries + aggregate campaign signal&#x27;,
+              &#x27;exfiltration_detector.py&#x27;,
+              &#x27;100%&#x27;, &#x27;0%&#x27;, &#x27;sub-ms&#x27;),
+    CardEntry(&#x27;Combined Pipeline&#x27;, &#x27;15.07&#x27;,
+              &#x27;One decision from five detectors&#x27;,
+              &#x27;The Section 15.01 unified API as orchestration contract&#x27;,
+              &#x27;Parallel + sequential scheduling, most-severe combination&#x27;,
+              &#x27;combined_detection_pipeline.py&#x27;,
+              &#x27;100%&#x27;, &#x27;0%&#x27;, &#x27;a few ms&#x27;),
+]
+
+
+# The measured figures above are from each section&#x27;s own harness on its sample
+# corpus, with stub models standing in for the real classifiers. They demonstrate
+# the harness and the gate, not a claim about production performance: a real
+# corpus is larger, messier, and adversarial, and the real models carry real
+# latency. The bar is the target -- 95%+ accuracy, sub-50ms, sub-5% FP -- and
+# every detector must be re-validated against a production corpus before it ships.
+MEASUREMENT_CAVEAT = (
+    &#x27;Figures are from each section sample corpus with stub models. They prove the &#x27;
+    &#x27;harness and the gate work, not production performance. Re-validate every &#x27;
+    &#x27;detector against a real labelled corpus with the real models before shipping.&#x27;)
+
+
+def render() -&gt; str:
+    lines: List[str] = []
+    lines.append(&#x27;DETECTOR SUITE REFERENCE CARD&#x27;)
+    lines.append(&#x27;=&#x27; * 74)
+    for e in CARD:
+        lines.append(&#x27;&#x27;)
+        lines.append(f&#x27;{e.detector}  [{e.section}]&#x27;)
+        lines.append(f&#x27;  threat        : {e.threat}&#x27;)
+        lines.append(f&#x27;  makes concrete: {e.made_concrete}&#x27;)
+        lines.append(f&#x27;  hybrid        : {e.hybrid}&#x27;)
+        lines.append(f&#x27;  deliverable   : {e.deliverable}&#x27;)
+        lines.append(f&#x27;  metrics       : acc={e.accuracy} fp={e.fp_rate} latency={e.latency}&#x27;)
+    lines.append(&#x27;&#x27;)
+    lines.append(&#x27;-&#x27; * 74)
+    lines.append(&#x27;NOTE: &#x27; + MEASUREMENT_CAVEAT)
+    return &#x27;\n&#x27;.join(lines)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(render())</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">production_detector_checklist.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Twenty requirements across six groups -- contract, layering, dependencies, configuration, validation, integration -- for a production-grade detector, each traced to the section where skipping it produced a real failure. Run against any new detector before it joins the suite.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses and typing only. evaluate() scores a detector against the checklist and returns what is missing, so the checklist is executable rather than decorative.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># production_detector_checklist.py
+# Section 15.08: Production Detector Checklist
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The requirements for a production-grade detector, drawn from the five built in
+# this chapter. Run against any new detector before it joins the suite. Every
+# item traces to a section where skipping it produced a real failure.
+
+from dataclasses import dataclass
+from typing import Dict, List, Optional
+
+
+@dataclass
+class CheckItem:
+    id: str
+    group: str
+    requirement: str
+    source: str
+    why: str
+
+
+CHECKLIST: List[CheckItem] = [
+    # --- contract ---
+    CheckItem(&#x27;C1&#x27;, &#x27;Contract&#x27;, &#x27;Implements detect(ctx) -&gt; DetectorResult and nothing more&#x27;,
+              &#x27;15.01&#x27;,
+              &#x27;The shared contract is what lets the pipeline orchestrate without coupling.&#x27;),
+    CheckItem(&#x27;C2&#x27;, &#x27;Contract&#x27;, &#x27;Sets latency_ms on every result, including early returns&#x27;,
+              &#x27;15.01&#x27;, &#x27;Unmeasured latency cannot be held to the budget.&#x27;),
+    CheckItem(&#x27;C3&#x27;, &#x27;Contract&#x27;, &#x27;Returns confidence that means something, and 0.0 when it has no signal&#x27;,
+              &#x27;15.07&#x27;, &#x27;The pipeline uses confidence 0 to tell no signal from a clean signal.&#x27;),
+    CheckItem(&#x27;C4&#x27;, &#x27;Contract&#x27;, &#x27;Populates evidence explaining what fired&#x27;,
+              &#x27;15.01&#x27;, &#x27;A verdict without evidence cannot be triaged in Chapter 16.&#x27;),
+    # --- layering ---
+    CheckItem(&#x27;L1&#x27;, &#x27;Layering&#x27;, &#x27;Has a precision layer and a coverage layer, not one alone&#x27;,
+              &#x27;15.02&#x27;, &#x27;Patterns alone miss paraphrase; ML alone is slow and noisy on the known.&#x27;),
+    CheckItem(&#x27;L2&#x27;, &#x27;Layering&#x27;, &#x27;Tiers its precision: only unambiguous signals act alone&#x27;,
+              &#x27;15.02, 15.03&#x27;,
+              &#x27;Medium-precision signals that block alone destroy the false-positive rate.&#x27;),
+    CheckItem(&#x27;L3&#x27;, &#x27;Layering&#x27;, &#x27;Considers whether the attack has a beyond-the-request shape&#x27;,
+              &#x27;15.03, 15.06&#x27;,
+              &#x27;Multi-turn jailbreaks and exfiltration campaigns are invisible per request.&#x27;),
+    # --- dependencies ---
+    CheckItem(&#x27;D1&#x27;, &#x27;Dependencies&#x27;, &#x27;Models and services sit behind an interface, not called directly&#x27;,
+              &#x27;15.02-15.06&#x27;, &#x27;Otherwise the detector cannot be tested and the model cannot be swapped.&#x27;),
+    CheckItem(&#x27;D2&#x27;, &#x27;Dependencies&#x27;, &#x27;Model and rule-set versions are pinned in configuration&#x27;,
+              &#x27;15.02&#x27;, &#x27;A verdict must be reproducible and auditable.&#x27;),
+    CheckItem(&#x27;D3&#x27;, &#x27;Dependencies&#x27;, &#x27;Network dependencies have an explicit failure policy&#x27;,
+              &#x27;15.05&#x27;, &#x27;A hosted service will fail; what happens then must be a decision.&#x27;),
+    # --- configuration ---
+    CheckItem(&#x27;F1&#x27;, &#x27;Configuration&#x27;, &#x27;Thresholds and policy are data, not hardcoded&#x27;,
+              &#x27;15.04, 15.05&#x27;, &#x27;Policy is deployment-specific; one hardcoded line fits nobody.&#x27;),
+    CheckItem(&#x27;F2&#x27;, &#x27;Configuration&#x27;, &#x27;Configuration self-validates and rejects incoherent settings&#x27;,
+              &#x27;15.07&#x27;, &#x27;A misordered threshold is a silent hole, not a visible error.&#x27;),
+    CheckItem(&#x27;F3&#x27;, &#x27;Configuration&#x27;, &#x27;Known blind spots are documented, not hidden&#x27;,
+              &#x27;15.06&#x27;, &#x27;The stateless profile cannot see campaigns; that is stated, not implied.&#x27;),
+    # --- validation ---
+    CheckItem(&#x27;V1&#x27;, &#x27;Validation&#x27;, &#x27;Validated against a labelled corpus, not spot checks&#x27;,
+              &#x27;15.02&#x27;, &#x27;Anecdotes do not measure accuracy.&#x27;),
+    CheckItem(&#x27;V2&#x27;, &#x27;Validation&#x27;, &#x27;Negatives are a false-positive stress set, not easy clean text&#x27;,
+              &#x27;15.02-15.06&#x27;,
+              &#x27;A corpus of obvious cases proves nothing; the hard negatives are the test.&#x27;),
+    CheckItem(&#x27;V3&#x27;, &#x27;Validation&#x27;, &#x27;Every signal path has at least one case that exercises it&#x27;,
+              &#x27;15.03, 15.06&#x27;,
+              &#x27;A broken session or campaign integration ships behind a passing single-turn score.&#x27;),
+    CheckItem(&#x27;V4&#x27;, &#x27;Validation&#x27;, &#x27;Meets all three bar targets together, not two of three&#x27;,
+              &#x27;15.01&#x27;, &#x27;Accurate but slow gets moved off the path; accurate but noisy gets disabled.&#x27;),
+    # --- integration ---
+    CheckItem(&#x27;I1&#x27;, &#x27;Integration&#x27;, &#x27;Declares the surfaces it scans&#x27;,
+              &#x27;15.07&#x27;, &#x27;Running a detector where it cannot fire wastes the shared budget.&#x27;),
+    CheckItem(&#x27;I2&#x27;, &#x27;Integration&#x27;, &#x27;Failure is isolated: a raise must not take the pipeline down&#x27;,
+              &#x27;15.07&#x27;, &#x27;One bad detector should not end the whole detection capability.&#x27;),
+    CheckItem(&#x27;I3&#x27;, &#x27;Integration&#x27;, &#x27;Re-validated as part of the assembled pipeline&#x27;,
+              &#x27;15.07&#x27;, &#x27;Five individual passes do not compose into a suite pass.&#x27;),
+]
+
+
+def by_group() -&gt; Dict[str, List[CheckItem]]:
+    out: Dict[str, List[CheckItem]] = {}
+    for item in CHECKLIST:
+        out.setdefault(item.group, []).append(item)
+    return out
+
+
+def evaluate(passed_ids: Optional[set] = None) -&gt; tuple:
+    &#x27;&#x27;&#x27;Score a detector against the checklist. Returns (ready, missing).&#x27;&#x27;&#x27;
+    passed = passed_ids or set()
+    missing = [i for i in CHECKLIST if i.id not in passed]
+    return (not missing, missing)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;PRODUCTION DETECTOR CHECKLIST&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for group, items in by_group().items():
+        print(f&#x27;\n{group.upper()}&#x27;)
+        for i in items:
+            print(f&#x27;  [{i.id}] {i.requirement}&#x27;)
+            print(f&#x27;        ({i.source}) {i.why}&#x27;)
+    print(f&#x27;\n{len(CHECKLIST)} items across {len(by_group())} groups&#x27;)
+
+    # A detector that has done the easy half.
+    partial = {&#x27;C1&#x27;, &#x27;C2&#x27;, &#x27;L1&#x27;, &#x27;D1&#x27;, &#x27;V1&#x27;}
+    ready, missing = evaluate(partial)
+    print(f&#x27;\nexample: a detector passing {len(partial)} items -&gt; ready={ready}&#x27;)
+    print(f&#x27;  missing {len(missing)}, first three:&#x27;)
+    for i in missing[:3]:
+        print(f&#x27;    [{i.id}] {i.requirement}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">chapter_15_knowledge_assessment.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Twenty questions spanning Sections 15.01 through 15.07, weighted toward the design decisions rather than the trivia -- why a layer exists, why a signal is tiered, why the combination rule is what it is -- with an explanation for every answer.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses and typing only. render() supports a study mode with answers hidden and a review mode with explanations; score() checks a response list against the key and the module self-checks the key on run.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># chapter_15_knowledge_assessment.py
+# Section 15.08: Chapter 15 Knowledge Assessment
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# Twenty questions across the chapter. The questions favour the design decisions
+# over the trivia: why a layer exists, why a signal is tiered, why a combination
+# rule is what it is. Those are the transferable parts.
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class Question:
+    number: int
+    section: str
+    prompt: str
+    options: List[str]
+    answer: int             # index into options
+    explanation: str
+
+
+QUIZ: List[Question] = [
+    Question(1, &#x27;15.01&#x27;,
+             &#x27;Chapter 14 ended with a deployed gateway. What did Section 15.01 say it lacked?&#x27;,
+             [&#x27;Latency budget&#x27;, &#x27;Any detectors in its hooks&#x27;, &#x27;Observability&#x27;, &#x27;A failure policy&#x27;],
+             1,
+             &#x27;The gateway was complete as infrastructure and empty as a detection capability: &#x27;
+             &#x27;hooks wired to nothing. Part 4 populates it.&#x27;),
+    Question(2, &#x27;15.01&#x27;,
+             &#x27;Why does the quality bar hold all three targets together rather than trading them off?&#x27;,
+             [&#x27;Convention&#x27;, &#x27;Accurate but slow is moved off the hot path; accurate but noisy is disabled&#x27;,
+              &#x27;They are mathematically equivalent&#x27;, &#x27;Regulators require it&#x27;],
+             1,
+             &#x27;Missing any one target makes a detector unshippable for a different reason. Two of &#x27;
+             &#x27;three is not production-grade.&#x27;),
+    Question(3, &#x27;15.01&#x27;,
+             &#x27;What does the unified API contract buy?&#x27;,
+             [&#x27;Faster inference&#x27;, &#x27;The pipeline can orchestrate detectors without knowing their internals&#x27;,
+              &#x27;Better accuracy&#x27;, &#x27;Smaller models&#x27;],
+             1,
+             &#x27;One contract, detect(ctx) -&gt; DetectorResult, is what turns a pile of detectors into &#x27;
+             &#x27;an orchestrable suite.&#x27;),
+    Question(4, &#x27;15.02&#x27;,
+             &#x27;Why is a pattern-only injection detector inadequate?&#x27;,
+             [&#x27;Too slow&#x27;, &#x27;Blind to any paraphrase of a known attack&#x27;,
+              &#x27;Cannot run inline&#x27;, &#x27;Too expensive&#x27;],
+             1,
+             &#x27;Patterns catch only what they have a pattern for. The first attacker to rephrase &#x27;
+             &#x27;walks past. That gap is the ML layer job.&#x27;),
+    Question(5, &#x27;15.02&#x27;,
+             &#x27;Why is the role_reassignment pattern (act as a ...) tiered medium rather than high?&#x27;,
+             [&#x27;It is slow to match&#x27;, &#x27;Benign requests use identical phrasing (act as a tour guide)&#x27;,
+              &#x27;It is a new pattern&#x27;, &#x27;The regex is imprecise&#x27;],
+             1,
+             &#x27;The phrasing is shared with legitimate use, so a lone hit must not act. It needs ML &#x27;
+             &#x27;corroboration to escalate.&#x27;),
+    Question(6, &#x27;15.02&#x27;,
+             &#x27;How does the injection detector catch indirect injection?&#x27;,
+             [&#x27;By blocking all retrieval&#x27;, &#x27;By scanning retrieved content alongside the user input&#x27;,
+              &#x27;By rate limiting&#x27;, &#x27;It cannot&#x27;],
+             1,
+             &#x27;In indirect injection the user request is benign and the attack lives in a retrieved &#x27;
+             &#x27;document, so the detector must inspect retrieved items too.&#x27;),
+    Question(7, &#x27;15.03&#x27;,
+             &#x27;Why is the multi-turn jailbreak invisible to per-turn detection?&#x27;,
+             [&#x27;Turns are encrypted&#x27;, &#x27;Every individual turn is benign; the escalation across turns is the attack&#x27;,
+              &#x27;It is too fast&#x27;, &#x27;Classifiers are too small&#x27;],
+             1,
+             &#x27;There is nothing in any single turn to catch. Per-turn detection is blind by &#x27;
+             &#x27;construction, not by weakness.&#x27;),
+    Question(8, &#x27;15.03&#x27;,
+             &#x27;What lets the jailbreak detector catch the multi-turn attack?&#x27;,
+             [&#x27;A bigger classifier&#x27;, &#x27;The Chapter 13.09 accumulated session threat score&#x27;,
+              &#x27;More patterns&#x27;, &#x27;Blocking all role-play&#x27;],
+             1,
+             &#x27;The session signal scores the trajectory, letting the detector block a benign-looking &#x27;
+             &#x27;turn for the conversation it sits in.&#x27;),
+    Question(9, &#x27;15.03&#x27;,
+             &#x27;A medium-tier role-play framing appears. What makes it count?&#x27;,
+             [&#x27;Nothing, it always blocks&#x27;, &#x27;Corroboration from either the classifier or the session signal&#x27;,
+              &#x27;A second pattern hit&#x27;, &#x27;Manual review&#x27;],
+             1,
+             &#x27;Roleplay for a bedtime story stays allowed; roleplay as the next step of a crescendo &#x27;
+             &#x27;is corroborated by the session signal.&#x27;),
+    Question(10, &#x27;15.04&#x27;,
+             &#x27;How does the PII scanner hybrid split differ from the injection detector hybrid?&#x27;,
+             [&#x27;It does not&#x27;, &#x27;By data shape (structured vs unstructured), not by novelty (known vs novel)&#x27;,
+              &#x27;It uses three layers&#x27;, &#x27;It has no ML&#x27;],
+             1,
+             &#x27;Regex handles fixed-format PII; NER handles the open set of names and places. The seam &#x27;
+             &#x27;is the shape of the data.&#x27;),
+    Question(11, &#x27;15.04&#x27;,
+             &#x27;Why does the credit-card pattern need a Luhn checksum?&#x27;,
+             [&#x27;To decrypt the number&#x27;, &#x27;Format alone over-matches order references and tracking codes&#x27;,
+              &#x27;For compliance&#x27;, &#x27;To speed up matching&#x27;],
+             1,
+             &#x27;The checksum confirms substance where the pattern only caught shape, removing the &#x27;
+             &#x27;largest structured-PII false-positive source.&#x27;),
+    Question(12, &#x27;15.04&#x27;,
+             &#x27;Why does a single recognised name never escalate a verdict?&#x27;,
+             [&#x27;NER is disabled&#x27;, &#x27;Names saturate ordinary text; one name is not actionable PII&#x27;,
+              &#x27;Names are encrypted&#x27;, &#x27;It always does escalate&#x27;],
+             1,
+             &#x27;Flagging every John or Singapore would fire on a large fraction of normal traffic and &#x27;
+             &#x27;get the detector disabled. Low severity escalates only in aggregate.&#x27;),
+    Question(13, &#x27;15.05&#x27;,
+             &#x27;Why does the toxicity detector use a hosted service rather than an in-house model?&#x27;,
+             [&#x27;It is cheaper to code&#x27;, &#x27;Broad toxicity classification is commoditised and vendor-maintained&#x27;,
+              &#x27;It is more accurate at everything&#x27;, &#x27;To avoid GPUs&#x27;],
+             1,
+             &#x27;It is a build-versus-buy decision, and buy is right for the broad categories. In-house &#x27;
+             &#x27;effort goes where the hosted service is blind.&#x27;),
+    Question(14, &#x27;15.05&#x27;,
+             &#x27;What are the hosted service two systematic blind spots?&#x27;,
+             [&#x27;Speed and cost&#x27;, &#x27;Domain-specific abuse and context&#x27;,
+              &#x27;Encryption and privacy&#x27;, &#x27;Languages and length&#x27;],
+             1,
+             &#x27;A general service does not know one platform own abuse, and it classifies text in &#x27;
+             &#x27;isolation without knowing the context it sits in.&#x27;),
+    Question(15, &#x27;15.05&#x27;,
+             &#x27;Why can the context factor only reduce the score, never raise it?&#x27;,
+             [&#x27;Floating-point limits&#x27;, &#x27;Escalation comes from toxicity signals; de-escalation from benign context&#x27;,
+              &#x27;It is a bug&#x27;, &#x27;To save latency&#x27;],
+             1,
+             &#x27;The asymmetry is deliberate: context explains away surface toxicity (a quoted slur in &#x27;
+             &#x27;research), it never manufactures toxicity that the signals did not find.&#x27;),
+    Question(16, &#x27;15.06&#x27;,
+             &#x27;Why is a canary hit different from every other signal in the suite?&#x27;,
+             [&#x27;It is faster&#x27;, &#x27;It is proof rather than probability -- there is no benign path&#x27;,
+              &#x27;It uses less memory&#x27;, &#x27;It runs on input&#x27;],
+             1,
+             &#x27;A canary is unique and meaningless, so its appearance in a response proves the &#x27;
+             &#x27;protected context was extracted. It short-circuits the combination.&#x27;),
+    Question(17, &#x27;15.06&#x27;,
+             &#x27;An exfiltration campaign sends 4,000 benign requests. What catches it?&#x27;,
+             [&#x27;The sensitive-content rules&#x27;, &#x27;The Chapter 13.07 rate and coverage signals&#x27;,
+              &#x27;The canary&#x27;, &#x27;Nothing can&#x27;],
+             1,
+             &#x27;Every response is benign, so per-response analysis sees nothing. The aggregate signal &#x27;
+             &#x27;must be able to block a response containing nothing wrong.&#x27;),
+    Question(18, &#x27;15.07&#x27;,
+             &#x27;Why is the pipeline verdict the most severe rather than a vote or average?&#x27;,
+             [&#x27;Simplicity&#x27;, &#x27;The detectors answer different questions; a clean scan is not evidence against another finding&#x27;,
+              &#x27;It is faster&#x27;, &#x27;To reduce false positives&#x27;],
+             1,
+             &#x27;Averaging would let four detectors that correctly found nothing outvote the one that &#x27;
+             &#x27;correctly found an attack.&#x27;),
+    Question(19, &#x27;15.07&#x27;,
+             &#x27;Why does the pipeline propagate the deciding detector confidence rather than an aggregate?&#x27;,
+             [&#x27;Aggregates are slow&#x27;, &#x27;So downstream can tell a canary block (0.99) from a rate block (0.92)&#x27;,
+              &#x27;It is arbitrary&#x27;, &#x27;To satisfy the contract&#x27;],
+             1,
+             &#x27;The confidences are not interchangeable. Blending them into an average destroys the &#x27;
+             &#x27;information Chapter 16 triage needs.&#x27;),
+    Question(20, &#x27;15.07&#x27;,
+             &#x27;Five detectors each pass the quality bar individually. What does that NOT prove?&#x27;,
+             [&#x27;That they work&#x27;, &#x27;That the assembled pipeline meets the bar&#x27;,
+              &#x27;That they are accurate&#x27;, &#x27;That they are fast&#x27;],
+             1,
+             &#x27;The pipeline can blow a budget no single detector blew, and the suite false-positive &#x27;
+             &#x27;rate is the union of five, necessarily worse than any one.&#x27;),
+]
+
+
+def render(show_answers: bool = False) -&gt; str:
+    lines: List[str] = []
+    lines.append(&#x27;CHAPTER 15 KNOWLEDGE ASSESSMENT&#x27;)
+    lines.append(&#x27;=&#x27; * 70)
+    for q in QUIZ:
+        lines.append(&#x27;&#x27;)
+        lines.append(f&#x27;{q.number}. [{q.section}] {q.prompt}&#x27;)
+        for i, opt in enumerate(q.options):
+            lines.append(f&#x27;    {chr(97 + i)}) {opt}&#x27;)
+        if show_answers:
+            lines.append(f&#x27;    ANSWER: {chr(97 + q.answer)}) {q.options[q.answer]}&#x27;)
+            lines.append(f&#x27;    {q.explanation}&#x27;)
+    return &#x27;\n&#x27;.join(lines)
+
+
+def score(responses: List[int]) -&gt; tuple:
+    &#x27;&#x27;&#x27;Score a list of answer indices against the key.&#x27;&#x27;&#x27;
+    correct = sum(1 for q, r in zip(QUIZ, responses) if q.answer == r)
+    wrong = [q.number for q, r in zip(QUIZ, responses) if q.answer != r]
+    return correct, len(QUIZ), wrong
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(render(show_answers=True))
+    by_section = {}
+    for q in QUIZ:
+        by_section[q.section] = by_section.get(q.section, 0) + 1
+    print(&#x27;\n&#x27; + &#x27;=&#x27; * 70)
+    print(f&#x27;{len(QUIZ)} questions: &#x27; + &#x27;, &#x27;.join(f&#x27;{s}={n}&#x27; for s, n in sorted(by_section.items())))
+    perfect = [q.answer for q in QUIZ]
+    c, t, wrong = score(perfect)
+    print(f&#x27;self-check on the key: {c}/{t} correct, wrong={wrong}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">production_detector_security_checklist.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Eighteen checks across five categories asking a different question from the detector checklist: can the detection capability itself be evaded, starved, quietly reconfigured, or turned off? Detection is security infrastructure, and security infrastructure is a target.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses and typing only. Each check names the threat it answers and the section that established it, so a reader can trace any item back to the failure that motivated it.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># production_detector_security_checklist.py
+# Section 15.08: Production Detector Security Checklist
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The detector checklist asks whether a detector is well built. This one asks a
+# different question: can the detection capability itself be attacked, evaded,
+# or quietly turned off? A detector suite is security infrastructure, and
+# security infrastructure is a target.
+
+from dataclasses import dataclass
+from typing import Dict, List
+
+
+@dataclass
+class SecurityCheck:
+    id: str
+    category: str
+    check: str
+    threat: str
+    source: str
+
+
+SECURITY_CHECKLIST: List[SecurityCheck] = [
+    # --- evasion ---
+    SecurityCheck(&#x27;E1&#x27;, &#x27;Evasion&#x27;,
+                  &#x27;Detection does not rest on patterns alone for any threat&#x27;,
+                  &#x27;An attacker paraphrases past a fixed pattern set&#x27;, &#x27;15.02&#x27;),
+    SecurityCheck(&#x27;E2&#x27;, &#x27;Evasion&#x27;,
+                  &#x27;Multi-turn and multi-request shapes have a beyond-the-request signal&#x27;,
+                  &#x27;An attacker splits the attack so every unit looks benign&#x27;, &#x27;15.03, 15.06&#x27;),
+    SecurityCheck(&#x27;E3&#x27;, &#x27;Evasion&#x27;,
+                  &#x27;Indirect vectors (retrieved content, tool results) are scanned&#x27;,
+                  &#x27;The attack arrives in content the user never typed&#x27;, &#x27;15.02&#x27;),
+    SecurityCheck(&#x27;E4&#x27;, &#x27;Evasion&#x27;,
+                  &#x27;Canaries are rotated and versioned&#x27;,
+                  &#x27;A leaked canary degrades silently from proof to false positive&#x27;, &#x27;15.06&#x27;),
+    # --- availability ---
+    SecurityCheck(&#x27;A1&#x27;, &#x27;Availability&#x27;,
+                  &#x27;Every detector failure is isolated from the pipeline&#x27;,
+                  &#x27;One detector crash removes the whole detection capability&#x27;, &#x27;15.07&#x27;),
+    SecurityCheck(&#x27;A2&#x27;, &#x27;Availability&#x27;,
+                  &#x27;A degraded verdict is marked degraded, never reported as clean&#x27;,
+                  &#x27;The system reports ALLOW for requests it never actually examined&#x27;, &#x27;15.07&#x27;),
+    SecurityCheck(&#x27;A3&#x27;, &#x27;Availability&#x27;,
+                  &#x27;Network dependencies have an explicit, configured failure policy&#x27;,
+                  &#x27;A hosted outage silently disables a detection layer&#x27;, &#x27;15.05&#x27;),
+    SecurityCheck(&#x27;A4&#x27;, &#x27;Availability&#x27;,
+                  &#x27;The pipeline gets cheaper under attack, not more expensive&#x27;,
+                  &#x27;Attack traffic exhausts the latency budget and forces detection off&#x27;, &#x27;15.07&#x27;),
+    # --- integrity of the control ---
+    SecurityCheck(&#x27;I1&#x27;, &#x27;Control integrity&#x27;,
+                  &#x27;Configuration changes are diffed and reported&#x27;,
+                  &#x27;A threshold quietly loosened is an undetected hole&#x27;, &#x27;15.07&#x27;),
+    SecurityCheck(&#x27;I2&#x27;, &#x27;Control integrity&#x27;,
+                  &#x27;Configuration validation rejects incoherent settings before deploy&#x27;,
+                  &#x27;A misordered threshold ships as a silent no-op&#x27;, &#x27;15.07&#x27;),
+    SecurityCheck(&#x27;I3&#x27;, &#x27;Control integrity&#x27;,
+                  &#x27;A suite with every detector disabled is rejected outright&#x27;,
+                  &#x27;The gateway returns to deployed-and-empty without anyone noticing&#x27;, &#x27;15.07&#x27;),
+    SecurityCheck(&#x27;I4&#x27;, &#x27;Control integrity&#x27;,
+                  &#x27;Model and rule-set versions are pinned so a verdict is reproducible&#x27;,
+                  &#x27;A verdict cannot be explained or audited after the fact&#x27;, &#x27;15.02&#x27;),
+    # --- the false-positive attack surface ---
+    SecurityCheck(&#x27;F1&#x27;, &#x27;False-positive surface&#x27;,
+                  &#x27;The false-positive rate is measured on hard negatives, not easy ones&#x27;,
+                  &#x27;A detector that looks clean on easy text floods production and gets disabled&#x27;,
+                  &#x27;15.02-15.06&#x27;),
+    SecurityCheck(&#x27;F2&#x27;, &#x27;False-positive surface&#x27;,
+                  &#x27;No single low-precision signal can block on its own&#x27;,
+                  &#x27;An attacker triggers benign-looking false positives to force the detector off&#x27;,
+                  &#x27;15.04&#x27;),
+    SecurityCheck(&#x27;F3&#x27;, &#x27;False-positive surface&#x27;,
+                  &#x27;Deployment-specific policy is configurable, not hardcoded&#x27;,
+                  &#x27;One policy misfits most surfaces and gets locally disabled&#x27;, &#x27;15.05&#x27;),
+    # --- observability ---
+    SecurityCheck(&#x27;O1&#x27;, &#x27;Observability&#x27;,
+                  &#x27;Every verdict carries evidence naming what fired&#x27;,
+                  &#x27;A block cannot be triaged, explained, or appealed&#x27;, &#x27;15.01&#x27;),
+    SecurityCheck(&#x27;O2&#x27;, &#x27;Observability&#x27;,
+                  &#x27;The deciding detector and its confidence survive to the consumer&#x27;,
+                  &#x27;Proof and statistics look identical in the queue; triage misprioritises&#x27;,
+                  &#x27;15.07&#x27;),
+    SecurityCheck(&#x27;O3&#x27;, &#x27;Observability&#x27;,
+                  &#x27;The full pipeline result is retained, not collapsed to a boolean&#x27;,
+                  &#x27;Downstream SIEM integration has nothing to work with&#x27;, &#x27;15.07&#x27;),
+]
+
+
+def by_category() -&gt; Dict[str, List[SecurityCheck]]:
+    out: Dict[str, List[SecurityCheck]] = {}
+    for c in SECURITY_CHECKLIST:
+        out.setdefault(c.category, []).append(c)
+    return out
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;PRODUCTION DETECTOR SECURITY CHECKLIST&#x27;)
+    print(&#x27;=&#x27; * 72)
+    print(&#x27;The other checklist asks: is this detector well built?&#x27;)
+    print(&#x27;This one asks: can the detection capability itself be attacked or&#x27;)
+    print(&#x27;quietly turned off? Detection is security infrastructure, and&#x27;)
+    print(&#x27;security infrastructure is a target.&#x27;)
+    for cat, checks in by_category().items():
+        print(f&#x27;\n{cat.upper()}&#x27;)
+        for c in checks:
+            print(f&#x27;  [{c.id}] {c.check}&#x27;)
+            print(f&#x27;        threat: {c.threat}  ({c.source})&#x27;)
+    print(f&#x27;\n{len(SECURITY_CHECKLIST)} checks across {len(by_category())} categories&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">chapter_15_to_16_transition.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">What Chapter 15 produced, what it deliberately left unresolved, and how Chapter 16 takes each one up -- the evidence nobody reads, the confidence no queue acts on, the degraded list nobody is told about -- plus the book arc and the closing argument that a detection nobody sees has changed nothing.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses and typing only. Each handoff pairs what was built with what is missing and the Chapter 16 answer, making the transition an argument rather than a list.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># chapter_15_to_16_transition.py
+# Section 15.08: Chapter 15 to Chapter 16 Transition
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# What Chapter 15 produced, what it deliberately did not do, and why that is
+# exactly Chapter 16 subject. The suite detects. It does not yet participate in
+# security operations, and a detection nobody sees is not a detection.
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class Handoff:
+    produced: str               # what Chapter 15 built
+    unresolved: str             # what it deliberately left
+    chapter_16_answer: str      # how Chapter 16 takes it up
+
+
+HANDOFFS: List[Handoff] = [
+    Handoff(&#x27;A PipelineResult with per-detector verdicts, scores, and evidence&#x27;,
+            &#x27;Nothing consumes it beyond the gateway boolean&#x27;,
+            &#x27;SIEM integration ships the full result to the platform analysts work from&#x27;),
+    Handoff(&#x27;Confidence that distinguishes proof (canary 0.99) from statistics (rate 0.92)&#x27;,
+            &#x27;No triage queue exists to act on the difference&#x27;,
+            &#x27;Alert prioritisation uses confidence to rank what a human sees first&#x27;),
+    Handoff(&#x27;Evidence naming exactly what fired in every detector&#x27;,
+            &#x27;Evidence goes nowhere; no analyst ever reads it&#x27;,
+            &#x27;Evidence becomes the alert body that makes a detection actionable&#x27;),
+    Handoff(&#x27;A degraded list marking partial verdicts&#x27;,
+            &#x27;No one is told the capability is degraded&#x27;,
+            &#x27;Detection health becomes a monitored, alertable signal in its own right&#x27;),
+    Handoff(&#x27;Detections about a single request&#x27;,
+            &#x27;No correlation across requests, users, or with non-AI telemetry&#x27;,
+            &#x27;The SIEM correlates AI detections with the rest of the security estate&#x27;),
+]
+
+
+@dataclass
+class ArcStep:
+    part: str
+    chapters: str
+    produced: str
+
+
+ARC: List[ArcStep] = [
+    ArcStep(&#x27;Part 1&#x27;, &#x27;Chapters 1-4&#x27;, &#x27;The ML foundations the attacks and defences rest on&#x27;),
+    ArcStep(&#x27;Part 2&#x27;, &#x27;Chapters 5-10&#x27;, &#x27;The threat landscape: what the attacks actually are&#x27;),
+    ArcStep(&#x27;Part 3&#x27;, &#x27;Chapters 11-14&#x27;,
+            &#x27;Detection designed, built with ML, extended behaviourally, and deployed as a gateway&#x27;),
+    ArcStep(&#x27;Part 4 (Ch 15)&#x27;, &#x27;Chapter 15&#x27;,
+            &#x27;The detectors that populate the gateway: five hybrids and the pipeline&#x27;),
+    ArcStep(&#x27;Part 4 (Ch 16+)&#x27;, &#x27;Chapters 16-18&#x27;,
+            &#x27;The suite joined to security operations, tuned, and seen through real cases&#x27;),
+]
+
+
+CLOSING = (
+    &#x27;Chapter 15 answered what runs in the gateway. It did not answer who finds out. &#x27;
+    &#x27;A detection that fires into a log nobody reads has changed nothing about the &#x27;
+    &#x27;security of the system -- the attack was still caught and still unanswered. The &#x27;
+    &#x27;suite is complete as a detection capability and inert as a security capability, &#x27;
+    &#x27;which is the same shape of gap Chapter 14 left (deployed but empty) and Section &#x27;
+    &#x27;15.01 named. Chapter 16 closes it by connecting the suite to the SIEM: the &#x27;
+    &#x27;detections become alerts, the alerts reach analysts, the evidence makes them &#x27;
+    &#x27;actionable, and the confidence decides what gets looked at first.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;CHAPTER 15 -&gt; CHAPTER 16 TRANSITION&#x27;)
+    print(&#x27;=&#x27; * 72)
+    print(&#x27;\nWHAT CHAPTER 15 PRODUCED, AND WHAT IT LEFT&#x27;)
+    print(&#x27;-&#x27; * 72)
+    for h in HANDOFFS:
+        print(f&#x27;\nproduced   : {h.produced}&#x27;)
+        print(f&#x27;unresolved : {h.unresolved}&#x27;)
+        print(f&#x27;chapter 16 : {h.chapter_16_answer}&#x27;)
+    print(&#x27;\n\nTHE BOOK ARC&#x27;)
+    print(&#x27;-&#x27; * 72)
+    for step in ARC:
+        print(f&#x27;{step.part:16} [{step.chapters:12}] {step.produced}&#x27;)
+    print(&#x27;\n\nCLOSING&#x27;)
+    print(&#x27;-&#x27; * 72)
+    print(CLOSING)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Leaving the chapter with five detector implementations but not the four recurring ideas</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The implementations are concrete, runnable, and satisfying, while the ideas are abstract and appear in different costumes each time, which disguises the fact that they are the same ideas.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The reader can rebuild these five detectors and cannot build a sixth. The implementations are the least transferable part of the chapter; the hybrid, the restraint mechanism, the beyond-the-request signal, and the shared contract are what generalise to detectors this book never wrote.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Learn the four ideas and treat the five detectors as worked examples of them. Ask of any new detector: what are its two layers, what stops its weak signal acting alone, does its attack have a beyond-the-request shape, and does it implement the contract.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Reading the chapter measured figures as production performance</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Every section reported high accuracy and a zero false-positive rate, and the numbers are stated plainly next to real, running code, which makes them look like results rather than demonstrations.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">A detector is shipped on the strength of a number produced by a hand-built corpus of a dozen cases and a deterministic stub standing in for a real model, and its actual production behaviour is unknown in every dimension that matters.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Read the figures as proof that the harness and the gate work, not as production claims. Re-validate every detector against a real labelled corpus with the real models and real latency before shipping. The chapter built the harness that will tell you when it passes.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating the quality bar as a final check rather than a design constraint</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The bar is stated as three numbers, and numbers look like something you measure at the end rather than something that shapes what you build.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">A detector is built for accuracy, measured at the end, and found to be slow or noisy -- at which point the fix is a redesign rather than a tune. Every restraint mechanism in this chapter exists because the bar was treated as a constraint from the start.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Let the bar drive the design. The precision tiers, the severity tiers, and the context factor were not refinements; they are what the false-positive target forced. Build to the bar and the mechanisms follow.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Assuming the suite is finished because every detector and the pipeline pass</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The chapter closes with a populated gateway, a passing end-to-end test, and a complete architecture, which reads like a finished system.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">A detection capability that nobody is watching is deployed and considered done. Every attack it catches fires into a log no analyst reads, which leaves the security of the system exactly where it was.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Recognise the shape of the remaining gap: the suite is complete as detection and inert as security. Chapter 16 integrates it with the SIEM so detections become alerts that reach people, which is what makes detection a security capability.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Copying the tier thresholds and weights from this chapter into a different deployment</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The numbers are concrete, they are validated, and they work on the corpora in the book, which makes them look like defaults rather than the fitted values they are.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">A gaming platform inherits thresholds tuned for a general assistant and floods with false positives; a childrens service inherits the same thresholds and lets content through. Every detector in this chapter externalised its policy as configuration precisely because one setting fits nobody.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Take the mechanisms and fit the numbers to the deployment. The tiers, the corroboration floors, and the context factor are the design; their values are configuration, which is why the chapter shipped profiles rather than constants.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Chapter 15 populated the gateway Chapter 14 deployed empty. It built five hybrid detectors -- injection, jailbreak, PII, toxicity, and exfiltration -- each pairing a precision layer with a coverage layer, each implementing the unified contract of Section 15.01, each held to one quality bar of 95%+ accuracy, sub-50ms latency, and sub-5% false positives. Then Section 15.07 assembled them: parallel execution to fit five detectors into a budget sized for one, sequential gating that makes the pipeline cheaper under attack, fault isolation so one broken detector cannot end the capability, and a combination rule that takes the most severe verdict rather than a vote, because the detectors answer different questions and a clean scan is not evidence against another finding. Read section by section it is eight pieces of work; read whole it is four ideas -- the hybrid, the restraint mechanism that stops a weak signal acting alone, the beyond-the-request signal for attacks whose every unit is benign, and the shared contract that makes the rest composable. Those four transfer to detectors this book never wrote; the five implementations do not. The chapter measured figures demonstrate that the harness and the gate work, not production performance, and every detector needs re-validation against a real corpus with real models. The gateway is now populated and the suite meets the bar as an assembled system -- and it is still inert as a security capability, because nobody is watching it. That is Chapter 16.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Chapter 15 populated the deployed-but-empty gateway: five hybrid detectors, one contract, one bar, and the pipeline that turns them into a single decision</li><li>The four recurring ideas -- the hybrid, restraint, the beyond-the-request signal, the shared contract -- are the transferable part; the five implementations are not</li><li>Every detector has a restraint mechanism because some signal is always real at the surface and shared with legitimate use; restraint is what keeps a detector deployed</li><li>Two attacks are invisible per request by construction -- the multi-turn jailbreak and the exfiltration campaign -- and both need a signal that can act on a benign-looking request</li><li>The chapter figures prove the harness and the gate work, not production performance; re-validate against a real corpus with the real models before shipping</li><li>The quality bar is a design constraint, not a final check: every restraint mechanism in the chapter exists because the false-positive target forced it</li><li>The suite is complete as a detection capability and inert as a security capability, because a detection nobody sees has changed nothing -- which is what Chapter 16 fixes</li></ul>
+<h2 class="sh1">Preview Chapter 16</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 16: SIEM Integration</p>
+<h3 class="sh2">Preview</h3>
+<p class="prose">Chapter 15 answered what runs in the gateway. Chapter 16 answers who finds out. The suite currently produces evidence no analyst reads, confidence no triage queue acts on, a degraded list nobody is told about, and a full PipelineResult that nothing consumes -- all of it deliberately retained in Section 15.07 precisely because this chapter needs it. Chapter 16 connects the suite to SIEM platforms: detections become alerts, alerts reach the people who work the security estate, evidence makes them actionable, and confidence decides what gets looked at first, so a canary-driven block at 0.99 and a rate-driven block at 0.92 are triaged as the different things they are. It also puts AI detections alongside the rest of the telemetry, so they correlate with the wider estate rather than living in an isolated log of their own. The gap is the same shape the book has closed twice already -- infrastructure without detection in Chapter 14, detection without operations here -- and closing it is what turns a detection capability into a security capability.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Sections 15.01 through 15.07: the full Chapter 15 arc this section synthesises</li><li>Chapter 14 Section 14.11: the production gateway the suite populates, completing the Part 3 to Part 4 join</li><li>Chapter 11 Section 11.03: the layered-detection principle every hybrid in the chapter applies inside a single detector</li><li>Chapter 12: the classifiers and the PII scanner the detectors made concrete</li><li>Chapter 13 Sections 13.06, 13.07, and 13.09: the canary, rate/coverage, and session signals the beyond-the-request detectors read</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Chapter 16: SIEM integration, which consumes the PipelineResult the suite retains and turns detections into alerts that reach people</li><li>Chapter 17: monitoring and tuning the deployed suite in production</li><li>Chapter 18: real-world case studies exercising the whole stack</li></ul>
+</article>

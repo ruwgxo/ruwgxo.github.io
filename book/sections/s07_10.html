@@ -1,0 +1,1016 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 7 · Section 10 · ~6 pages</div>
+<h1>Many-Shot Jailbreaking: Long-Context Windows as Vulnerability</h1>
+</header>
+<h2 class="sh1">Content</h2>
+<h3 class="sh2">Opening</h3>
+<p class="prose">Section 7.9 established that GCG attacks the alignment layer through gradient
+optimisation -- a computational process operating in the token space outside
+the natural language distribution. Many-shot jailbreaking is the second
+statistical attack family, but the mechanism could not be more different:
+rather than attacking the weights through gradient search, it attacks the
+inference mechanism through in-context learning.
+
+The research finding from Anthropic (2024) is precise and uncomfortable: as
+context window length increases, the attack surface for many-shot jailbreaking
+grows proportionally. The capability that makes long-context models more useful
+-- the ability to learn from hundreds of in-context examples and adapt behaviour
+accordingly -- is exactly the capability that many-shot jailbreaking weaponises.
+There is no architectural fix that preserves the capability while removing the
+vulnerability. The tradeoff is inherent.
+
+The detection response is simpler than for most attack families in this chapter:
+count structured question-answer pairs in the context. Shot count is a low-FPR
+signal that requires no semantic understanding, no embedding model, and no
+stateful session tracking. It is the third ensemble track in Section 7.14 and
+one of the cheapest controls in the chapter to deploy.</p>
+<h3 class="sh2">Subsections</h3>
+<h3 class="sh3">Number</h3>
+<p class="prose">7.10.1</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">In-Context Learning: The Capability Being Weaponised</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Large language models exhibit in-context learning (ICL): the ability to
+adapt their behaviour based on examples provided in the context window at
+inference time, without any weight updates. This is not a trained behaviour
+in the conventional sense -- it is an emergent property of the transformer
+architecture and the next-token prediction training objective.
+
+ICL enables few-shot prompting: provide three examples of input-output pairs
+demonstrating a task, and the model generalises the pattern to new inputs.
+This is why LLMs can be adapted to new tasks without fine-tuning -- the
+context window is a temporary, inference-time learning signal that shapes
+output distribution without touching the weights.
+
+The security implication was identified and documented by Anthropic in 2024:
+ICL does not distinguish between learning from benign examples and learning
+from adversarially constructed examples. If the demonstrated examples show
+the model answering harmful requests without refusal, the model&#x27;s in-context
+learning adapts its output distribution toward that demonstrated pattern.
+A sufficient number of such examples -- many shots -- shifts the output
+distribution enough that the RLHF-trained refusal behaviour is overridden.
+
+This is categorically different from the attack families in Sections 7.3-7.9.
+Those attacks engineer clever prompts that exploit the model&#x27;s trained
+dispositions. Many-shot jailbreaking bypasses the trained dispositions
+by demonstrating new dispositions through examples, exploiting the same
+mechanism that makes the model adaptable and useful.</p>
+<h3 class="sh3">Number</h3>
+<p class="prose">7.10.2</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Anthropic Research Findings: What the 2024 Paper Established</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Anthropic&#x27;s 2024 many-shot jailbreaking paper established several findings
+that directly inform the threat model and detection design.
+
+Shot count threshold. The bypass probability is not a step function -- it
+increases monotonically with the number of shots. At low shot counts (fewer
+than ten), the effect is negligible: the model&#x27;s RLHF training easily
+overrides a small number of in-context demonstrations. At intermediate shot
+counts (tens of examples), the bypass probability increases measurably. At
+high shot counts (hundreds of examples), the bypass probability approaches
+levels comparable to unaligned base models for some request types. The exact
+thresholds vary by model family and request category. The pattern -- monotonic
+increase with shot count -- is consistent across models.
+
+Context length dependency. The attack is specifically enabled by long-context
+models. Models with short context windows (under 4K tokens) cannot accept
+enough shots to reach significant bypass probability. Models with context
+windows of 32K, 100K, or 200K tokens can accept hundreds to thousands of
+example pairs, which is the operating range where many-shot becomes effective.
+The attack surface grows with context length.
+
+Cross-model consistency. The attack works across model families with different
+architectures and training procedures. The shared mechanism is in-context
+learning itself, which is a fundamental property of transformer-based language
+models regardless of the specific RLHF procedure applied.
+
+Alignment training resistance. The paper found that standard RLHF alignment
+training does not robustly prevent many-shot jailbreaking. The in-context
+learning mechanism operates at inference time and is not addressed by the
+pre-training or fine-tuning procedures that constitute alignment. This is
+the same fundamental insight as Section 7.2.5 -- Constitutional AI and
+RLAIF improve alignment training coverage but do not address mechanisms
+that operate outside the training distribution at inference time.</p>
+<h3 class="sh3">Number</h3>
+<p class="prose">7.10.3</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Dataset Construction: What Adversary-Crafted Example Sets Look Like</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A many-shot jailbreaking dataset is a sequence of fabricated question-answer
+pairs in which a model persona answers harmful requests without refusal.
+The adversary constructs this dataset and delivers it as the context preceding
+the actual harmful request.
+
+The structural pattern of the dataset is consistent across implementations.
+Each example pair has three components: a human turn containing a harmful
+request, a separator indicating the speaker transition, and an assistant turn
+containing a compliant response to that request. The human turn is formatted
+to look like a real user message. The assistant turn is formatted to look
+like a real model response -- using the same conversational register, tone,
+and formatting conventions the real model uses. The fabrication is designed
+to be indistinguishable from an authentic conversation transcript.
+
+The dataset is assembled by repeating this pattern across many examples, each
+covering a different harmful request or a different formulation of the same
+request. The length of the dataset in tokens determines the shot count.
+A 100K token context window can accommodate hundreds of such pairs before
+the actual harmful request is appended at the end.
+
+Two design choices in the dataset affect its effectiveness. First, topic
+diversity: a dataset covering many different harmful request types at low
+shot count per type is more transferable than a dataset covering one type
+at high shot count. The model&#x27;s in-context learning generalises more broadly
+from diverse examples. Second, response quality: assistant turns that are
+detailed, confident, and well-formatted are more effective than brief or
+hedging responses. The model learns to match the demonstrated response style.
+
+Detection implication: the structural pattern of many-shot datasets is
+highly distinctive. A long sequence of formatted QA pairs, each following
+the same structural template, is not a pattern that appears in legitimate
+use cases at high shot counts. The shot count detector does not need to
+evaluate the content of the pairs -- it counts the structural pattern.</p>
+<h3 class="sh3">Number</h3>
+<p class="prose">7.10.4</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Context Length as Attack Surface: The Capability-Security Tradeoff</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The many-shot attack surface is directly proportional to the context window
+size. This creates a precise and unavoidable capability-security tradeoff.
+
+Short-context models (under 8K tokens) are largely immune to many-shot
+attacks. A 4K context window holds approximately 30-50 QA pairs in the
+many-shot format, which is below the threshold where bypass probability
+becomes significant for most model families. The model&#x27;s alignment training
+dominates the in-context signal at this shot count.
+
+Long-context models (32K-200K+ tokens) are substantially more vulnerable.
+A 100K token context window holds several hundred to over a thousand QA
+pairs. At this shot count, the in-context learning signal competes with
+and can override alignment training for many request categories. The
+long-context capability that enables analysis of full documents, long
+codebases, and extended conversations is the same capability that enables
+many-shot bypass.
+
+The tradeoff cannot be resolved architecturally within the current generation
+of models. Limiting context length protects against many-shot but restricts
+legitimate use cases. The practical response is: use context length limits
+appropriate to the deployment&#x27;s legitimate use cases, not the maximum
+available, and deploy shot count detection to catch attempts that approach
+the threshold within whatever context limit is set.
+
+This is the design decision that the context length limit analysis in the
+code section addresses: given your deployment&#x27;s legitimate use cases, what
+is the maximum context length required, and at what shot count does many-shot
+bypass become significant for your model? The answer defines the deployment&#x27;s
+operating parameters for shot count detection.</p>
+<h3 class="sh3">Number</h3>
+<p class="prose">7.10.5</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why Per-Turn Detection Fails: Structural Invisibility</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Many-shot attacks are structurally invisible to per-turn classifiers in
+the same way that payload splitting (Section 7.8) and gradual erosion
+(Section 7.7) are invisible to them -- but through a different mechanism.
+
+For gradual erosion and context manipulation, the attack unfolds across
+turns in a session, and each individual turn is below detection threshold.
+The signal is in the trajectory.
+
+For many-shot, the entire attack is delivered in a single turn or as a
+single prepended context block. There is no trajectory to analyse. The
+problem is not that individual turns are benign -- it is that a single
+turn containing hundreds of QA pairs looks, to a per-turn semantic
+classifier, like a large volume of text about various topics. The semantic
+classifier evaluates content. The many-shot attack is not in the content
+of any individual pair -- it is in the accumulated structural pattern of
+having many pairs of a specific format.
+
+A semantic classifier trained on single-turn jailbreaks will evaluate the
+final request (the actual harmful question appended after the many-shot
+dataset) and will score it based on the semantic content of that one request.
+The many-shot dataset that precedes it is evaluated as context -- and the
+final request, taken in isolation, may be semantically indistinguishable
+from a legitimate question. The harmful framing is in the demonstrated
+pattern of responses, not in the final question itself.
+
+The detection primitive that works is structural, not semantic: count
+the number of formatted QA pairs in the input. This is a pattern-level
+analysis that operates independently of the semantic content of any pair.
+It is fast, requires no embedding model, and produces very low FPR because
+no legitimate use case involves sending hundreds of formatted dialogue
+examples as a context prefix.</p>
+<h3 class="sh3">Number</h3>
+<p class="prose">7.10.6</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Many-Shot via RAG: The High-Sophistication Variant</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The direct many-shot attack is detectable: a single turn containing
+hundreds of QA pairs produces a distinctive token count and structural
+pattern. The RAG variant is harder to detect because the adversary does
+not send the many-shot dataset directly -- they cause it to be retrieved.
+
+The attack: the adversary pre-plants adversarially constructed QA pairs
+in documents that are ingested into a RAG knowledge base. The documents
+are designed so that their embeddings produce high cosine similarity to
+target queries -- when a user submits a relevant query, the retrieval
+system returns the adversarial documents, which contain many-shot examples
+in their text. These retrieved examples are assembled into the context
+window by the RAG pipeline, and the many-shot jailbreaking effect occurs
+through the retrieved content rather than through the user&#x27;s direct input.
+
+This variant connects many-shot jailbreaking to the indirect injection
+attacks in Chapter 6 (Section 6.6). The adversary controls the knowledge
+base content rather than the user turn, and the attack is delivered through
+the retrieval mechanism. The detection at the user-input layer sees only
+a normal query -- the adversarial content arrives through retrieved documents.
+
+Detection for the RAG variant requires: (1) the injection classifier from
+Chapter 6 scanning retrieved content for structured QA pair patterns, or
+(2) the shot count detector running on the assembled context (after retrieval,
+before inference) rather than on the user input alone. The second approach
+is more reliable -- the shot count detector catches the many-shot pattern
+regardless of whether it arrived through the user turn or through retrieval.
+
+Infrastructure placement: the shot count detector should run on the full
+assembled prompt (system prompt + retrieved context + user query) rather
+than on the user query alone. This catches both the direct attack and the
+RAG variant with a single detector placement.</p>
+<h3 class="sh3">Number</h3>
+<p class="prose">7.10.7</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection: Shot Count Detector Design and Calibration</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The shot count detector is the simplest detector in the Chapter 7 ensemble.
+It counts the number of structured question-answer pairs in the input context
+and fires an alert when that count exceeds a calibrated threshold.
+
+The structural pattern that defines a QA pair in the many-shot context:
+a human turn marker followed by text, followed by an assistant turn marker
+followed by text, repeated. The specific formatting conventions vary by
+model family -- ChatML uses `&lt;|im_start|&gt;user`, `&lt;|im_start|&gt;assistant`;
+Llama-chat uses `[INST]`, `[/INST]`; generic formats use `Human:`,
+`Assistant:` or `User:`, `AI:`. The detector must recognise all common
+formatting conventions.
+
+Threshold calibration has two parameters. First, the minimum shot count
+to trigger: below ten shots, the many-shot effect is negligible across
+model families. The alert threshold should be set to the shot count at
+which bypass probability becomes measurable for your deployed model -- this
+requires testing against your specific model, as the threshold varies by
+architecture and alignment procedure. In absence of model-specific testing,
+a conservative threshold of twenty shots is appropriate. Second, the context
+window fraction: a ten-shot context in a four thousand token window is very
+different from a ten-shot context in a one hundred thousand token window.
+The fraction of the context window occupied by QA pairs is a more robust
+signal than the absolute shot count.
+
+FPR analysis: structured QA pairs in the many-shot format appear in
+legitimate use cases in small numbers (two to five shots for few-shot
+prompting). A threshold of twenty or more shots has very low FPR against
+legitimate few-shot use. The detector should log rather than block at the
+ten to twenty shot range, and block or alert at the twenty-plus shot range,
+with deployment-specific calibration.
+
+Combination with the ensemble: the shot count detector operates in parallel
+with the semantic classifier and perplexity detector. A session showing
+high shot count AND semantic jailbreak signals (persona establishment plus
+many examples) is a composed attack -- the adversary has combined persona
+jailbreaking with many-shot reinforcement. The combined signal is the
+highest-confidence alert condition for this composed variant.</p>
+<h2 class="sh1">Code Examples</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">7.10.code.01</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Shot Count Detector</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Production-ready shot count detector for many-shot jailbreaking detection.
+Counts structured QA pairs across all common LLM formatting conventions.
+Returns typed result with shot count, context fraction, and alert status.
+This is the third of the five tracks in the Section 7.14 detection ensemble.
+Runs on the full assembled prompt (system + retrieved context + user query)
+to catch both the direct attack and the RAG variant.</p>
+<h3 class="sh2">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh2">Filename</h3>
+<p class="prose">code/ch07/shot_count_detector.py</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code>import re
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+# QA pair markers across common LLM formatting conventions
+# Each tuple: (human_pattern, assistant_pattern, format_name)
+QA_FORMAT_PATTERNS = [
+    # ChatML (GPT-4, many fine-tuned models)
+    (r&#x27;&lt;\|im_start\|&gt;user&#x27;, r&#x27;&lt;\|im_start\|&gt;assistant&#x27;, &#x27;chatml&#x27;),
+    # Llama-chat / Llama-2 instruct
+    (r&#x27;\[INST\]&#x27;, r&#x27;\[/INST\]&#x27;, &#x27;llama_chat&#x27;),
+    # Generic natural language markers
+    (r&#x27;^Human:\s&#x27;, r&#x27;^Assistant:\s&#x27;, &#x27;human_assistant&#x27;),
+    (r&#x27;^User:\s&#x27;, r&#x27;^AI:\s&#x27;, &#x27;user_ai&#x27;),
+    (r&#x27;^Q:\s&#x27;, r&#x27;^A:\s&#x27;, &#x27;q_a&#x27;),
+    (r&#x27;^Person:\s&#x27;, r&#x27;^Bot:\s&#x27;, &#x27;person_bot&#x27;),
+    # Alpaca-style instruction format
+    (r&#x27;### Instruction:&#x27;, r&#x27;### Response:&#x27;, &#x27;alpaca&#x27;),
+    # Vicuna-style
+    (r&#x27;^USER:\s&#x27;, r&#x27;^ASSISTANT:\s&#x27;, &#x27;vicuna&#x27;),
+    # Markdown quote blocks used in some datasets
+    (r&#x27;^\*\*User\*\*:&#x27;, r&#x27;^\*\*Assistant\*\*:&#x27;, &#x27;markdown_bold&#x27;),
+]
+
+# Approximate tokens per word for context fraction estimation
+TOKENS_PER_WORD = 1.35
+
+
+@dataclass
+class ShotCountResult:
+    shot_count: int
+    detected_format: Optional[str]
+    context_word_count: int
+    context_token_estimate: int
+    qa_fraction_of_context: float          # fraction of context that is QA pairs
+    alert_level: str                        # &#x27;none&#x27;, &#x27;monitor&#x27;, &#x27;alert&#x27;, &#x27;block&#x27;
+    confidence: float
+    format_breakdown: dict = field(default_factory=dict)
+
+    @property
+    def any_signal(self) -&gt; bool:
+        return self.shot_count &gt;= 5
+
+    @property
+    def is_alert(self) -&gt; bool:
+        return self.alert_level in (&#x27;alert&#x27;, &#x27;block&#x27;)
+
+
+class ShotCountDetector:
+    &#x27;&#x27;&#x27;
+    Shot count detector for many-shot jailbreaking.
+
+    Counts structured QA pairs in the assembled prompt context.
+    Run on the FULL assembled prompt (system + retrieved context + user query)
+    to catch both direct many-shot attacks and RAG-mediated variants.
+
+    Alert levels:
+      none:    0-4 shots (normal few-shot usage)
+      monitor: 5-19 shots (elevated, log but do not block)
+      alert:   20-49 shots (significant many-shot risk)
+      block:   50+ shots (high-confidence many-shot attack)
+
+    Thresholds should be calibrated against your specific model and deployment.
+    The defaults above are conservative starting points.
+    &#x27;&#x27;&#x27;
+
+    def __init__(
+        self,
+        monitor_threshold: int = 5,
+        alert_threshold: int = 20,
+        block_threshold: int = 50,
+        context_fraction_alert: float = 0.4,
+    ):
+        self.monitor_threshold = monitor_threshold
+        self.alert_threshold = alert_threshold
+        self.block_threshold = block_threshold
+        self.context_fraction_alert = context_fraction_alert
+
+    def _count_qa_pairs_for_format(
+        self,
+        text: str,
+        human_pattern: str,
+        assistant_pattern: str,
+    ) -&gt; int:
+        &#x27;&#x27;&#x27;
+        Count complete QA pairs for a single format convention.
+        A complete pair requires both a human turn and a following assistant turn.
+        &#x27;&#x27;&#x27;
+        flags = re.MULTILINE | re.IGNORECASE
+        human_positions = [
+            m.start() for m in re.finditer(human_pattern, text, flags)
+        ]
+        assistant_positions = [
+            m.start() for m in re.finditer(assistant_pattern, text, flags)
+        ]
+
+        if not human_positions or not assistant_positions:
+            return 0
+
+        # Count pairs: each human marker must be followed by an assistant marker
+        pair_count = 0
+        assistant_idx = 0
+        for h_pos in human_positions:
+            # Find the first assistant marker after this human marker
+            while (
+                assistant_idx &lt; len(assistant_positions)
+                and assistant_positions[assistant_idx] &lt;= h_pos
+            ):
+                assistant_idx += 1
+            if assistant_idx &lt; len(assistant_positions):
+                pair_count += 1
+
+        return pair_count
+
+    def detect(
+        self,
+        assembled_prompt: str,
+        context_token_limit: Optional[int] = None,
+    ) -&gt; ShotCountResult:
+        &#x27;&#x27;&#x27;
+        Detect many-shot patterns in the assembled prompt.
+
+        assembled_prompt: the full prompt sent to the model including system
+                          prompt, retrieved context, and user query.
+        context_token_limit: the model&#x27;s context window limit. Used to compute
+                             qa_fraction_of_context. Optional but recommended.
+        &#x27;&#x27;&#x27;
+        format_counts = {}
+        max_count = 0
+        dominant_format = None
+
+        for human_pat, assistant_pat, fmt_name in QA_FORMAT_PATTERNS:
+            count = self._count_qa_pairs_for_format(
+                assembled_prompt, human_pat, assistant_pat
+            )
+            if count &gt; 0:
+                format_counts[fmt_name] = count
+                if count &gt; max_count:
+                    max_count = count
+                    dominant_format = fmt_name
+
+        # Context size estimation
+        word_count = len(assembled_prompt.split())
+        token_estimate = int(word_count * TOKENS_PER_WORD)
+
+        # QA fraction of context
+        if context_token_limit and context_token_limit &gt; 0:
+            qa_tokens_estimate = max_count * 150  # ~150 tokens per QA pair
+            qa_fraction = min(1.0, qa_tokens_estimate / context_token_limit)
+        else:
+            qa_fraction = min(1.0, max_count * 150 / max(1, token_estimate))
+
+        # Alert level
+        if max_count &gt;= self.block_threshold:
+            alert_level = &#x27;block&#x27;
+            confidence = min(1.0, 0.9 + (max_count - self.block_threshold) / 100)
+        elif (
+            max_count &gt;= self.alert_threshold
+            or qa_fraction &gt;= self.context_fraction_alert
+        ):
+            alert_level = &#x27;alert&#x27;
+            confidence = min(1.0, 0.6 + max_count / 100)
+        elif max_count &gt;= self.monitor_threshold:
+            alert_level = &#x27;monitor&#x27;
+            confidence = min(0.5, max_count / 20)
+        else:
+            alert_level = &#x27;none&#x27;
+            confidence = 0.0
+
+        return ShotCountResult(
+            shot_count=max_count,
+            detected_format=dominant_format,
+            context_word_count=word_count,
+            context_token_estimate=token_estimate,
+            qa_fraction_of_context=round(qa_fraction, 3),
+            alert_level=alert_level,
+            confidence=round(confidence, 3),
+            format_breakdown=format_counts,
+        )
+
+
+def build_demo_many_shot_context(
+    n_shots: int,
+    format_style: str = &#x27;human_assistant&#x27;,
+) -&gt; str:
+    &#x27;&#x27;&#x27;
+    Build a synthetic many-shot context for testing the detector.
+    Uses placeholder content -- NOT adversarial prompts.
+    Purpose: verify the shot count detector counts correctly.
+    &#x27;&#x27;&#x27;
+    pairs = []
+    formats = {
+        &#x27;human_assistant&#x27;: (&#x27;Human: {q}&#x27;, &#x27;Assistant: {a}&#x27;),
+        &#x27;chatml&#x27;: (&#x27;&lt;|im_start|&gt;user\n{q}\n&lt;|im_end|&gt;&#x27;, &#x27;&lt;|im_start|&gt;assistant\n{a}\n&lt;|im_end|&gt;&#x27;),
+        &#x27;llama_chat&#x27;: (&#x27;[INST] {q} [/INST]&#x27;, &#x27;{a}&#x27;),
+        &#x27;alpaca&#x27;: (&#x27;### Instruction:\n{q}&#x27;, &#x27;### Response:\n{a}&#x27;),
+    }
+    human_tmpl, assistant_tmpl = formats.get(format_style, formats[&#x27;human_assistant&#x27;])
+
+    for i in range(n_shots):
+        q = f&#x27;Example question number {i + 1} about topic area X.&#x27;
+        a = f&#x27;Example answer number {i + 1} providing information about topic area X.&#x27;
+        pair = human_tmpl.format(q=q) + &#x27;\n&#x27; + assistant_tmpl.format(a=a)
+        pairs.append(pair)
+
+    return &#x27;\n\n&#x27;.join(pairs) + &#x27;\n\nHuman: Final question here.\nAssistant:&#x27;
+
+
+SHOT_COUNT_THRESHOLDS_BY_CONTEXT_LENGTH = {
+    4_096: {
+        &#x27;max_shots_feasible&#x27;: 25,
+        &#x27;many_shot_risk&#x27;: &#x27;low -- insufficient shots for significant bypass&#x27;,
+        &#x27;recommended_alert_threshold&#x27;: 15,
+    },
+    32_768: {
+        &#x27;max_shots_feasible&#x27;: 200,
+        &#x27;many_shot_risk&#x27;: &#x27;medium -- sufficient for measurable bypass on some models&#x27;,
+        &#x27;recommended_alert_threshold&#x27;: 20,
+    },
+    100_000: {
+        &#x27;max_shots_feasible&#x27;: 650,
+        &#x27;many_shot_risk&#x27;: &#x27;high -- sufficient for significant bypass across model families&#x27;,
+        &#x27;recommended_alert_threshold&#x27;: 20,
+    },
+    200_000: {
+        &#x27;max_shots_feasible&#x27;: 1300,
+        &#x27;many_shot_risk&#x27;: &#x27;very_high -- well into high-bypass territory&#x27;,
+        &#x27;recommended_alert_threshold&#x27;: 15,
+    },
+}
+
+
+if __name__ == &#x27;__main__&#x27;:
+    detector = ShotCountDetector(
+        monitor_threshold=5,
+        alert_threshold=20,
+        block_threshold=50,
+    )
+
+    print(&#x27;Shot Count Detector -- Many-Shot Jailbreaking Detection\n&#x27;)
+
+    test_cases = [
+        (2, &#x27;human_assistant&#x27;, &#x27;legitimate_few_shot&#x27;),
+        (8, &#x27;human_assistant&#x27;, &#x27;elevated_monitor&#x27;),
+        (25, &#x27;human_assistant&#x27;, &#x27;alert_level&#x27;),
+        (60, &#x27;human_assistant&#x27;, &#x27;block_level&#x27;),
+        (30, &#x27;chatml&#x27;, &#x27;alert_chatml_format&#x27;),
+        (30, &#x27;alpaca&#x27;, &#x27;alert_alpaca_format&#x27;),
+    ]
+
+    print(f&#x27;{&quot;Label&quot;:&lt;30} {&quot;Shots&quot;:&lt;7} {&quot;Format&quot;:&lt;18} {&quot;Fraction&quot;:&lt;10} &#x27;
+          f&#x27;{&quot;Level&quot;:&lt;9} {&quot;Conf&quot;}&#x27;)
+    print(&#x27;-&#x27; * 82)
+
+    for n_shots, fmt, label in test_cases:
+        context = build_demo_many_shot_context(n_shots, fmt)
+        result = detector.detect(context, context_token_limit=100_000)
+        print(
+            f&#x27;{label:&lt;30} {result.shot_count:&lt;7} &#x27;
+            f&#x27;{str(result.detected_format):&lt;18} &#x27;
+            f&#x27;{result.qa_fraction_of_context:&lt;10.3f} &#x27;
+            f&#x27;{result.alert_level:&lt;9} &#x27;
+            f&#x27;{result.confidence:.3f}&#x27;
+        )
+
+    print()
+    print(&#x27;Context length limit analysis:&#x27;)
+    print(f&#x27;{&quot;Context Limit&quot;:&lt;16} {&quot;Max Shots&quot;:&lt;12} {&quot;Risk&quot;:&lt;45} {&quot;Alert Threshold&quot;}&#x27;)
+    print(&#x27;-&#x27; * 85)
+    for limit, info in SHOT_COUNT_THRESHOLDS_BY_CONTEXT_LENGTH.items():
+        print(
+            f&#x27;{limit:&lt;16,} {info[&quot;max_shots_feasible&quot;]:&lt;12} &#x27;
+            f&#x27;{info[&quot;many_shot_risk&quot;]:&lt;45} &#x27;
+            f&#x27;{info[&quot;recommended_alert_threshold&quot;]}&#x27;
+        )</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">7.10.code.02</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Many-Shot Dataset Structure Description</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Structural description of adversary-crafted many-shot datasets with
+annotated components. NOT actual adversarial examples -- structural
+templates showing what the detector must recognise. Used for detector
+calibration and for understanding the attack surface.</p>
+<h3 class="sh2">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh2">Filename</h3>
+<p class="prose">code/ch07/many_shot_dataset_structure.py</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code>&#x27;&#x27;&#x27;
+Many-Shot Dataset: Structural Description for Detection Engineering
+
+This module describes the STRUCTURE of many-shot jailbreaking datasets,
+not the content. Understanding structure drives detector design.
+
+A many-shot dataset contains N fabricated QA pairs where an AI model
+persona answers harmful requests without refusal. The adversary delivers
+this as a context prefix before the actual harmful request.
+
+CONTENT IS NOT REPRODUCED HERE. The structural analysis below describes
+the format so the shot_count_detector can recognise it, not to enable
+construction of adversarial datasets.
+&#x27;&#x27;&#x27;
+
+DATASET_STRUCTURAL_COMPONENTS = {
+    &#x27;pair_structure&#x27;: {
+        &#x27;component_1_human_turn&#x27;: {
+            &#x27;role&#x27;: &#x27;Human / User / [INST]&#x27;,
+            &#x27;content_type&#x27;: &#x27;fabricated_harmful_request&#x27;,
+            &#x27;detection_marker&#x27;: &#x27;human turn role marker&#x27;,
+            &#x27;content_note&#x27;: &#x27;NOT REPRODUCED -- structural position only&#x27;,
+        },
+        &#x27;component_2_assistant_turn&#x27;: {
+            &#x27;role&#x27;: &#x27;Assistant / AI / model name&#x27;,
+            &#x27;content_type&#x27;: &#x27;fabricated_compliant_response&#x27;,
+            &#x27;detection_marker&#x27;: &#x27;assistant turn role marker&#x27;,
+            &#x27;content_note&#x27;: &#x27;NOT REPRODUCED -- structural position only&#x27;,
+            &#x27;effective_qualities&#x27;: [
+                &#x27;confident tone -- no hedging or safety caveats&#x27;,
+                &#x27;detailed response -- not a brief acknowledgement&#x27;,
+                &#x27;same register as authentic model responses&#x27;,
+                &#x27;specific formatting conventions matching target model&#x27;,
+            ],
+        },
+        &#x27;separator&#x27;: &#x27;newline(s) between pairs&#x27;,
+    },
+    &#x27;dataset_assembly&#x27;: {
+        &#x27;ordering&#x27;: &#x27;repeated pair_structure × N shots&#x27;,
+        &#x27;diversity_design&#x27;: (
+            &#x27;Effective datasets use diverse request topics across pairs, &#x27;
+            &#x27;not repetitions of the same request. Diversity increases &#x27;
+            &#x27;in-context learning generalisation.&#x27;
+        ),
+        &#x27;length_consideration&#x27;: (
+            &#x27;Dataset length in tokens ≈ N_shots × avg_tokens_per_pair. &#x27;
+            &#x27;A pair averages 100-200 tokens depending on response length. &#x27;
+            &#x27;A 100K context window accommodates ~500-1000 pairs.&#x27;
+        ),
+        &#x27;final_element&#x27;: (
+            &#x27;The actual harmful request is appended AFTER the N-shot dataset. &#x27;
+            &#x27;This is the turn the model responds to -- with alignment bypassed &#x27;
+            &#x27;by the in-context learning signal from the N prior examples.&#x27;
+        ),
+    },
+    &#x27;structural_signals_for_detector&#x27;: [
+        &#x27;high shot count: N &gt;&gt; typical few-shot prompting (2-5 shots)&#x27;,
+        &#x27;consistent role marker pattern repeated N times&#x27;,
+        &#x27;same format throughout: no variation in turn structure&#x27;,
+        &#x27;large fraction of context window occupied by QA pairs&#x27;,
+        &#x27;no topic diversity signal: all pairs semantically related&#x27;,
+    ],
+}
+
+EFFECTIVE_SHOT_COUNT_BY_MODEL_TYPE = {
+    &#x27;description&#x27;: (
+        &#x27;Approximate shot counts at which bypass probability becomes &#x27;
+        &#x27;measurable. Based on Anthropic 2024 research and subsequent work. &#x27;
+        &#x27;Exact numbers are model-specific -- test against your deployed model.&#x27;
+    ),
+    &#x27;general_pattern&#x27;: {
+        &#x27;low_shots_1_to_10&#x27;: &#x27;Negligible effect -- alignment training dominates&#x27;,
+        &#x27;medium_shots_10_to_50&#x27;: &#x27;Measurable bypass increase -- model-dependent&#x27;,
+        &#x27;high_shots_50_to_200&#x27;: &#x27;Significant bypass on most long-context models&#x27;,
+        &#x27;very_high_shots_200_plus&#x27;: &#x27;High bypass probability across model families&#x27;,
+    },
+    &#x27;context_length_dependency&#x27;: (
+        &#x27;Models with context limits under 8K tokens cannot be effectively &#x27;
+        &#x27;many-shot attacked -- insufficient shots fit in context. &#x27;
+        &#x27;Long-context models (32K+) are the primary attack surface.&#x27;
+    ),
+    &#x27;detection_threshold_guidance&#x27;: (
+        &#x27;Set alert threshold below the shot count where bypass first becomes &#x27;
+        &#x27;measurable for your model. For most production models with 32K+ context, &#x27;
+        &#x27;a threshold of 20 shots is a reasonable starting point.&#x27;
+    ),
+}
+
+RAG_VARIANT_STRUCTURE = {
+    &#x27;name&#x27;: &#x27;Many-Shot via RAG (Retrieval-Augmented Generation)&#x27;,
+    &#x27;section&#x27;: &#x27;7.10.6&#x27;,
+    &#x27;attack_stages&#x27;: [
+        {
+            &#x27;stage&#x27;: 1,
+            &#x27;actor&#x27;: &#x27;adversary&#x27;,
+            &#x27;action&#x27;: (
+                &#x27;Create documents containing many-shot QA pairs. &#x27;
+                &#x27;Engineer document embeddings for high cosine similarity &#x27;
+                &#x27;to target queries (embedding poisoning from Ch6 S6.6).&#x27;
+            ),
+        },
+        {
+            &#x27;stage&#x27;: 2,
+            &#x27;actor&#x27;: &#x27;adversary&#x27;,
+            &#x27;action&#x27;: (
+                &#x27;Ingest adversarial documents into the RAG knowledge base &#x27;
+                &#x27;through any available ingestion channel (document upload, &#x27;
+                &#x27;web crawling, database write access).&#x27;
+            ),
+        },
+        {
+            &#x27;stage&#x27;: 3,
+            &#x27;actor&#x27;: &#x27;user (innocent or adversary)&#x27;,
+            &#x27;action&#x27;: (
+                &#x27;Submit a query related to the adversarial document topic. &#x27;
+                &#x27;Retrieval system returns adversarial documents.&#x27;
+            ),
+        },
+        {
+            &#x27;stage&#x27;: 4,
+            &#x27;actor&#x27;: &#x27;RAG pipeline&#x27;,
+            &#x27;action&#x27;: (
+                &#x27;Assembles retrieved document content into context window. &#x27;
+                &#x27;Many-shot pairs are now in the assembled context.&#x27;
+            ),
+        },
+        {
+            &#x27;stage&#x27;: 5,
+            &#x27;actor&#x27;: &#x27;model&#x27;,
+            &#x27;action&#x27;: (
+                &#x27;Receives assembled context with N many-shot pairs. &#x27;
+                &#x27;In-context learning shifts output distribution. &#x27;
+                &#x27;Harmful request appended by adversary produces compliant response.&#x27;
+            ),
+        },
+    ],
+    &#x27;detection_placement&#x27;: (
+        &#x27;Shot count detector must run on the ASSEMBLED CONTEXT after retrieval, &#x27;
+        &#x27;not on the user query alone. This is the key placement decision &#x27;
+        &#x27;that catches the RAG variant.&#x27;
+    ),
+    &#x27;comparison_to_direct&#x27;: {
+        &#x27;user_input_signal&#x27;: &#x27;None -- user query looks normal&#x27;,
+        &#x27;detection_opportunity&#x27;: &#x27;Assembled context scan (pre-inference)&#x27;,
+        &#x27;sophistication&#x27;: &#x27;High -- requires knowledge base write access&#x27;,
+        &#x27;prevalence&#x27;: &#x27;Lower than direct -- requires RAG deployment&#x27;,
+    },
+}
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Many-Shot Dataset: Structural Components\n&#x27;)
+    for comp, details in DATASET_STRUCTURAL_COMPONENTS.items():
+        print(f&#x27;{comp.upper()}:&#x27;)
+        if isinstance(details, dict):
+            for k, v in details.items():
+                if isinstance(v, str):
+                    print(f&#x27;  {k}: {v[:80]}&#x27;)
+        elif isinstance(details, list):
+            for item in details:
+                print(f&#x27;  - {item[:80]}&#x27;)
+        print()
+
+    print(&#x27;RAG Variant: Detection Placement\n&#x27;)
+    print(f&#x27;  {RAG_VARIANT_STRUCTURE[&quot;detection_placement&quot;]}&#x27;)
+    print()
+    print(&#x27;Shot count by model type:&#x27;)
+    for level, desc in EFFECTIVE_SHOT_COUNT_BY_MODEL_TYPE[&#x27;general_pattern&#x27;].items():
+        print(f&#x27;  {level}: {desc}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">7.10.code.03</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Context Length Limit Analysis</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Analysis tool for determining context length limits appropriate to your
+deployment&#x27;s legitimate use cases, balanced against many-shot attack risk.
+Generates a risk profile for each context length option based on max feasible
+shot count and the shot count threshold for your deployed model.</p>
+<h3 class="sh2">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh2">Filename</h3>
+<p class="prose">code/ch07/context_length_analysis.py</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code>from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class ContextLengthProfile:
+    context_limit_tokens: int
+    max_shots_feasible: int
+    tokens_per_shot_estimate: int
+    legitimate_use_cases_supported: list
+    many_shot_risk_level: str
+    recommended_shot_count_alert: int
+    recommended_shot_count_block: int
+    notes: str
+
+
+TOKENS_PER_SHOT_ESTIMATE = 150   # average tokens per QA pair
+
+
+def analyse_context_length(
+    context_limit_tokens: int,
+    model_bypass_threshold_shots: Optional[int] = None,
+    legitimate_use_cases: Optional[list] = None,
+) -&gt; ContextLengthProfile:
+    &#x27;&#x27;&#x27;
+    Generate a risk profile for a given context length limit.
+
+    context_limit_tokens: the context window limit to analyse.
+    model_bypass_threshold_shots: if known, the shot count at which your
+        model shows measurable bypass. If None, uses conservative defaults.
+    legitimate_use_cases: list of use cases that require this context length.
+    &#x27;&#x27;&#x27;
+    max_shots = context_limit_tokens // TOKENS_PER_SHOT_ESTIMATE
+
+    # Risk level based on max feasible shots
+    if max_shots &lt; 15:
+        risk_level = &#x27;very_low&#x27;
+    elif max_shots &lt; 50:
+        risk_level = &#x27;low&#x27;
+    elif max_shots &lt; 200:
+        risk_level = &#x27;medium&#x27;
+    elif max_shots &lt; 500:
+        risk_level = &#x27;high&#x27;
+    else:
+        risk_level = &#x27;very_high&#x27;
+
+    # Alert and block thresholds
+    if model_bypass_threshold_shots:
+        alert = max(5, model_bypass_threshold_shots - 5)
+        block = model_bypass_threshold_shots + 10
+    else:
+        # Conservative defaults when model-specific threshold unknown
+        alert = min(20, max(5, max_shots // 10))
+        block = min(50, max(15, max_shots // 5))
+
+    # Legitimate use cases by context size
+    default_use_cases = {
+        4_096: [&#x27;single-document QA&#x27;, &#x27;short conversations&#x27;, &#x27;code review&#x27;],
+        8_192: [&#x27;multi-document QA&#x27;, &#x27;long-form writing assistance&#x27;],
+        16_384: [&#x27;long document analysis&#x27;, &#x27;extended coding sessions&#x27;],
+        32_768: [&#x27;full codebase analysis&#x27;, &#x27;book chapter summarisation&#x27;],
+        100_000: [&#x27;full book analysis&#x27;, &#x27;large codebase review&#x27;, &#x27;long research synthesis&#x27;],
+        200_000: [&#x27;very long document analysis&#x27;, &#x27;multi-book research&#x27;],
+    }
+    # Find nearest context size for default use cases
+    nearest = min(default_use_cases.keys(), key=lambda x: abs(x - context_limit_tokens))
+    use_cases = legitimate_use_cases or default_use_cases.get(nearest, [&#x27;general use&#x27;])
+
+    notes_map = {
+        &#x27;very_low&#x27;: &#x27;Many-shot attack is not feasible at this context length.&#x27;,
+        &#x27;low&#x27;: &#x27;Low risk. Standard many-shot attack requires more context.&#x27;,
+        &#x27;medium&#x27;: &#x27;Moderate risk. Alert threshold important. Test your model.&#x27;,
+        &#x27;high&#x27;: &#x27;High risk. Reduce context limit if use cases permit.&#x27;,
+        &#x27;very_high&#x27;: &#x27;Very high risk. Context limit may be excessive for deployment.&#x27;,
+    }
+
+    return ContextLengthProfile(
+        context_limit_tokens=context_limit_tokens,
+        max_shots_feasible=max_shots,
+        tokens_per_shot_estimate=TOKENS_PER_SHOT_ESTIMATE,
+        legitimate_use_cases_supported=use_cases,
+        many_shot_risk_level=risk_level,
+        recommended_shot_count_alert=alert,
+        recommended_shot_count_block=block,
+        notes=notes_map[risk_level],
+    )
+
+
+def print_context_analysis(profile: ContextLengthProfile) -&gt; None:
+    print(f&#x27;Context Limit: {profile.context_limit_tokens:,} tokens&#x27;)
+    print(f&#x27;  Max shots feasible:    {profile.max_shots_feasible}&#x27;)
+    print(f&#x27;  Many-shot risk:        {profile.many_shot_risk_level.upper()}&#x27;)
+    print(f&#x27;  Alert threshold:       {profile.recommended_shot_count_alert} shots&#x27;)
+    print(f&#x27;  Block threshold:       {profile.recommended_shot_count_block} shots&#x27;)
+    print(f&#x27;  Supported use cases:   {&quot;, &quot;.join(profile.legitimate_use_cases_supported[:3])}&#x27;)
+    print(f&#x27;  Note:                  {profile.notes}&#x27;)
+    print()
+
+
+DEPLOYMENT_GUIDANCE = {
+    &#x27;principle&#x27;: (
+        &#x27;Set context length to the MINIMUM required for legitimate use cases, &#x27;
+        &#x27;not the maximum available. Each additional token of context is &#x27;
+        &#x27;additional many-shot attack surface.&#x27;
+    ),
+    &#x27;recommended_approach&#x27;: [
+        &#x27;Identify the longest legitimate document your deployment needs to process.&#x27;,
+        &#x27;Set context limit to 1.5x that length (headroom for conversation history).&#x27;,
+        &#x27;Set shot count alert at 20 shots or model bypass threshold minus 10, whichever is lower.&#x27;,
+        &#x27;Set shot count block at 50 shots or model bypass threshold, whichever is lower.&#x27;,
+        &#x27;Re-evaluate after every major model upgrade (context limits and bypass thresholds change).&#x27;,
+    ],
+}
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Context Length Limit Analysis -- Many-Shot Risk Profiles\n&#x27;)
+
+    analysis_cases = [4_096, 8_192, 32_768, 100_000, 200_000]
+    for limit in analysis_cases:
+        profile = analyse_context_length(limit)
+        print_context_analysis(profile)
+
+    print(&#x27;Deployment Guidance:&#x27;)
+    print(f&#x27;  {DEPLOYMENT_GUIDANCE[&quot;principle&quot;]}&#x27;)
+    print()
+    for step in DEPLOYMENT_GUIDANCE[&#x27;recommended_approach&#x27;]:
+        print(f&#x27;  - {step}&#x27;)</code></pre>
+<h2 class="sh1">Exercises</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">7.10.ex.01</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Shot Count Detector Calibration</p>
+<h3 class="sh2">Type</h3>
+<p class="prose">code_exercise</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Run shot_count_detector.py against your deployment&#x27;s assembled prompts
+(not user queries alone -- the full assembled context including retrieved
+documents). For 50 benign sessions and any known many-shot test cases,
+record: (1) shot count distribution for benign sessions (establish the
+legitimate few-shot usage baseline), (2) the threshold that separates
+legitimate few-shot usage from attack attempts with FPR &lt; 1%, (3) latency
+per detection call. Update the detector&#x27;s monitor/alert/block thresholds
+to the calibrated values.</p>
+<h3 class="sh2">Deliverable</h3>
+<p class="prose">shot_count_detector_calibration.md</p>
+<h3 class="sh2">Time Estimate</h3>
+<p class="prose">45 minutes</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">7.10.ex.02</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Context Length Limit Analysis for Your Deployment</p>
+<h3 class="sh2">Type</h3>
+<p class="prose">architecture_review</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Run context_length_analysis.py for the context length limit of your
+deployed model. If your deployment uses RAG, also analyse the maximum
+assembled context length after retrieval (which may exceed the user query
+length significantly). For each context length, document: (1) the legitimate
+use cases that require it, (2) the many-shot risk level, (3) whether the
+context limit can be reduced without impacting legitimate use cases.
+Produce a one-paragraph recommendation for the minimum viable context limit.</p>
+<h3 class="sh2">Deliverable</h3>
+<p class="prose">context_length_limit_analysis.md</p>
+<h3 class="sh2">Time Estimate</h3>
+<p class="prose">30 minutes</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">7.10.ex.03</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">RAG Variant Threat Model</p>
+<h3 class="sh2">Type</h3>
+<p class="prose">architecture_review</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Using RAG_VARIANT_STRUCTURE from many_shot_dataset_structure.py, evaluate
+whether your RAG deployment (or a representative example) is vulnerable to
+the many-shot via RAG variant. Answer: (1) does the shot count detector run
+on the assembled context or only on the user query? (2) who has write access
+to the knowledge base -- is pre-planting feasible? (3) does the injection
+classifier from Chapter 6 scan retrieved documents for QA pair patterns?
+Document the infrastructure changes required to achieve full coverage.</p>
+<h3 class="sh2">Deliverable</h3>
+<p class="prose">rag_many_shot_threat_model.md</p>
+<h3 class="sh2">Time Estimate</h3>
+<p class="prose">35 minutes</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">7.10.ex.04</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Many-Shot Structural Detection Test</p>
+<h3 class="sh2">Type</h3>
+<p class="prose">code_exercise</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Using build_demo_many_shot_context() from shot_count_detector.py, generate
+test contexts at 5, 10, 25, 50, and 100 shots across three format styles
+(human_assistant, chatml, alpaca). Run all 15 test cases through the shot
+count detector and verify: (1) shot counts are detected correctly for all
+three formats, (2) alert levels escalate correctly across shot counts,
+(3) the detector runs under 10ms per call (critical for ensemble latency).</p>
+<h3 class="sh2">Deliverable</h3>
+<p class="prose">shot_count_structural_test_results.md</p>
+<h3 class="sh2">Time Estimate</h3>
+<p class="prose">25 minutes</p>
+<h2 class="sh1">Key Takeaways</h2>
+<ul class="blist"><li>Many-shot jailbreaking exploits in-context learning -- the same inference-time adaptation mechanism that makes long-context models useful. There is no architectural fix that preserves the capability while eliminating the vulnerability. The tradeoff is inherent.</li><li>The attack scales with context length. Short-context models (under 8K tokens) are largely immune. Long-context models (32K+) are the primary attack surface. Set context limits to the minimum required for legitimate use cases.</li><li>Shot count detection is the simplest and cheapest control in the Chapter 7 ensemble: count structured QA pairs, no semantic understanding required, very low FPR, sub-millisecond latency. Deploy it on the FULL assembled context (not user query alone) to catch the RAG variant.</li><li>Many-shot via RAG is the high-sophistication variant: adversary pre-plants QA pairs in the knowledge base, which are retrieved and injected into context by the pipeline. Detection placement on the assembled context catches both the direct and RAG variants with a single detector instance.</li><li>The shot count detector is the third of five ensemble tracks in Section 7.14. It covers a detection gap that the semantic classifier and perplexity detector cannot fill: many-shot datasets in natural language format have normal perplexity and no semantic jailbreak signals -- only structural ones.</li><li>Legitimate few-shot prompting uses 2-5 shots. Set the monitor threshold at 5 shots, alert at 20 shots, block at 50 shots as conservative starting points. Calibrate downward once model-specific bypass thresholds are known.</li></ul>
+<h2 class="sh1">Cross References</h2>
+<h3 class="sh2">Backward</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Ch7 S7.2</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">In-context learning operates at inference time, outside the scope of RLHF alignment training -- the root of why this attack exists</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Ch7 S7.9</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Perplexity detector -- structural parallel: both are statistical detectors for non-semantic attack signals</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Ch6 S6.6</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Indirect RAG injection -- many-shot via RAG combines both attack families; embedding poisoning enables the pre-planting stage</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Ch4 S3.19</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Context window mechanics -- the architectural property the attack exploits</p>
+<h3 class="sh2">Forward</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Ch7 S7.11</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Competing objectives -- the last attack family before automation and the catalog</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Ch7 S7.14</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">ShotCountDetector.is_alert and shot_count are the third ensemble track inputs; detector must be placed on assembled context not user query</p>
+<h2 class="sh1">Section Metadata</h2>
+<h3 class="sh2">Word Count Estimate</h3>
+<p class="prose">2850</p>
+<h3 class="sh2">Code Line Count</h3>
+<p class="prose">267</p>
+<h3 class="sh2">Exercise Count</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Deliverable Files</h3>
+<ul class="blist"><li>code/ch07/shot_count_detector.py</li><li>code/ch07/many_shot_dataset_structure.py</li><li>code/ch07/context_length_analysis.py</li><li>shot_count_detector_calibration.md</li><li>context_length_limit_analysis.md</li><li>rag_many_shot_threat_model.md</li><li>shot_count_structural_test_results.md</li></ul>
+<h3 class="sh2">Notebook</h3>
+<p class="prose">notebooks/04-security-testing/jailbreak_lab.ipynb</p>
+<h3 class="sh2">Status</h3>
+<p class="prose">complete</p>
+<h3 class="sh2">Schema Version</h3>
+<p class="prose">1.0</p>
+</article>

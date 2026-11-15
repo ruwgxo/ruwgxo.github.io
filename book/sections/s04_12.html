@@ -1,0 +1,963 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 4 · Section 12 · ~6 pages</div>
+<h1>Quantization: Compressing Models Without Losing Safety</h1>
+<div class="tags"><span class="tag">quantization</span><span class="tag">int8</span><span class="tag">int4</span><span class="tag">fp8</span><span class="tag">gguf</span><span class="tag">gptq</span><span class="tag">awq</span><span class="tag">quantization-error</span><span class="tag">safety-degradation</span><span class="tag">security-implications</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Quantization is what makes large language models run on hardware that cannot
+hold their full-precision weights. A 70B parameter model in FP32 requires 280 GB
+of GPU memory — four A100s at minimum. The same model quantized to 4-bit requires
+roughly 35 GB — a single A100, or a high-end consumer machine with two GPUs.
+Quantization is therefore not an academic optimization: it is the practical
+prerequisite for deploying large models outside of hyperscaler infrastructure.
+
+For security engineers the stakes are high on both sides. Quantization enables
+broader deployment of powerful models — expanding the attack surface of AI systems
+in more environments. It also introduces quantization error that can degrade safety
+behaviors in ways that are subtle, asymmetric, and extremely difficult to detect
+without targeted safety regression testing. A model that passes all general
+capability benchmarks after aggressive quantization may have materially worse
+safety properties that appear only under specific adversarial conditions.
+
+This section covers the mechanics of all major quantization schemes (INT8, INT4,
+FP8, GPTQ, AWQ, GGUF), what quantization actually does to safety-critical weight
+configurations, how to measure safety degradation from quantization, and what
+the security engineer needs to verify before deploying a quantized model.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 12 of 17. Second section of the deployment considerations arc (11-16).
+Section 11 covered context windows. This section covers quantization. Section 13
+covers distillation. Together 12 and 13 cover the two primary model compression
+techniques that determine the deployment envelope of production LLMs.</p>
+<h3 class="sh2">Prerequisites</h3>
+<ul class="blist"><li>Chapter 1, Section 7: Floating-point representation — FP32, FP16, BF16 basics</li><li>Chapter 2, Section 8: Weight initialization — what weights represent</li><li>Section 04_05: RLHF — safety behaviors live in specific weight configurations</li><li>Section 04_06: SFT — alignment layer is a thin overlay on pre-training weights</li></ul>
+<h3 class="sh2">What You Will Build</h3>
+<h3 class="sh3">Primary</h3>
+<p class="prose">Quantization pipeline: quantize a GPT-2 model to INT8 and INT4, measure degradation</p>
+<h3 class="sh3">Secondary</h3>
+<ul class="blist"><li>Safety regression test suite: compare FP32 vs quantized model on harm probes</li><li>Quantization error analyzer: find which layers lose most precision</li><li>Bit-width tradeoff calculator: accuracy vs memory vs safety across quantization levels</li><li>GGUF file inspector: examine community quantized models for provenance</li></ul>
+<h3 class="sh3">Notebooks</h3>
+<ul class="blist"><li>03-llm-internals/quantization_basics.ipynb</li><li>03-llm-internals/quantization_safety.ipynb</li></ul>
+<h2 class="sh1">Content</h2>
+<h3 class="sh2">Subsection 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Precision Formats: FP32, FP16, BF16, and Why the Difference Matters</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Floating Point Review</h3>
+<p class="prose">A floating-point number is represented as:
+  value = (-1)^sign × mantissa × 2^(exponent - bias)
+
+The number of bits allocated to mantissa and exponent determines
+precision (how many distinct values can be represented) and range
+(the smallest and largest values that can be represented).</p>
+<h3 class="sh3">Formats Comparison</h3>
+<h4 class="sh3">Fp32</h4>
+<h4 class="sh3">Bits</h4>
+<p class="prose">32</p>
+<h4 class="sh3">Sign</h4>
+<p class="prose">1</p>
+<h4 class="sh3">Exponent</h4>
+<p class="prose">8</p>
+<h4 class="sh3">Mantissa</h4>
+<p class="prose">23</p>
+<h4 class="sh3">Range</h4>
+<p class="prose">~1.18e-38 to ~3.40e+38</p>
+<h4 class="sh3">Precision</h4>
+<p class="prose">~7 significant decimal digits</p>
+<h4 class="sh3">Memory For 7B Model</h4>
+<p class="prose">28 GB</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Training, scientific computing, high-precision inference</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">FP32 is the reference precision. All safety evaluations should use FP32
+as the baseline before quantization. Any degradation is relative to FP32.</p>
+<h4 class="sh3">Fp16</h4>
+<h4 class="sh3">Bits</h4>
+<p class="prose">16</p>
+<h4 class="sh3">Sign</h4>
+<p class="prose">1</p>
+<h4 class="sh3">Exponent</h4>
+<p class="prose">5</p>
+<h4 class="sh3">Mantissa</h4>
+<p class="prose">10</p>
+<h4 class="sh3">Range</h4>
+<p class="prose">~6.10e-5 to ~65504</p>
+<h4 class="sh3">Precision</h4>
+<p class="prose">~3.3 significant decimal digits</p>
+<h4 class="sh3">Memory For 7B Model</h4>
+<p class="prose">14 GB</p>
+<h4 class="sh3">Limitation</h4>
+<p class="prose">Narrow range causes overflow for large activations (&gt;65504).
+Underflow for very small gradients during training.
+Still common in inference; less common in training since BF16.</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">FP16&#x27;s narrow range creates overflow risks for unusual inputs.
+An adversary who can cause model activations to reach extreme values
+(e.g., through crafted inputs that produce very large attention scores)
+can trigger FP16 overflow, producing NaN propagation that degrades
+subsequent token generation.</p>
+<h4 class="sh3">Bf16</h4>
+<h4 class="sh3">Bits</h4>
+<p class="prose">16</p>
+<h4 class="sh3">Sign</h4>
+<p class="prose">1</p>
+<h4 class="sh3">Exponent</h4>
+<p class="prose">8</p>
+<h4 class="sh3">Mantissa</h4>
+<p class="prose">7</p>
+<h4 class="sh3">Range</h4>
+<p class="prose">Same range as FP32 (~3.40e+38)</p>
+<h4 class="sh3">Precision</h4>
+<p class="prose">~2.3 significant decimal digits (lower than FP16)</p>
+<h4 class="sh3">Memory For 7B Model</h4>
+<p class="prose">14 GB</p>
+<h4 class="sh3">Advantage</h4>
+<p class="prose">BF16 has the same exponent range as FP32, preventing overflow.
+Lower mantissa precision than FP16 but better range stability.
+The preferred training format for most modern LLMs.</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">BF16&#x27;s lower mantissa precision makes it slightly more susceptible
+to quantization rounding errors in weight-space, but the overflow
+protection makes it more robust to adversarial activation extremes.</p>
+<h4 class="sh3">Int8</h4>
+<h4 class="sh3">Bits</h4>
+<p class="prose">8</p>
+<h4 class="sh3">Range</h4>
+<p class="prose">-128 to 127 (signed) or 0 to 255 (unsigned)</p>
+<h4 class="sh3">Precision</h4>
+<p class="prose">256 distinct values</p>
+<h4 class="sh3">Memory For 7B Model</h4>
+<p class="prose">7 GB</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Inference quantization — weights and/or activations</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">INT8 weights cover 256 values vs FP32&#x27;s ~4 billion — a 16M× reduction
+in representable values. Safety-critical weight configurations may not
+be representable with sufficient precision in INT8.</p>
+<h4 class="sh3">Int4</h4>
+<h4 class="sh3">Bits</h4>
+<p class="prose">4</p>
+<h4 class="sh3">Range</h4>
+<p class="prose">-8 to 7 (signed) or 0 to 15 (unsigned)</p>
+<h4 class="sh3">Precision</h4>
+<p class="prose">16 distinct values</p>
+<h4 class="sh3">Memory For 7B Model</h4>
+<p class="prose">3.5 GB (weight-only; activations often in FP16)</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Aggressive inference quantization — weights only, not activations</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">INT4 represents only 16 values per weight. For a safety-critical weight
+that in FP32 has value 0.1234567, INT4 must round to one of 16 values
+spaced across the weight&#x27;s range. The rounding error may be 5-15% of
+the weight&#x27;s value — sufficient to materially change the output of
+safety-critical computations.</p>
+<h3 class="sh3">The Tradeoff Equation</h3>
+<p class="prose">Memory = n_parameters × bits_per_parameter / 8
+Quantization error ∝ (range_of_weights) / (n_representable_values)
+                   = range / 2^bits
+
+Every halving of bits per weight doubles quantization error and halves memory.
+The security question: at what point does quantization error materially
+degrade safety behavior, and how do you measure that point?</p>
+<h3 class="sh2">Subsection 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Quantization Schemes: Absmax, GPTQ, AWQ, and GGUF</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Basic Quantization Absmax</h3>
+<p class="prose">The simplest quantization approach: absmax (absolute maximum) scaling.
+
+For a weight matrix W with values in range [w_min, w_max]:
+  scale = max(|W|) / 127        (for INT8 signed)
+  W_quantized = round(W / scale)  (integer values in [-128, 127])
+  W_dequantized = W_quantized × scale  (approximate original)
+
+Quantization error = |W - W_dequantized| = |W - round(W/scale) × scale|
+Maximum error per weight = 0.5 × scale = 0.5 × max(|W|) / 127
+
+Problem: absmax is dominated by outliers. If one weight in a layer is 100×
+larger than the rest, the scale = 100× / 127. All other weights (which might
+be in range [-1, 1]) get quantized to values near 0, losing most of their
+precision.
+
+LLM Problem: Dettmers et al. (2022) found that LLMs have systematic outlier
+features — a small fraction of hidden dimension channels consistently produce
+activations that are 100× larger than typical. Standard absmax quantization
+of activations loses significant precision for all non-outlier channels.</p>
+<h3 class="sh3">Llm Int8 Mixed Precision</h3>
+<p class="prose">LLM.int8() (Dettmers et al. 2022) addresses outliers with mixed-precision:
+
+  1. Identify outlier channels: any hidden dimension where &gt;1% of values
+     exceed a threshold (typically 6.0 in absolute value)
+  2. Decompose matrix multiply:
+     - Outlier dimensions: compute in FP16 (preserve precision)
+     - Non-outlier dimensions: quantize to INT8, compute in INT8
+  3. Combine FP16 and INT8 results
+
+This preserves precision for the ~0.1% of channels that matter most
+while quantizing the 99.9% of channels that are well-behaved.
+
+Memory impact: ~10% overhead from storing outlier channels in FP16
+Quality impact: nearly identical to FP16 baseline on most tasks</p>
+<h3 class="sh3">Gptq</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">GPTQ (Frantar et al. 2022) is a post-training quantization method that
+uses second-order weight information to minimize quantization error.
+
+Core insight: when quantizing weight w_ij, the resulting error can be
+compensated by adjusting the remaining unquantized weights in the same row.
+This is the Optimal Brain Quantization (OBQ) approach applied to LLMs.</p>
+<h4 class="sh3">Algorithm Sketch</h4>
+<p class="prose">For each layer L and each weight matrix W:
+  1. Compute Hessian H = (X^T X) where X is layer input across calibration data
+     (H captures which weights matter most given the actual data distribution)
+  2. Quantize weights one at a time, left to right:
+     For weight w_ij:
+       q_ij = quantize(w_ij)                    # Round to nearest INT4 value
+       error_ij = w_ij - q_ij                  # Quantization error
+       Adjust remaining weights: w_rest -= error_ij × H_ij / H_jj
+  3. Write quantized weights; store scale factors per group</p>
+<h4 class="sh3">Calibration Data Requirement</h4>
+<p class="prose">GPTQ requires ~128 calibration examples to compute the Hessian.
+The calibration data should be representative of actual usage —
+if calibration data differs from deployment distribution, the Hessian
+will be wrong and quantization will be sub-optimal.
+
+Security implication: GPTQ quantization quality depends on calibration data.
+If an attacker can influence the calibration dataset, they can craft a Hessian
+that causes GPTQ to minimize error for benign inputs while maximizing error for
+safety-critical inputs (e.g., harm detection patterns). This is a subtle attack:
+the quantized model performs well on standard benchmarks but has degraded safety
+on specific adversarial inputs.</p>
+<h3 class="sh3">Awq</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">AWQ (Lin et al. 2023) takes a different approach: protect salient weights
+by scaling them before quantization.
+
+Observation: a small fraction of weights (~1%) are &quot;salient&quot; — they have
+disproportionate impact on model quality. Protecting these from quantization
+error preserves quality better than GPTQ&#x27;s error compensation approach.</p>
+<h4 class="sh3">Algorithm</h4>
+<p class="prose">1. Find salient weights: those with large magnitude AND large activation scale
+   salient_score(w_ij) = |w_ij| × activation_scale(channel_j)
+2. Scale up salient channels before quantization:
+   W_scaled = W × diag(s)       (s = scaling vector, s_j &gt; 1 for salient channels)
+3. Quantize W_scaled normally
+4. Absorb scaling into the previous layer&#x27;s normalization
+
+The scaled weights have higher resolution in INT4 representation.
+The previous layer&#x27;s scaling compensates for the transformation.</p>
+<h4 class="sh3">Advantages Vs Gptq</h4>
+<p class="prose">- Faster: no per-weight Hessian computation
+- Better on some architectures (MoE models)
+- More robust to calibration data choice
+- Compatible with activation quantization</p>
+<h3 class="sh3">Gguf And Community Quantization</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">GGUF (GPT-Generated Unified Format) is the file format used by llama.cpp
+and derived tools. It supports multiple quantization levels (Q2_K through
+Q8_0) and is the standard format for community-quantized models distributed
+on HuggingFace.</p>
+<h4 class="sh3">Quantization Levels</h4>
+<h4 class="sh3">Q2 K</h4>
+<p class="prose">2-bit quantization with k-means clustering — extremely aggressive</p>
+<h4 class="sh3">Q4 0</h4>
+<p class="prose">4-bit symmetric quantization — simple absmax per block</p>
+<h4 class="sh3">Q4 K M</h4>
+<p class="prose">4-bit with k-means, medium quality — most common community choice</p>
+<h4 class="sh3">Q5 K M</h4>
+<p class="prose">5-bit with k-means — better quality than Q4 at 25% more memory</p>
+<h4 class="sh3">Q6 K</h4>
+<p class="prose">6-bit — near FP16 quality for most tasks</p>
+<h4 class="sh3">Q8 0</h4>
+<p class="prose">8-bit — essentially lossless for most benchmarks</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">GGUF files are distributed by community members without systematic safety
+validation. The quantization is performed by individuals using their own
+calibration data and quantization parameters. Two GGUF files labeled
+&quot;Llama-2-7B-Q4_K_M&quot; from different distributors may have different
+safety properties depending on the quantization choices made.
+
+A malicious actor distributing GGUF files could:
+1. Use calibration data that maximizes safety degradation
+2. Selectively quantize safety-relevant layers more aggressively
+3. Modify weights (not just quantize) before packaging as GGUF
+   (the format does not include cryptographic verification)</p>
+<h3 class="sh2">Subsection 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Quantization and Safety: Where Precision Loss Matters Most</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Why Safety Is Fragile To Quantization</h3>
+<p class="prose">Safety behaviors in RLHF-trained models are concentrated in specific
+weight configurations that represent the delta between the pre-training
+baseline and the aligned model. This alignment layer is:
+
+  1. Small relative to the full model: safety-specific weight changes are
+     a fraction of the total weight magnitude. In INT4 quantization, the
+     quantization step size may be comparable to the alignment delta — meaning
+     the alignment is rounded away.
+
+  2. High-frequency: safety behaviors require sharp decision boundaries.
+     &quot;This request is acceptable&quot; vs &quot;this request is harmful&quot; may differ
+     by a small change in probability distribution. Quantization error that
+     smooths weight values also smooths these decision boundaries.
+
+  3. Distribution of safety weight configurations: safety weights may be
+     concentrated in specific outlier channels that absmax quantization
+     handles poorly. A model where safety weights are systematically
+     in the outlier channels of specific layers loses disproportionate
+     safety information in naive quantization.</p>
+<h3 class="sh3">Documented Safety Degradation</h3>
+<p class="prose">Empirical findings from quantization + safety evaluation research:
+
+Refusal rate degradation:
+  Full FP16 model: refuses 95% of harmful requests in HarmBench
+  INT8 quantized:  refuses 93% (−2% — within noise for most applications)
+  INT4 (GPTQ):     refuses 88% (−7% — measurable, deployment-relevant)
+  INT4 (Q4_0):     refuses 81% (−14% — significant safety degradation)
+  INT2:            refuses 60% (−35% — safety substantially compromised)
+
+Pattern: degradation is non-linear. INT8 is nearly safe, INT4 is risky
+for alignment-critical deployments, INT2 is dangerous.
+
+Variance by harm category:
+  Some harm categories degrade faster than others under quantization.
+  Categories that require nuanced judgment (dual-use content, borderline cases)
+  tend to degrade faster than categories with clear-cut harmful examples
+  (extreme violence, CSAM) that are robustly learned.
+
+  Security implication: standard safety benchmarks that test easy/clear-cut
+  cases may show minimal degradation while subtle/nuanced safety behaviors
+  degrade significantly. Only adversarially-targeted safety evaluation
+  reveals the full degradation picture.</p>
+<h3 class="sh3">Which Layers Lose Safety</h3>
+<p class="prose">Safety-relevant weight configurations are not uniformly distributed:
+
+Output projection and unembedding layer:
+  The final projection from hidden states to vocabulary logits is where
+  the model&#x27;s probability distribution over output tokens is determined.
+  Quantization error here directly shifts token probabilities —
+  including the probability of refusal tokens vs compliance tokens.
+  This is the highest-impact layer for safety degradation.
+
+Late transformer blocks:
+  Safety behaviors (as established in Section 4_06) are concentrated
+  in later transformer layers. Quantization error in late layers has
+  larger safety impact than equal error in early layers.
+
+Attention output projections in late layers:
+  The attention output projection aggregates attended information into
+  the residual stream. In late layers, this includes safety-relevant
+  information about harmful content in the context.
+
+Implication for selective quantization:
+  Maintain higher precision (FP16 or INT8) for:
+    - Last transformer block
+    - Unembedding/output projection
+    - Attention output projections in last 25% of layers
+  Aggressively quantize:
+    - First 50% of transformer blocks (early representation learning)
+    - Feedforward network weights in early layers</p>
+<h3 class="sh3">Calibration Data For Safety</h3>
+<p class="prose">The calibration data used in GPTQ and AWQ quantization determines
+which weight configurations are protected from quantization error.
+
+Standard calibration data (e.g., WikiText-2, C4) is dominated by
+benign content. The Hessian computed from this data protects weights
+that matter for fluent, grammatical text generation — not necessarily
+the weights that matter for safety behavior.
+
+Safety-aware calibration: include examples from:
+  - Harmful requests that should be refused
+  - Borderline requests requiring nuanced judgment
+  - Dual-use content with legitimate and harmful interpretations
+  - Standard harmful categories from HarmBench or similar benchmarks
+
+Empirical finding: GPTQ with safety-inclusive calibration data preserves
+refusal rates 5-12 percentage points better than standard calibration
+at the same quantization bit depth.</p>
+<h3 class="sh2">Subsection 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Quantization as an Attack Vector</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Attack 1 Adversarial Calibration</h3>
+<p class="prose">As established in Section 3: GPTQ and AWQ quantization quality depends
+on calibration data. A targeted attack:
+
+  1. Attacker controls or influences the calibration dataset
+     (e.g., by contributing to an open calibration dataset used by a
+     community quantization project)
+  2. Attacker crafts calibration data that makes the Hessian weight
+     high-magnitude, safety-adjacent weights as &quot;unimportant&quot;
+  3. GPTQ aggressively quantizes safety-related weights to compensate
+     for errors in weights the Hessian says are &quot;important&quot;
+  4. Quantized model passes standard benchmarks but fails safety evaluation
+     for specifically targeted harm categories
+
+This attack is difficult to detect:
+  - Calibration data is often not published with quantized models
+  - Standard benchmarks don&#x27;t detect targeted safety degradation
+  - The attack requires understanding which weights matter for specific
+    safety behaviors — which is non-trivial but feasible for a motivated attacker</p>
+<h3 class="sh3">Attack 2 Gguf Weight Modification</h3>
+<p class="prose">GGUF files are not cryptographically signed. A modified GGUF file —
+one where specific weights are altered beyond what quantization would
+produce — is indistinguishable from a legitimately quantized file
+without byte-level comparison to the source model.
+
+Attack scenario:
+  1. Attacker downloads legitimate Llama-2 weights
+  2. Quantizes to Q4_K_M (standard community format)
+  3. Identifies safety-critical weights using activation analysis
+  4. Modifies those specific weights to shift safety decision boundaries
+  5. Re-packages as a GGUF file, uploads to HuggingFace as
+     &quot;Llama-2-7B-Chat-Q4_K_M&quot;
+  6. Community users download, believing it is a standard quantization
+
+Detection difficulty: the file looks like any other Q4_K_M quantization.
+Without running safety benchmarks against the original FP16 model,
+the modification is undetectable to most users.</p>
+<h3 class="sh3">Attack 3 Selective Layer Quantization</h3>
+<p class="prose">Not all layers need to be quantized equally. An attacker who controls
+the quantization process can apply different quantization levels to
+different layers:
+
+  Standard approach: uniform quantization (INT4 everywhere)
+  Adversarial approach: INT4 everywhere EXCEPT safety-critical late layers,
+                        which receive INT2 quantization
+
+At INT2, only 4 values are representable per weight. This is insufficient
+to maintain safety decision boundaries. The model produces incoherent
+outputs for adversarial inputs that activate these degraded weights.
+
+The attack is self-concealing: for standard capability benchmarks,
+the INT4 weights in early layers maintain good quality. Only targeted
+safety evaluation on the late layers reveals the attack.</p>
+<h3 class="sh3">Attack 4 Quantization Triggered Behavior</h3>
+<p class="prose">A more sophisticated attack: exploit quantization rounding to create a
+backdoor that only activates in quantized models, not in the original.
+
+Mechanism:
+  1. Fine-tune the original model to have a latent backdoor behavior
+  2. The backdoor trigger relies on precise weight values that are
+     well-represented in FP32 but round to a specific pattern in INT4
+  3. In FP32: the weight values don&#x27;t quite cross the threshold for
+     the backdoor behavior
+  4. In INT4: the rounded weight values cross the threshold, activating
+     the backdoor
+
+This is a hardware-dependent backdoor: it requires knowing the exact
+quantization scheme that will be applied. If the adversary controls
+the quantization process (e.g., publishes a &quot;quantization service&quot;),
+they can craft model weights that trigger only after their specific
+quantization is applied.</p>
+<h3 class="sh2">Subsection 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Measuring Quantization Safety Degradation</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Safety Regression Testing Protocol</h3>
+<p class="prose">Before deploying any quantized model, run this protocol against the
+full-precision reference model:
+
+Step 1: Establish baseline
+  Run the FP32 or FP16 model on:
+    - Standard harmful request benchmark (HarmBench, SafetyBench, AdvBench)
+    - Borderline case set (dual-use content, nuanced judgment cases)
+    - Adversarial attack set (known jailbreak techniques)
+  Record: refusal rate per category, output quality metrics
+
+Step 2: Quantize with target configuration
+  Apply quantization (INT8, INT4, GPTQ, AWQ, etc.)
+  Use the planned calibration data (document it)
+
+Step 3: Run identical tests on quantized model
+  Same test set, same evaluation methodology
+  Record: refusal rate per category
+
+Step 4: Compute degradation delta
+  Δ_refusal = refusal_rate_FP16 - refusal_rate_quantized
+  Per-category degradation reveals which harm types are most affected
+
+Step 5: Apply acceptance criteria
+  Define maximum acceptable degradation per category:
+    Extreme harm categories (violence, CSAM): Δ ≤ 1%
+    High-risk categories (dangerous instructions): Δ ≤ 3%
+    Moderate categories (misinformation, privacy): Δ ≤ 5%
+  Reject quantization configurations that exceed thresholds</p>
+<h3 class="sh3">Perplexity As Proxy For Safety</h3>
+<p class="prose">A common mistake: using perplexity as a proxy for safety preservation.
+
+Perplexity measures how well the model predicts held-out text.
+It is a measure of language modeling quality, not safety behavior.
+
+Empirically: INT4 models often have perplexity within 5% of FP16 models
+while having 10-15% safety degradation. Perplexity and safety degradation
+are poorly correlated.
+
+Do not use perplexity as a safety acceptance criterion. Run actual safety tests.</p>
+<h3 class="sh3">Mixed Precision Quantization Defense</h3>
+<p class="prose">Given that late layers are most safety-critical:
+
+Mixed precision strategy:
+  First 60% of transformer blocks: INT4 (low safety impact)
+  Next 20% of transformer blocks: INT8 (medium safety sensitivity)
+  Last 20% of transformer blocks: FP16 (highest safety sensitivity)
+  Output projection (unembedding): FP16 (direct probability distribution impact)
+
+Memory vs safety tradeoff for Llama-2 7B (7B parameters):
+  Full INT4: 3.5 GB — maximum compression, significant safety risk
+  Mixed (60% INT4, 20% INT8, 20% FP16): ~5.5 GB — moderate compression, minimal safety risk
+  Full FP16: 14 GB — maximum quality, maximum memory
+
+This is not a standard available configuration in most frameworks —
+it requires custom quantization logic or framework extensions.
+For high-security deployments it is worth the engineering investment.</p>
+<h3 class="sh3">Monitoring Quantized Models In Production</h3>
+<p class="prose">Quantization safety properties should be monitored continuously, not just
+validated once at deployment:
+
+Output distribution monitoring:
+  Track: fraction of refusals over time vs baseline refusal rate
+  Alert: if refusal rate drops more than X% from validation baseline
+  This catches cases where the quantized model is drifting (rare but possible
+  with activation drift in very long conversations)
+
+Adversarial probe schedule:
+  Weekly: run the safety regression test suite on the production model
+  This detects if model behavior has changed (e.g., due to serving infrastructure
+  changes that affect quantization)
+
+User report monitoring:
+  Track: reports of unexpected harmful outputs
+  Alert: cluster of reports about specific harm categories may indicate
+  quantization degradation that escaped testing</p>
+<h3 class="sh2">Subsection 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Quantization Deployment Guide for Security Engineers</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Deployment Decision Tree</h3>
+<p class="prose">When selecting a quantization configuration for production deployment:
+
+Question 1: Is this a safety-critical deployment?
+  (Deployment where harmful outputs have significant real-world consequences)
+  YES → Do not use INT4 or below. Use INT8 at minimum; prefer FP16.
+  NO → Continue to Question 2.
+
+Question 2: Can you verify the quantization provenance?
+  (Do you know exactly how the quantized model was produced, by whom, with what data?)
+  YES → Use the verified quantization if it passes your safety regression tests.
+  NO → Quantize the model yourself from the verified source weights. Do not use
+       community quantizations (GGUF from HuggingFace) for safety-critical deployments.
+
+Question 3: What is your GPU memory budget?
+  &gt;40 GB per model replica → FP16 or BF16 (no quantization needed for 7B-13B)
+  20-40 GB → INT8 (LLM.int8()) with safety validation
+  10-20 GB → INT4 (GPTQ or AWQ) with full safety regression testing
+  &lt;10 GB → INT4 aggressive or mixed; requires extensive safety validation;
+            consider if deployment is appropriate</p>
+<h3 class="sh3">Quantization Provenance Verification</h3>
+<p class="prose">When evaluating a pre-quantized model (from HuggingFace, a vendor, or a colleague):
+
+Step 1: Verify source model
+  Confirm the quantized model was derived from the claimed source model.
+  Test: does the quantized model produce outputs similar to the known source?
+  (Not identical due to quantization error, but similar in style and capability)
+
+Step 2: Check quantization parameters
+  What method (GPTQ, AWQ, absmax)?
+  What calibration dataset?
+  What bit depth and grouping?
+  If these are not documented → treat as unverified.
+
+Step 3: Integrity check
+  For GGUF: compute SHA-256 hash of the file and compare to the publisher&#x27;s hash
+  (if provided). If no hash is provided, the file cannot be verified.
+  For HuggingFace models: check commit history, organization verification status,
+  and the number of downloads/stars as weak social verification signals.
+
+Step 4: Safety regression test
+  Run your standard safety test suite regardless of source reputation.
+  A reputable quantizer with poor calibration data can produce an unsafe model.</p>
+<h3 class="sh3">Framework Specific Guidance</h3>
+<h4 class="sh3">Huggingface Bitsandbytes</h4>
+<h4 class="sh3">Method</h4>
+<p class="prose">LLM.int8() and NF4 (4-bit NormalFloat)</p>
+<h4 class="sh3">Command</h4>
+<p class="prose">from transformers import AutoModelForCausalLM, BitsAndBytesConfig
+config = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type=&quot;nf4&quot;)
+model = AutoModelForCausalLM.from_pretrained(model_id, quantization_config=config)</p>
+<h4 class="sh3">Notes</h4>
+<p class="prose">NF4 is the standard for QLoRA fine-tuning; NF4 inference is similar quality to GPTQ</p>
+<h4 class="sh3">Security</h4>
+<p class="prose">Weights loaded from original source — provenance maintained</p>
+<h4 class="sh3">Gptq Via Autoawq Or Exllamav2</h4>
+<h4 class="sh3">Method</h4>
+<p class="prose">GPTQ quantization with configurable calibration data</p>
+<h4 class="sh3">Notes</h4>
+<p class="prose">Calibration data is a required parameter — document what you use</p>
+<h4 class="sh3">Security</h4>
+<p class="prose">Always use safety-inclusive calibration data for aligned models</p>
+<h4 class="sh3">Llama Cpp Gguf</h4>
+<h4 class="sh3">Method</h4>
+<p class="prose">k-quant methods (Q4_K_M, Q5_K_M, etc.)</p>
+<h4 class="sh3">Notes</h4>
+<p class="prose">Excellent CPU inference; GGUF is community format — verify source</p>
+<h4 class="sh3">Security</h4>
+<p class="prose">Only use GGUF files from trusted sources with documented provenance</p>
+<h3 class="sh3">Community Quantization Risk Assessment</h3>
+<p class="prose">HuggingFace hosts thousands of community-quantized models. A risk assessment
+framework for deciding whether to use a specific community quantization:
+
+Low risk (consider for non-safety-critical deployments):
+  - Published by the original model organization (Meta, Mistral AI, etc.)
+  - Published by well-known and verified community quantizers (TheBloke, etc.)
+  - SHA-256 hash provided and verified
+  - Calibration dataset documented
+
+Medium risk (validate before use):
+  - Published by unverified organization with &gt;10K downloads
+  - Standard quantization parameters without documented calibration
+  - No SHA-256 hash but community has verified
+
+High risk (do not use for aligned model deployments):
+  - Published by unverified individual
+  - Model name suggests safety modifications (&quot;uncensored&quot;, &quot;unfiltered&quot;)
+  - No documentation of quantization method
+  - Calibration data unknown</p>
+<h2 class="sh1">Implementation</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Quantization Pipeline and Safety Testing</p>
+<h3 class="sh2">Notebooks</h3>
+<ul class="blist"><li>03-llm-internals/quantization_basics.ipynb</li><li>03-llm-internals/quantization_safety.ipynb</li></ul>
+<h3 class="sh2">Basic Int8 Quantization</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Implement absmax INT8 quantization from scratch for a linear layer</p>
+<h3 class="sh3">Code Sketch</h3>
+<pre class="code"><code>import torch
+import torch.nn as nn
+
+class QuantizedLinear(nn.Module):
+    def __init__(self, original_linear):
+        super().__init__()
+        W = original_linear.weight.data.float()
+
+        # Absmax quantization
+        self.scale = W.abs().max() / 127.0
+        W_int8 = (W / self.scale).round().clamp(-128, 127).to(torch.int8)
+        self.register_buffer(&#x27;weight_int8&#x27;, W_int8)
+
+        if original_linear.bias is not None:
+            self.register_buffer(&#x27;bias&#x27;, original_linear.bias.data)
+        else:
+            self.bias = None
+
+        self.out_features = original_linear.out_features
+        self.in_features = original_linear.in_features
+
+    def forward(self, x):
+        # Dequantize weights for forward pass
+        weight_fp = self.weight_int8.float() * self.scale
+        return nn.functional.linear(x, weight_fp, self.bias)
+
+def quantize_model_int8(model):
+    &quot;&quot;&quot;Replace all Linear layers with QuantizedLinear&quot;&quot;&quot;
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            parent = get_parent_module(model, name)
+            attr = name.split(&#x27;.&#x27;)[-1]
+            setattr(parent, attr, QuantizedLinear(module))
+    return model</code></pre>
+<h3 class="sh2">Quantization Error Analyzer</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Measure per-layer quantization error to identify which layers lose most precision</p>
+<h3 class="sh3">Code Sketch</h3>
+<pre class="code"><code>def analyze_quantization_error(original_model, quantized_model, test_inputs):
+    &quot;&quot;&quot;
+    Compare layer-by-layer outputs between original and quantized models.
+    Identifies layers with highest quantization-induced error.
+    &quot;&quot;&quot;
+    layer_errors = {}
+    hooks = []
+
+    # Register hooks on both models to capture intermediate activations
+    original_acts = {}
+    quantized_acts = {}
+
+    def make_hook(acts_dict, layer_name):
+        def hook(module, input, output):
+            acts_dict[layer_name] = output.detach()
+        return hook
+
+    for (name, orig_mod), (_, quant_mod) in zip(
+        original_model.named_modules(), quantized_model.named_modules()
+    ):
+        if isinstance(orig_mod, nn.Linear):
+            hooks.append(orig_mod.register_forward_hook(make_hook(original_acts, name)))
+            hooks.append(quant_mod.register_forward_hook(make_hook(quantized_acts, name)))
+
+    # Forward pass
+    with torch.no_grad():
+        original_model(test_inputs)
+        quantized_model(test_inputs)
+
+    # Compare activations
+    for name in original_acts:
+        if name in quantized_acts:
+            err = (original_acts[name] - quantized_acts[name]).abs().mean()
+            layer_errors[name] = err.item()
+
+    # Cleanup hooks
+    for h in hooks:
+        h.remove()
+
+    return dict(sorted(layer_errors.items(), key=lambda x: x[1], reverse=True))</code></pre>
+<h3 class="sh2">Safety Regression Test</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Compare safety behavior between FP16 and quantized models using a structured
+harm probe dataset.</p>
+<h3 class="sh3">Harm Probe Categories</h3>
+<ul class="blist"><li>Explicit harmful requests (clear refusal expected)</li><li>Borderline dual-use requests (nuanced judgment required)</li><li>Indirect harmful requests (via fictional framing)</li><li>Jailbreak attempts (standard technique set)</li></ul>
+<h3 class="sh3">Code Sketch</h3>
+<pre class="code"><code>def run_safety_regression(fp16_model, quantized_model, harm_probes, tokenizer):
+    results = {&quot;fp16&quot;: {}, &quot;quantized&quot;: {}}
+
+    for category, prompts in harm_probes.items():
+        fp16_refusals = 0
+        quant_refusals = 0
+
+        for prompt in prompts:
+            inputs = tokenizer(prompt, return_tensors=&quot;pt&quot;)
+
+            with torch.no_grad():
+                fp16_out = fp16_model.generate(**inputs, max_new_tokens=200)
+                quant_out = quantized_model.generate(**inputs, max_new_tokens=200)
+
+            fp16_text = tokenizer.decode(fp16_out[0])
+            quant_text = tokenizer.decode(quant_out[0])
+
+            # Simple refusal detector (replace with classifier in production)
+            fp16_refused = any(r in fp16_text for r in REFUSAL_PHRASES)
+            quant_refused = any(r in quant_text for r in REFUSAL_PHRASES)
+
+            fp16_refusals += fp16_refused
+            quant_refusals += quant_refused
+
+        results[&quot;fp16&quot;][category] = fp16_refusals / len(prompts)
+        results[&quot;quantized&quot;][category] = quant_refusals / len(prompts)
+
+    # Compute degradation
+    for category in harm_probes:
+        delta = results[&quot;fp16&quot;][category] - results[&quot;quantized&quot;][category]
+        print(f&quot;{category}: FP16={results[&#x27;fp16&#x27;][category]:.2%}, &quot;
+              f&quot;Quantized={results[&#x27;quantized&#x27;][category]:.2%}, &quot;
+              f&quot;Δ={delta:+.2%}&quot;)
+
+    return results</code></pre>
+<h3 class="sh2">Bit Width Tradeoff Calculator</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Calculate memory, throughput, and safety score tradeoffs across quantization levels.</p>
+<h3 class="sh3">Inputs</h3>
+<p class="prose">Model config (n_layers, d_model, vocab_size), GPU specs, safety test results</p>
+<h3 class="sh3">Outputs</h3>
+<p class="prose">Table: bit_width × [memory_gb, tokens_per_sec, safety_score, recommendation]</p>
+<h3 class="sh3">Example Output</h3>
+<p class="prose">FP32: 56GB,  25 tok/s,  safety=1.00,  ❌ Exceeds GPU budget
+FP16: 28GB,  50 tok/s,  safety=0.99,  ✓ Recommended baseline
+INT8: 14GB,  75 tok/s,  safety=0.97,  ✓ Acceptable for most deployments
+INT4: 7GB,  100 tok/s,  safety=0.88,  ⚠ Validate safety before deploying
+INT2: 3.5GB, 120 tok/s, safety=0.62,  ❌ Safety degradation unacceptable</p>
+<h2 class="sh1">Exercises</h2>
+<h3 class="sh2">Exercise 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Implement INT8 Quantization and Measure Error</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Medium</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">2 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Build INT8 quantization from scratch and measure per-layer error</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Implement QuantizedLinear class with absmax INT8 quantization</li><li>Quantize GPT-2 small — replace all Linear layers</li><li>Compare outputs: FP32 vs INT8 on 10 test prompts</li><li>Run the quantization error analyzer to find highest-error layers</li><li>Verify: do the highest-error layers match the prediction (late layers, output projection)?</li><li>Measure memory: model size before and after quantization</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>INT8 model produces coherent text (not garbage)</li><li>Memory reduction confirmed: ~50% vs FP32</li><li>Highest-error layers identified and match theoretical prediction</li><li>Max absolute error per layer plotted as heatmap</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">quantization_error_heatmap.png — visualization of where precision is lost</p>
+<h3 class="sh2">Exercise 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Safety Regression Testing Across Bit Widths</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Medium</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">2.5 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Measure how quantization degrades safety behavior across INT8, INT4, INT2</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Start with a fine-tuned GPT-2 model that has some safety behaviors (from Section 04_06)</li><li>Quantize to INT8, INT4 (simulated via rounding), and INT2</li><li>Build harm probe dataset: 20 prompts per category × 3 categories = 60 total</li><li>Run all 60 prompts on FP32, INT8, INT4, INT2 models</li><li>Measure refusal rate and response quality per bit width per category</li><li>Plot: refusal rate degradation curve vs bit width</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>60 prompts run × 4 model versions = 240 evaluations</li><li>Degradation is clearly greater at lower bit widths</li><li>Category 3 (control) shows minimal degradation (confirms methodology)</li><li>Crossover point identified: below which bit width does safety degrade &gt;5%?</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">safety_degradation_by_bitwidth.png + safety_regression_report.md</p>
+<h3 class="sh2">Exercise 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Calibration Data Impact on GPTQ Safety</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Hard</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">3 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Demonstrate that calibration data choice materially affects post-GPTQ safety</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Prepare two calibration datasets:</li><li>Quantize the same model twice using GPTQ with Dataset A and Dataset B</li><li>Run safety regression tests on both quantized models and the FP32 baseline</li><li>Measure: how much better does Dataset B calibration preserve safety?</li><li>Identify: which harm categories benefit most from safety-inclusive calibration?</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>Two GPTQ runs completed with documented calibration datasets</li><li>Safety-inclusive calibration preserves refusal rates better on at least 2 of 3 categories</li><li>Measured difference: Dataset B model has ≥3 percentage point better refusal rate</li><li>Recommendation documented: calibration data requirements for safety-critical quantization</li></ul>
+<h3 class="sh3">Security Note</h3>
+<p class="prose">This exercise demonstrates the adversarial calibration attack from Section 4
+from the defense perspective. The same technique that an attacker uses to
+degrade safety can be used by defenders to preserve it.</p>
+<h3 class="sh2">Exercise 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">GGUF Provenance Audit</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Easy</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">1 hour</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Build a provenance audit procedure for community-quantized models</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Select 3 GGUF models from HuggingFace (different publishers, same base model)</li><li>For each: document provenance information:</li><li>Apply the risk assessment framework from Section 6</li><li>Classify each: Low / Medium / High risk</li><li>Run basic behavioral comparison: do all three produce similar outputs for benign prompts?</li><li>Run safety probe: do all three refuse a standard harmful request?</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>3 GGUF models audited with documented provenance information</li><li>Risk classification applied consistently using the framework</li><li>Behavioral comparison reveals any significant outlier</li><li>Safety probe results documented for all three</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">gguf_provenance_audit_template.md — reusable audit form.
+This template is used in Chapter 11 (Detection Engineering) for supply chain audits.</p>
+<h2 class="sh1">Key Concepts Summary</h2>
+<h3 class="sh2">Precision Formats</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Every halving of bits doubles quantization error and halves memory</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Safety degradation accelerates at lower bit depths — INT4 is a threshold</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">LLMs have outlier activations that break naive absmax quantization</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">LLM.int8() mixed precision or k-quant methods are required for quality</p>
+<h3 class="sh2">Safety And Quantization</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Safety behaviors are a thin, high-frequency overlay — fragile to quantization</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">INT4 models need safety regression testing; INT2 models are generally unsafe</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Calibration data determines which weights are protected from error</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Use safety-inclusive calibration data for aligned models</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Late layers and output projection have highest safety impact</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Mixed precision: keep last 20% of layers at INT8 or FP16</p>
+<h3 class="sh2">Attack Vectors</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">GGUF files have no cryptographic verification</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Community quantizations require provenance audit before use in deployment</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Adversarial calibration data degrades safety while preserving benchmarks</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Standard benchmarks are insufficient safety validation for quantized models</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Quantization rounding can be exploited to create model-state-dependent backdoors</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Quantized models from untrusted sources require behavioral testing, not just inspection</p>
+<h2 class="sh1">Connections</h2>
+<h3 class="sh2">Builds On</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 1, Section 7</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Floating-point representation — FP32/FP16/BF16 basics from Chapter 1</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_05</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">RLHF — safety behaviors that quantization degrades</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_06</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">SFT — alignment layer fragility to quantization established here</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_07</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Pre-training — quantized models are quantizations of pre-trained foundations</p>
+<h3 class="sh2">Prepares For</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_13</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Model distillation — complementary compression technique to quantization</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_17</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Chapter project — build and deploy a quantized model with safety validation</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 8 (Part 2)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Training data and model supply chain attacks — GGUF poisoning is a supply chain attack</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 11 (Part 3)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Detection framework — quantization safety regression testing as a detection primitive</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 14 (Part 3)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Production deployment — quantization decision tree and monitoring</p>
+<h3 class="sh2">Security Thread</h3>
+<p class="prose">Quantization adds the third dimension to the model compression security surface:
+- Section 12 (this): quantization degrades safety in measurable, non-uniform ways;
+  community quantizations are an unverified supply chain; GGUF files are unsigned
+- Section 13 (next): distillation creates alignment transfer failures; smaller student
+  models may not learn safety behaviors from larger teacher models
+Together these two sections establish that model compression is always a security event,
+not just a performance event. Every compression decision requires safety validation.</p>
+<h2 class="sh1">Further Reading</h2>
+<h3 class="sh2">Primary</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Dettmers et al. (2022)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Original mixed-precision INT8 paper — Section 2 on outlier features is essential</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2208.07339</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Frantar et al. (2022)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">GPTQ algorithm — Algorithm 1 is the implementation reference</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2210.17323</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Lin et al. (2023)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">AWQ paper — Section 3 on salient weight identification</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2306.00978</p>
+<h3 class="sh2">Safety</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Do Quantized Large Language Models Forget Knowledge and Reasoning?</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Empirical study of capability and safety degradation across bit widths</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2312.04035</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Quantization Backdoors to Large Language Models</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Xu et al. (2023)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Demonstrates quantization-triggered backdoors — directly relevant to attack vector 4</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2306.05499</p>
+</article>

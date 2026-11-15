@@ -1,0 +1,972 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 10 · Section 15 · ~6 pages</div>
+<h1>Adversarial Training: Upstream Empirical Robustness</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Adversarial training makes the model itself harder to fool by training on its own worst-case inputs -- the strongest empirical defence against the Chapter 10 attacks, paid for in training compute, clean accuracy, and a robustness claim that is only as good as the evaluation behind it.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Track 7 detects adversarial examples after the model is deployed. Section 10.14 certifies a
+narrow L2 threat model at a real accuracy and inference cost. Neither changes how many
+adversarial examples exist for the model in the first place. Adversarial training does: it
+moves the decision boundary away from the data so that small perturbations no longer cross
+it. It is the defence that survived the 2017-2018 wave of broken defences, and every later
+method in this section is a refinement of it.
+
+It also comes with the most ways to fool yourself. Single-step training can collapse while
+its own metrics look healthy, the final epoch is often not the most robust one, and a model
+hardened for one norm can be weaker in another. This section builds the training loops and
+the evaluator and checklist that keep the robustness claim honest.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 10.15 completes the upstream half of the Chapter 10 defence stack. Section 10.4
+built PGD and the PGDConfig training and evaluation presets; this section wraps them in the
+min-max training loop. Section 10.14 gave the provable but narrow guarantee; this section
+gives the broad but unprovable one. Section 10.16 combines both with Track 7.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 10.3: FGSM (the single-step inner attack)</li><li>Section 10.4: PGD, pgd_attack.py and PGDConfig in pgd_training_data_generator.py (imported here)</li><li>Section 10.5: C&amp;W (cw_attack.py, used by the evaluator)</li><li>Section 10.7: transferability (the transfer check in the evaluator)</li><li>Section 10.14: certified robustness (the formal complement to this section)</li><li>Chapter 8 Section 8.13: defensive training (the training-time defence pattern this section extends)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Min-Max Objective</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Section 10.4 introduced the robust optimisation objective of Madry, Makelov, Schmidt, Tsipras
+and Vladu (2018):
+
+  min_theta E_(x,y)~D [ max_{||delta|| &lt;= epsilon} L(f_theta(x + delta), y) ]
+
+Adversarial training is the direct implementation. For each minibatch, solve the inner
+maximisation approximately with PGD to get the worst-case perturbed inputs, then take an
+ordinary gradient step on the loss at those inputs. The attacker moves first; the model
+learns from the attacker&#x27;s best move.
+
+Two implementation details matter more than they look. First, the inner attack runs against
+the current weights in evaluation mode. In training mode, batch normalisation updates its
+running statistics on every PGD step, so the statistics end up describing adversarial
+batches rather than the data. adversarial_trainer.py switches to eval for the attack and
+back to train for the update. Second, the attack configuration for training and for
+evaluation must differ. Training uses PGDConfig.madry_training (k = 7, alpha = 2 * epsilon / 3,
+one restart) because the inner loop runs on every batch. Evaluation uses
+PGDConfig.evaluation_grade (k = 40, five restarts) because evaluation is where the claim is
+made.
+
+On CIFAR-10 at epsilon = 8/255 this recipe gives roughly 87% clean accuracy and 45% PGD
+robust accuracy, against about 95% clean and near-zero robust accuracy for standard training.
+That gap -- eight points of clean accuracy for forty points of robustness -- is the trade the
+rest of this section manages.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why Robustness Costs Accuracy: Robust and Non-Robust Features</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Tsipras et al. 2019 showed that the accuracy cost is not an artefact of training difficulty.
+It can be built into the data. The deliverables in this section use their construction: one
+feature that agrees with the label 90% of the time and is far from the boundary, plus fifty
+features that are each only weakly correlated with the label but together predict it almost
+perfectly.
+
+A standard model learns the fifty weak features, because they give near-perfect accuracy.
+Each weak feature is only slightly shifted by the label, so an L-infinity perturbation a
+little larger than that shift erases all fifty at once. In the adversarial_trainer.py demo the
+standard model scores 99.9% clean and 7.9% under PGD. The adversarially trained model learns
+that the weak features cannot be trusted, falls back to the robust feature, and scores 89.8%
+clean and 89.8% under PGD. Its clean accuracy is capped by the robust feature&#x27;s 90% agreement
+rate. That cap is the accuracy-robustness trade-off in its simplest form.
+
+Ilyas et al. 2019 argued that real image datasets contain many such non-robust features:
+genuinely predictive patterns that humans do not perceive and that small perturbations can
+flip. On that view adversarial examples are not bugs in the model -- they are the model using
+every feature it was given. Adversarial training removes the non-robust features from what the
+model may use, and with them some accuracy.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Single-Step Training: FGSM, Free and Fast</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">PGD training costs about k + 1 forward-backward passes per batch, so k = 7 makes training
+roughly eight times slower. The obvious shortcut is the single-step attack. Goodfellow, Shlens
+and Szegedy (2015) trained on FGSM examples mixed 50/50 with clean examples. It improved
+robustness to FGSM, but Kurakin et al. 2017 and Tramer et al. 2018 found that single-step
+training from the clean input mostly teaches the model to make its own gradient misleading
+near the data -- gradient masking. Such models resist FGSM, fall to PGD, and are often more
+vulnerable to transfer attacks from an undefended surrogate than to white-box attacks on
+themselves.
+
+Two methods made cheap adversarial training work. Free adversarial training (Shafahi et al.
+2019) replays each minibatch several times and reuses the single backward pass of each replay
+both to update the weights and to update the perturbation, reaching PGD-like robustness at
+close to standard training cost. Fast adversarial training (Wong, Rice and Kolter 2020)
+showed that plain FGSM works if the step starts from a random point in the epsilon ball and
+uses a step of about 1.25 * epsilon.
+
+Fast training has a characteristic failure: catastrophic overfitting. Within a single epoch,
+robust accuracy against PGD can drop to near zero while accuracy against FGSM stays high. The
+model has learned to defeat the single-step linear approximation rather than to be robust.
+The defence is cheap: evaluate PGD on a small held-out batch every epoch and roll back on a
+sharp drop. fgsm_adversarial_trainer.py implements that guard. Random initialisation plus the
+guard is what makes single-step training usable; without the guard, the training metrics
+will not tell you it has failed.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">TRADES: Separating Accuracy from Robustness</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Madry training replaces the clean loss with the adversarial loss, so accuracy and robustness
+are traded implicitly. TRADES (Zhang et al. 2019) makes the trade explicit:
+
+  L = CE(f(x), y) + beta * max_{||x&#x27; - x|| &lt;= epsilon} KL(f(x) || f(x&#x27;))
+
+The first term is ordinary classification accuracy. The second term penalises how much the
+prediction can change inside the epsilon ball -- the smoothness of the model around each input.
+The inner maximisation does not use the label at all: it pushes the prediction away from the
+model&#x27;s own clean prediction. beta sets the balance. beta = 0 is standard training; larger
+beta buys robustness with clean accuracy.
+
+trades_trainer.py sweeps beta on the synthetic task. beta = 0 reproduces the standard model
+(100% clean, about 10% robust), beta = 0.1 buys a little robustness, and beta = 1 already
+reaches the robust-feature solution. On CIFAR-10 the paper used beta = 6, and TRADES won the
+NeurIPS 2018 Adversarial Vision Challenge. The production lesson is that beta is a business
+decision -- how much clean accuracy the deployment owner will give up -- and should be set and
+signed off as one, not copied from a paper.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Robust Overfitting and Model Selection</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Rice, Wong and Kolter (2020) found that adversarially trained networks overfit in a way
+standard networks largely do not: robust test accuracy peaks partway through training and then
+declines, often by several points, while robust training accuracy keeps rising. Training to the
+final epoch and shipping the result is therefore a mistake. Simple early stopping on held-out
+robust accuracy recovered most of the gains attributed to later algorithmic improvements.
+
+adversarial_trainer.py evaluates robust accuracy on a validation set every epoch with the
+evaluation-grade PGD config, keeps the best checkpoint, and stops after a patience window.
+The cost is one evaluation-grade PGD pass over the validation set per epoch -- small next to
+the training cost, and the only way to know which checkpoint is the robust one.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Evaluating a Hardened Model Honestly</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Adversarial training changes the model&#x27;s gradients, so every evaluation trap from Sections
+10.4 and 10.5 applies with extra force. adversarial_training_evaluator.py runs five checks on
+the same test set.
+
+Clean accuracy measures the cost. FGSM and evaluation-grade PGD measure robustness; the FGSM
+to PGD gap is the Section 10.4 gradient-masking diagnostic. Transfer accuracy uses PGD examples
+crafted on a separately trained standard model: if transfer attacks succeed more often than
+white-box PGD on the hardened model, its gradients are masked and the white-box number cannot
+be trusted. The C&amp;W column measures the median L2 norm needed to flip a correctly classified
+input.
+
+The C&amp;W column carries the section&#x27;s most important warning. On the synthetic task the
+L-infinity-hardened model needs a smaller L2 perturbation to flip than the standard model does.
+It relies on one robust feature, and an L2 perturbation concentrated on that one feature is
+cheap. Robustness is norm-specific: training against L-infinity at one epsilon buys robustness
+against L-infinity at that epsilon and does not certify anything else. The evaluation must
+cover every norm the threat model names. For publication-grade results, AutoAttack (Croce and
+Hein 2020) -- an ensemble of parameter-free attacks -- and the RobustBench leaderboard are the
+current standard; they exist because many published defences were later found to be
+over-reported by weaker evaluations.</p>
+<h3 class="sh2">Part 7</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Training for Text and LLM Classifiers</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">For image models the inner maximisation is a continuous optimisation. For text it is the
+discrete search of Section 10.9, which is far more expensive: running TextFooler or HotFlip
+inside every training batch multiplies cost by the number of queries each attack needs. Two
+practical patterns exist. Augmentation generates adversarial text offline with the Section 10.9
+attacks and adds it to the training set; it is cheap but only covers the attacks used. Embedding
+space training (FreeLB, Zhu et al. 2020) applies PGD to the continuous token embeddings instead
+of the tokens; it improves robustness to small perturbations but the embedding-space
+perturbation does not correspond to any real text an attacker can type.
+
+For LLM safety the same min-max idea has been applied against optimised jailbreak suffixes:
+HarmBench (Mazeika et al. 2024) trained a model against GCG-style attacks (Section 7.9) during
+fine-tuning and reported large gains against that attack. The lesson from images carries over:
+robustness transfers poorly to attack families the training did not include. For LLM
+classifiers adversarial training is a hardening step, not a guarantee, and Track 7 together
+with the Chapter 7 jailbreak tracks stay in front of it.</p>
+<h3 class="sh2">Part 8</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Positioning: The Two-Surface Defence</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Adversarial training is the upstream control. It reduces the fraction of inputs for which an
+adversarial example exists within the defended budget. Track 7 is the runtime control. It
+catches adversarial examples that survive into production, including those outside the
+defended norm or epsilon. Chapter 8 used the same pattern for poisoning and Chapter 9 for
+extraction: differential privacy training upstream, monitoring and output controls at runtime.
+
+The two layers also make each other better. An adversarially trained model has smoother
+decision boundaries, so Track 7&#x27;s consistency checker sees fewer natural inputs near the
+boundary and its false positive rate falls. The checklist in this section ends with one
+operational step that is easy to miss: adversarial training moves the decision boundary, so
+every threshold set on the old model -- in the model&#x27;s own decision layer and in Track 7 --
+must be recalibrated on the hardened one.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Training Methods Compared</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Inner attack, cost, and known failure mode for each method in this section</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Method</li><li>Inner attack</li><li>Inner passes per batch</li><li>Robustness</li><li>Known failure mode</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>FGSM training (Goodfellow et al. 2015)</li><li>FGSM from clean input, 50/50 clean mix</li><li>1</li><li>Weak</li><li>Gradient masking; falls to PGD and transfer</li></ul>
+<ul class="blist"><li>PGD training (Madry et al. 2018)</li><li>PGD, k = 7, alpha = 2 * eps / 3</li><li>7</li><li>Strong (reference)</li><li>Cost; robust overfitting without early stopping</li></ul>
+<ul class="blist"><li>Free training (Shafahi et al. 2019)</li><li>Perturbation updated on minibatch replays</li><li>~1 (amortised)</li><li>Close to PGD training</li><li>Replay count needs tuning</li></ul>
+<ul class="blist"><li>Fast FGSM (Wong et al. 2020)</li><li>FGSM from random start, step 1.25 * eps</li><li>1</li><li>Close to PGD training</li><li>Catastrophic overfitting; needs a PGD guard</li></ul>
+<ul class="blist"><li>TRADES (Zhang et al. 2019)</li><li>PGD on KL(f(x) || f(x&#x27;)), no label</li><li>~10</li><li>Strong; explicit trade-off</li><li>beta set by copying, not by business decision</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Hardening Report: Synthetic Task Results</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">One run of the deliverables (fixed seeds, CPU) on the robust/non-robust feature task at L-inf epsilon = 0.1; exact values vary slightly by platform</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Model</li><li>Clean</li><li>PGD-40 x 5</li><li>Note</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Standard training</li><li>0.999</li><li>0.079</li><li>Uses non-robust features; collapses under attack</li></ul>
+<ul class="blist"><li>PGD training (Madry)</li><li>0.898</li><li>0.898</li><li>Robust feature only; capped by its 90% agreement rate</li></ul>
+<ul class="blist"><li>Fast FGSM with random init</li><li>0.898</li><li>0.898</li><li>1 inner pass per batch instead of 7; the PGD guard rolled back a collapse at epoch 28</li></ul>
+<ul class="blist"><li>TRADES beta = 0.1</li><li>0.992</li><li>0.221</li><li>Small beta: mostly standard behaviour</li></ul>
+<ul class="blist"><li>TRADES beta = 1.0</li><li>0.898</li><li>0.898</li><li>Robust-feature solution reached</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Evaluation Signals and What They Mean</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">How to read each column of the hardening report</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Signal</li><li>Healthy</li><li>Warning sign</li><li>Action</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>PGD-40 x 5 accuracy</li><li>Stable as k and restarts increase</li><li>Rises when k is reduced; falls sharply with more restarts</li><li>Report only evaluation-grade numbers</li></ul>
+<ul class="blist"><li>FGSM minus PGD accuracy</li><li>Small (&lt;= 0.15)</li><li>FGSM far above PGD</li><li>Suspect gradient masking; run C&amp;W and BPDA</li></ul>
+<ul class="blist"><li>Transfer accuracy</li><li>At or above white-box PGD accuracy</li><li>Transfer attack beats white-box attack</li><li>White-box gradients are masked; do not trust PGD number</li></ul>
+<ul class="blist"><li>Validation PGD per epoch</li><li>Rises then plateaus</li><li>Peaks then declines</li><li>Robust overfitting; keep the best checkpoint</li></ul>
+<ul class="blist"><li>Fast-training PGD guard</li><li>Tracks FGSM accuracy</li><li>Drops to near zero within an epoch</li><li>Catastrophic overfitting; roll back</li></ul>
+<ul class="blist"><li>C&amp;W median L2 (L-inf-trained model)</li><li>Reported alongside threat model</li><li>Lower than the standard model</li><li>Robustness is norm-specific; evaluate every threat norm</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD Adversarial Trainer</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">adversarial_trainer.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Madry min-max training with eval-mode PGD generation, optional clean-loss mixing, per-epoch robust validation and best-checkpoint selection; includes the robust/non-robust synthetic task and a standard-training baseline</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: torch.
+Imports pgd_linf from pgd_attack.py and PGDConfig from pgd_training_data_generator.py
+(Section 10.4). Other deliverables in this section import the dataset, ToyMLP and
+accuracy helpers from this file.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># adversarial_trainer.py
+# Section 10.15: Adversarial Training -- PGD adversarial training (Madry et al. 2018)
+# 20260608 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import copy
+from dataclasses import dataclass, field
+from typing import List, Tuple
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+from pgd_attack import pgd_linf
+from pgd_training_data_generator import PGDConfig
+
+
+# ---------------------------------------------------------------------------
+# Synthetic task with one robust feature and many non-robust features
+# ---------------------------------------------------------------------------
+
+def make_robust_nonrobust_dataset(n: int, n_weak: int = 50, p_robust: float = 0.9,
+                                  eta: float = 0.064, noise: float = 0.15,
+                                  seed: int = 0) -&gt; Tuple[Tensor, Tensor]:
+    &#x27;&#x27;&#x27;
+    Binary task in [0, 1] after Tsipras et al. 2019.
+    Feature 0 (robust): 0.5 +/- 0.25, agrees with the label with probability p_robust.
+    Features 1..n_weak (non-robust): 0.5 +/- eta plus Gaussian noise. Each is weak,
+    but together they predict the label almost perfectly -- and an L-inf perturbation
+    of a little more than eta erases all of them at once.
+    &#x27;&#x27;&#x27;
+    g = torch.Generator().manual_seed(seed)
+    y = torch.randint(0, 2, (n,), generator=g)
+    sign = (2 * y - 1).float().unsqueeze(1)
+    agree = (torch.rand(n, 1, generator=g) &lt; p_robust).float() * 2 - 1
+    robust = 0.5 + 0.25 * sign * agree
+    weak = 0.5 + eta * sign + noise * torch.randn(n, n_weak, generator=g)
+    return torch.cat([robust, weak], dim=1).clamp(0.0, 1.0), y
+
+
+class ToyMLP(nn.Module):
+    def __init__(self, n_features: int = 51, n_classes: int = 2, hidden: int = 64):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(n_features, hidden), nn.ReLU(),
+            nn.Linear(hidden, n_classes),
+        )
+
+    def forward(self, x: Tensor) -&gt; Tensor:
+        return self.net(x.view(x.size(0), -1))
+
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AdvTrainConfig:
+    train_pgd: PGDConfig             # inner maximisation: PGDConfig.madry_training(eps)
+    eval_pgd: PGDConfig              # model selection: PGDConfig.evaluation_grade(eps)
+    epochs: int = 30
+    lr: float = 1e-2
+    batch_size: int = 128
+    clean_weight: float = 0.0        # 0.0 = pure Madry; 0.5 = Goodfellow-style 50/50 mix
+    patience: int = 8                # epochs without robust-accuracy improvement before stopping
+
+
+@dataclass
+class EpochLog:
+    epoch: int
+    train_loss: float
+    val_clean_accuracy: float
+    val_robust_accuracy: float
+
+
+@dataclass
+class TrainingResult:
+    model: nn.Module
+    best_epoch: int
+    logs: List[EpochLog] = field(default_factory=list)
+
+
+def clean_accuracy(model: nn.Module, x: Tensor, y: Tensor) -&gt; float:
+    model.eval()
+    with torch.no_grad():
+        return (model(x).argmax(1) == y).float().mean().item()
+
+
+def robust_accuracy(model: nn.Module, x: Tensor, y: Tensor, cfg: PGDConfig) -&gt; float:
+    model.eval()
+    x_adv = pgd_linf(model, x, y, epsilon=cfg.epsilon, alpha=cfg.alpha, n_steps=cfg.n_steps,
+                     n_restarts=cfg.n_restarts, clip_min=cfg.clip_min, clip_max=cfg.clip_max)
+    return clean_accuracy(model, x_adv, y)
+
+
+def train_epoch(model: nn.Module, opt: torch.optim.Optimizer, x: Tensor, y: Tensor,
+                cfg: AdvTrainConfig) -&gt; float:
+    loss_fn = nn.CrossEntropyLoss()
+    perm = torch.randperm(x.size(0))
+    total, batches = 0.0, 0
+    for i in range(0, x.size(0), cfg.batch_size):
+        idx = perm[i:i + cfg.batch_size]
+        xb, yb = x[idx], y[idx]
+
+        # Inner maximisation. Attack the CURRENT weights in eval mode so batch-norm
+        # statistics are not updated by adversarial batches mid-attack.
+        model.eval()
+        x_adv = pgd_linf(model, xb, yb, epsilon=cfg.train_pgd.epsilon, alpha=cfg.train_pgd.alpha,
+                         n_steps=cfg.train_pgd.n_steps, n_restarts=cfg.train_pgd.n_restarts,
+                         clip_min=cfg.train_pgd.clip_min, clip_max=cfg.train_pgd.clip_max)
+
+        # Outer minimisation.
+        model.train()
+        opt.zero_grad()
+        loss = (1 - cfg.clean_weight) * loss_fn(model(x_adv), yb)
+        if cfg.clean_weight &gt; 0:
+            loss = loss + cfg.clean_weight * loss_fn(model(xb), yb)
+        loss.backward()
+        opt.step()
+        total += loss.item()
+        batches += 1
+    return total / batches
+
+
+def adversarial_train(model: nn.Module, x_train: Tensor, y_train: Tensor,
+                      x_val: Tensor, y_val: Tensor, cfg: AdvTrainConfig) -&gt; TrainingResult:
+    &#x27;&#x27;&#x27;
+    Madry min-max training with model selection on held-out ROBUST accuracy.
+    Robust overfitting (Rice et al. 2020) means the last epoch is often not the
+    most robust one: keep the best checkpoint, not the final weights.
+    &#x27;&#x27;&#x27;
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    best_state, best_robust, best_epoch = copy.deepcopy(model.state_dict()), -1.0, 0
+    logs: List[EpochLog] = []
+    for epoch in range(1, cfg.epochs + 1):
+        loss = train_epoch(model, opt, x_train, y_train, cfg)
+        log = EpochLog(epoch, loss, clean_accuracy(model, x_val, y_val),
+                       robust_accuracy(model, x_val, y_val, cfg.eval_pgd))
+        logs.append(log)
+        if log.val_robust_accuracy &gt; best_robust:
+            best_robust, best_epoch = log.val_robust_accuracy, epoch
+            best_state = copy.deepcopy(model.state_dict())
+        elif epoch - best_epoch &gt;= cfg.patience:
+            break
+    model.load_state_dict(best_state)
+    model.eval()
+    return TrainingResult(model, best_epoch, logs)
+
+
+def standard_train(model: nn.Module, x: Tensor, y: Tensor, epochs: int = 30,
+                   lr: float = 1e-2, batch_size: int = 128) -&gt; nn.Module:
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = nn.CrossEntropyLoss()
+    model.train()
+    for _ in range(epochs):
+        perm = torch.randperm(x.size(0))
+        for i in range(0, x.size(0), batch_size):
+            idx = perm[i:i + batch_size]
+            opt.zero_grad()
+            loss_fn(model(x[idx]), y[idx]).backward()
+            opt.step()
+    model.eval()
+    return model
+
+
+def demo() -&gt; None:
+    torch.manual_seed(0)
+    eps = 0.1
+    x_train, y_train = make_robust_nonrobust_dataset(4000, seed=0)
+    x_val, y_val = make_robust_nonrobust_dataset(500, seed=1)
+    x_test, y_test = make_robust_nonrobust_dataset(1000, seed=2)
+    eval_cfg = PGDConfig.evaluation_grade(eps)
+
+    standard = standard_train(ToyMLP(), x_train, y_train)
+    cfg = AdvTrainConfig(train_pgd=PGDConfig.madry_training(eps), eval_pgd=eval_cfg)
+    result = adversarial_train(ToyMLP(), x_train, y_train, x_val, y_val, cfg)
+
+    print(f&#x27;PGD adversarial training demo -- L-inf eps={eps}, robust feature agrees 90% of the time&#x27;)
+    print(f&#x27;{&quot;model&quot;:&lt;22}{&quot;clean acc&quot;:&lt;12}{&quot;PGD-40x5 acc&quot;:&lt;14}&#x27;)
+    for name, model in ((&#x27;standard&#x27;, standard), (f&#x27;Madry (epoch {result.best_epoch})&#x27;, result.model)):
+        print(f&#x27;{name:&lt;22}{clean_accuracy(model, x_test, y_test):&lt;12.3f}&#x27;
+              f&#x27;{robust_accuracy(model, x_test, y_test, eval_cfg):&lt;14.3f}&#x27;)
+    print(&#x27;\nThe standard model reads the non-robust features and is near-perfect until attacked.&#x27;)
+    print(&#x27;The adversarially trained model gives up that accuracy for the robust feature alone.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Fast FGSM Adversarial Trainer</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">fgsm_adversarial_trainer.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Single-step adversarial training with random initialisation (Wong et al. 2020), a per-epoch PGD guard that rolls back on catastrophic overfitting, and an inner-pass count for cost comparison</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: torch.
+Set random_init=False to reproduce zero-init FGSM training for comparison.
+The guard uses a 10-step PGD on the validation set: cheap, and enough to see a collapse.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># fgsm_adversarial_trainer.py
+# Section 10.15: Adversarial Training -- fast FGSM training with a catastrophic-overfitting guard
+# 20260608 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import copy
+import time
+from dataclasses import dataclass, field
+from typing import List
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+from adversarial_trainer import (
+    ToyMLP, clean_accuracy, make_robust_nonrobust_dataset, robust_accuracy,
+)
+from pgd_training_data_generator import PGDConfig
+
+
+@dataclass
+class FastATConfig:
+    epsilon: float
+    alpha_ratio: float = 1.25        # Wong et al. 2020: step of 1.25 * epsilon from a random start
+    random_init: bool = True         # False reproduces zero-init FGSM training (Goodfellow et al. 2015)
+    epochs: int = 30
+    lr: float = 1e-2
+    batch_size: int = 128
+    collapse_drop: float = 0.20      # PGD-accuracy drop that signals catastrophic overfitting
+    clip_min: float = 0.0
+    clip_max: float = 1.0
+
+
+@dataclass
+class FastATResult:
+    model: nn.Module
+    gradient_passes: int             # forward-backward passes spent on the inner maximisation
+    seconds: float
+    collapsed_at_epoch: int = 0      # 0 means no catastrophic overfitting detected
+    pgd_history: List[float] = field(default_factory=list)
+
+
+def fgsm_example(model: nn.Module, x: Tensor, y: Tensor, cfg: FastATConfig) -&gt; Tensor:
+    if cfg.random_init:
+        delta = torch.empty_like(x).uniform_(-cfg.epsilon, cfg.epsilon)
+    else:
+        delta = torch.zeros_like(x)
+    delta = (torch.clamp(x + delta, cfg.clip_min, cfg.clip_max) - x).requires_grad_(True)
+    loss = nn.functional.cross_entropy(model(x + delta), y)
+    grad, = torch.autograd.grad(loss, delta)
+    with torch.no_grad():
+        delta = delta + cfg.alpha_ratio * cfg.epsilon * grad.sign()
+        delta = torch.clamp(delta, -cfg.epsilon, cfg.epsilon)
+        return torch.clamp(x + delta, cfg.clip_min, cfg.clip_max)
+
+
+def fast_adversarial_train(model: nn.Module, x: Tensor, y: Tensor, x_val: Tensor, y_val: Tensor,
+                           cfg: FastATConfig) -&gt; FastATResult:
+    &#x27;&#x27;&#x27;
+    One gradient step per example instead of PGD&#x27;s seven. Cheap, but it can
+    collapse: robust accuracy against PGD falls to near zero within an epoch while
+    accuracy against FGSM stays high, because the model learns to make the
+    single-step linear approximation useless rather than becoming robust.
+    Guard: evaluate PGD on a held-out batch every epoch and roll back on a sharp drop.
+    &#x27;&#x27;&#x27;
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    loss_fn = nn.CrossEntropyLoss()
+    guard = PGDConfig(epsilon=cfg.epsilon, alpha=cfg.epsilon / 4, n_steps=10,
+                      clip_min=cfg.clip_min, clip_max=cfg.clip_max)
+    best_state, best_pgd = copy.deepcopy(model.state_dict()), -1.0
+    result = FastATResult(model, 0, 0.0)
+    start = time.perf_counter()
+    for epoch in range(1, cfg.epochs + 1):
+        perm = torch.randperm(x.size(0))
+        for i in range(0, x.size(0), cfg.batch_size):
+            idx = perm[i:i + cfg.batch_size]
+            model.eval()
+            x_adv = fgsm_example(model, x[idx], y[idx], cfg)
+            result.gradient_passes += 1
+            model.train()
+            opt.zero_grad()
+            loss_fn(model(x_adv), y[idx]).backward()
+            opt.step()
+        pgd_acc = robust_accuracy(model, x_val, y_val, guard)
+        result.pgd_history.append(pgd_acc)
+        if pgd_acc &gt; best_pgd:
+            best_pgd, best_state = pgd_acc, copy.deepcopy(model.state_dict())
+        elif best_pgd - pgd_acc &gt; cfg.collapse_drop:
+            result.collapsed_at_epoch = epoch
+            break
+    result.seconds = time.perf_counter() - start
+    model.load_state_dict(best_state)
+    model.eval()
+    return result
+
+
+def demo() -&gt; None:
+    torch.manual_seed(0)
+    eps = 0.1
+    x_train, y_train = make_robust_nonrobust_dataset(4000, seed=0)
+    x_val, y_val = make_robust_nonrobust_dataset(500, seed=1)
+    x_test, y_test = make_robust_nonrobust_dataset(1000, seed=2)
+    eval_cfg = PGDConfig.evaluation_grade(eps)
+
+    print(f&#x27;Fast FGSM adversarial training -- L-inf eps={eps}&#x27;)
+    print(f&#x27;{&quot;variant&quot;:&lt;29}{&quot;clean&quot;:&lt;8}{&quot;PGD-40x5&quot;:&lt;10}{&quot;inner passes&quot;:&lt;14}{&quot;seconds&quot;:&lt;9}{&quot;collapse&quot;:&lt;9}&#x27;)
+    for name, random_init in ((&#x27;FGSM + random init (Wong)&#x27;, True), (&#x27;FGSM zero init (Goodfellow)&#x27;, False)):
+        cfg = FastATConfig(epsilon=eps, random_init=random_init)
+        res = fast_adversarial_train(ToyMLP(), x_train, y_train, x_val, y_val, cfg)
+        print(f&#x27;{name:&lt;29}{clean_accuracy(res.model, x_test, y_test):&lt;8.3f}&#x27;
+              f&#x27;{robust_accuracy(res.model, x_test, y_test, eval_cfg):&lt;10.3f}&#x27;
+              f&#x27;{res.gradient_passes:&lt;14}{res.seconds:&lt;9.1f}{res.collapsed_at_epoch or &quot;-&quot;:&lt;9}&#x27;)
+    print(&#x27;\nPGD-7 training spends 7 inner passes per batch; FGSM training spends 1.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">TRADES Trainer</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">trades_trainer.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">TRADES objective with label-free KL inner maximisation and a beta sweep showing the clean-robust trade-off</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: torch.
+The inner attack starts from x plus small Gaussian noise because the KL gradient is
+exactly zero at x&#x27; = x.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># trades_trainer.py
+# Section 10.15: Adversarial Training -- TRADES (Zhang et al. 2019)
+# 20260608 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch import Tensor
+
+from adversarial_trainer import (
+    ToyMLP, clean_accuracy, make_robust_nonrobust_dataset, robust_accuracy,
+)
+from pgd_training_data_generator import PGDConfig
+
+
+@dataclass
+class TradesConfig:
+    epsilon: float
+    beta: float = 6.0                # weight on the robustness term; 6.0 is the paper&#x27;s CIFAR-10 setting
+    step_size: float = 0.0           # 0.0 -&gt; epsilon / 4
+    n_steps: int = 10
+    epochs: int = 30
+    lr: float = 1e-2
+    batch_size: int = 128
+    clip_min: float = 0.0
+    clip_max: float = 1.0
+
+
+def trades_adversary(model: nn.Module, x: Tensor, cfg: TradesConfig) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    Inner maximisation of TRADES: find x&#x27; in the epsilon ball that maximises
+    KL(f(x) || f(x&#x27;)). Note there is no label here -- the adversary pushes the
+    prediction AWAY FROM THE MODEL&#x27;S OWN clean prediction, not away from y.
+    &#x27;&#x27;&#x27;
+    step = cfg.step_size or cfg.epsilon / 4
+    with torch.no_grad():
+        p_clean = F.softmax(model(x), dim=1)
+    x_adv = (x + 0.001 * torch.randn_like(x)).clamp(cfg.clip_min, cfg.clip_max)
+    for _ in range(cfg.n_steps):
+        x_adv = x_adv.detach().requires_grad_(True)
+        kl = F.kl_div(F.log_softmax(model(x_adv), dim=1), p_clean, reduction=&#x27;sum&#x27;)
+        grad, = torch.autograd.grad(kl, x_adv)
+        with torch.no_grad():
+            x_adv = x_adv + step * grad.sign()
+            x_adv = torch.min(torch.max(x_adv, x - cfg.epsilon), x + cfg.epsilon)
+            x_adv = x_adv.clamp(cfg.clip_min, cfg.clip_max)
+    return x_adv.detach()
+
+
+def trades_loss(model: nn.Module, x: Tensor, x_adv: Tensor, y: Tensor, beta: float) -&gt; Tensor:
+    &#x27;&#x27;&#x27;CE(f(x), y) + beta * KL(f(x) || f(x_adv)): accuracy term plus boundary-smoothness term.&#x27;&#x27;&#x27;
+    logits_clean = model(x)
+    natural = F.cross_entropy(logits_clean, y)
+    robust = F.kl_div(F.log_softmax(model(x_adv), dim=1), F.softmax(logits_clean, dim=1),
+                      reduction=&#x27;batchmean&#x27;)
+    return natural + beta * robust
+
+
+def trades_train(model: nn.Module, x: Tensor, y: Tensor, cfg: TradesConfig) -&gt; nn.Module:
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.lr)
+    for _ in range(cfg.epochs):
+        perm = torch.randperm(x.size(0))
+        for i in range(0, x.size(0), cfg.batch_size):
+            idx = perm[i:i + cfg.batch_size]
+            model.eval()
+            x_adv = trades_adversary(model, x[idx], cfg)
+            model.train()
+            opt.zero_grad()
+            trades_loss(model, x[idx], x_adv, y[idx], cfg.beta).backward()
+            opt.step()
+    model.eval()
+    return model
+
+
+def demo() -&gt; None:
+    eps = 0.1
+    x_train, y_train = make_robust_nonrobust_dataset(4000, seed=0)
+    x_test, y_test = make_robust_nonrobust_dataset(1000, seed=2)
+    eval_cfg = PGDConfig.evaluation_grade(eps)
+
+    print(f&#x27;TRADES beta sweep -- L-inf eps={eps}&#x27;)
+    print(f&#x27;{&quot;beta&quot;:&lt;7}{&quot;clean&quot;:&lt;9}{&quot;PGD-40x5&quot;:&lt;10}&#x27;)
+    for beta in (0.0, 0.1, 1.0, 6.0):
+        torch.manual_seed(0)
+        model = trades_train(ToyMLP(), x_train, y_train, TradesConfig(epsilon=eps, beta=beta, epochs=15))
+        print(f&#x27;{beta:&lt;7}{clean_accuracy(model, x_test, y_test):&lt;9.3f}&#x27;
+              f&#x27;{robust_accuracy(model, x_test, y_test, eval_cfg):&lt;10.3f}&#x27;)
+    print(&#x27;\nbeta=0 is standard training. Raising beta trades clean accuracy for robustness;&#x27;)
+    print(&#x27;beta is the dial the deployment owner sets, not a constant to copy from a paper.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Training Evaluator</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">adversarial_training_evaluator.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Hardening report for a standard and a hardened model: clean, FGSM, evaluation-grade PGD, surrogate transfer, C&amp;W median L2, and the FGSM-PGD masking gap</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: torch.
+Imports fgsm (Section 10.3), pgd_linf (Section 10.4), cw_l2 (Section 10.5) and the
+trainers from this section. The surrogate is trained independently of the victim, as an
+attacker&#x27;s own model would be.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># adversarial_training_evaluator.py
+# Section 10.15: Adversarial Training -- evaluate a hardened model against every Chapter 10 attack
+# 20260608 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+
+from adversarial_trainer import (
+    AdvTrainConfig, ToyMLP, adversarial_train, clean_accuracy,
+    make_robust_nonrobust_dataset, standard_train,
+)
+from cw_attack import cw_l2
+from fgsm_attack import fgsm
+from pgd_attack import pgd_linf
+from pgd_training_data_generator import PGDConfig
+
+
+@dataclass
+class HardeningReport:
+    name: str
+    clean: float
+    fgsm: float
+    pgd: float                       # PGD-40, 5 restarts: the headline number
+    transfer: float                  # PGD examples crafted on a separate standard surrogate
+    cw_median_l2: float              # median L2 norm C&amp;W needs to flip a correct prediction (higher = harder)
+    masking_gap: float               # fgsm - pgd accuracy; large gap means obfuscated gradients
+
+
+def evaluate(name: str, model: nn.Module, surrogate: nn.Module, x: Tensor, y: Tensor,
+             epsilon: float) -&gt; HardeningReport:
+    model.eval()
+    cfg = PGDConfig.evaluation_grade(epsilon)
+    x_fgsm = fgsm(model, x, y, epsilon=epsilon)
+    x_pgd = pgd_linf(model, x, y, epsilon=cfg.epsilon, alpha=cfg.alpha,
+                     n_steps=cfg.n_steps, n_restarts=cfg.n_restarts)
+    x_transfer = pgd_linf(surrogate, x, y, epsilon=cfg.epsilon, alpha=cfg.alpha,
+                          n_steps=cfg.n_steps, n_restarts=cfg.n_restarts)
+    x_cw = cw_l2(model, x, y, n_binary_search=5, n_steps=100)
+    with torch.no_grad():
+        # Only inputs the model got right to begin with: a misclassified input needs no perturbation.
+        flipped = (model(x).argmax(1) == y) &amp; (model(x_cw).argmax(1) != y)
+        norms = (x_cw - x).view(x.size(0), -1).norm(dim=1)
+        cw_l2_median = norms[flipped].median().item() if flipped.any() else float(&#x27;inf&#x27;)
+    fgsm_acc, pgd_acc = clean_accuracy(model, x_fgsm, y), clean_accuracy(model, x_pgd, y)
+    return HardeningReport(
+        name=name,
+        clean=clean_accuracy(model, x, y),
+        fgsm=fgsm_acc,
+        pgd=pgd_acc,
+        transfer=clean_accuracy(model, x_transfer, y),
+        cw_median_l2=cw_l2_median,
+        masking_gap=fgsm_acc - pgd_acc,
+    )
+
+
+def print_reports(*reports: HardeningReport) -&gt; None:
+    print(f&#x27;{&quot;model&quot;:&lt;12}{&quot;clean&quot;:&lt;8}{&quot;FGSM&quot;:&lt;8}{&quot;PGD&quot;:&lt;8}{&quot;transfer&quot;:&lt;10}{&quot;C&amp;W med L2&quot;:&lt;12}{&quot;FGSM-PGD gap&quot;:&lt;12}&#x27;)
+    for r in reports:
+        flag = &#x27;  &lt;- check for gradient masking&#x27; if r.masking_gap &gt; 0.15 else &#x27;&#x27;
+        print(f&#x27;{r.name:&lt;12}{r.clean:&lt;8.3f}{r.fgsm:&lt;8.3f}{r.pgd:&lt;8.3f}{r.transfer:&lt;10.3f}&#x27;
+              f&#x27;{r.cw_median_l2:&lt;12.3f}{r.masking_gap:&lt;12.3f}{flag}&#x27;)
+
+
+def demo() -&gt; None:
+    torch.manual_seed(0)
+    eps = 0.1
+    x_train, y_train = make_robust_nonrobust_dataset(4000, seed=0)
+    x_val, y_val = make_robust_nonrobust_dataset(500, seed=1)
+    x_test, y_test = make_robust_nonrobust_dataset(300, seed=2)
+
+    surrogate = standard_train(ToyMLP(), x_train, y_train)        # attacker&#x27;s own model
+    standard = standard_train(ToyMLP(), x_train, y_train)         # victim, undefended
+    cfg = AdvTrainConfig(train_pgd=PGDConfig.madry_training(eps), eval_pgd=PGDConfig.evaluation_grade(eps))
+    hardened = adversarial_train(ToyMLP(), x_train, y_train, x_val, y_val, cfg).model
+
+    print(f&#x27;Hardening report -- L-inf eps={eps}, {x_test.size(0)} test inputs&#x27;)
+    print_reports(
+        evaluate(&#x27;standard&#x27;, standard, surrogate, x_test, y_test, eps),
+        evaluate(&#x27;madry&#x27;, hardened, surrogate, x_test, y_test, eps),
+    )
+    print(&#x27;\nPGD is the headline. Transfer must not beat PGD (if it does, white-box gradients are&#x27;)
+    print(&#x27;masked). C&amp;W measures a different norm: L-inf training buys L-inf robustness, and a&#x27;)
+    print(&#x27;model that leans on one robust feature can be cheaper to flip in L2, not dearer.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Adversarial Training Deployment Checklist</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">adversarial_training_deployment_checklist.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">6-item pre-deployment checklist for adversarially trained classifiers; every item is checked against the evidence produced by the trainer and the evaluator</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies.
+The demo fails item 6 on purpose: the threat model names L2, which the evaluator has
+not covered with a fixed-budget L2 attack.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># adversarial_training_deployment_checklist.py
+# Section 10.15: Adversarial Training -- 6-item pre-deployment checklist
+# 20260608 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import Callable, List, Set
+
+
+@dataclass
+class HardeningEvidence:
+    &#x27;&#x27;&#x27;What the training run and adversarial_training_evaluator.py produced.&#x27;&#x27;&#x27;
+    eval_pgd_steps: int
+    eval_pgd_restarts: int
+    clean_accuracy_baseline: float       # undefended model
+    clean_accuracy_hardened: float
+    accuracy_drop_budget: float          # signed off by the model owner, e.g. 0.10
+    fgsm_accuracy: float
+    pgd_accuracy: float
+    transfer_accuracy: float
+    selected_on_robust_validation: bool  # checkpoint chosen by held-out robust accuracy
+    threshold_recalibrated: bool         # operating threshold re-fit after hardening
+    threat_norms: Set[str] = field(default_factory=set)      # norms in the threat model
+    evaluated_norms: Set[str] = field(default_factory=set)   # norms the evaluator actually ran
+
+
+@dataclass
+class ChecklistItem:
+    item_number: int
+    gate: str
+    remediation: str
+    check: Callable[[HardeningEvidence], bool]
+
+
+CHECKLIST: List[ChecklistItem] = [
+    ChecklistItem(1, &#x27;Robustness measured with evaluation-grade PGD (k &gt;= 40, R &gt;= 5)&#x27;,
+                  &#x27;Re-run with PGDConfig.evaluation_grade(eps); k=7 training PGD overstates robustness&#x27;,
+                  lambda e: e.eval_pgd_steps &gt;= 40 and e.eval_pgd_restarts &gt;= 5),
+    ChecklistItem(2, &#x27;No gradient masking: FGSM-PGD gap &lt;= 0.15 and transfer accuracy &gt;= PGD accuracy&#x27;,
+                  &#x27;Obfuscated gradients suspected; evaluate with C&amp;W and BPDA (Section 10.5) before trusting PGD&#x27;,
+                  lambda e: e.fgsm_accuracy - e.pgd_accuracy &lt;= 0.15 and e.transfer_accuracy &gt;= e.pgd_accuracy),
+    ChecklistItem(3, &#x27;Clean accuracy drop within the signed-off budget&#x27;,
+                  &#x27;Lower beta (TRADES) or epsilon, or escalate the budget to the model owner&#x27;,
+                  lambda e: e.clean_accuracy_baseline - e.clean_accuracy_hardened &lt;= e.accuracy_drop_budget),
+    ChecklistItem(4, &#x27;Checkpoint selected on held-out robust accuracy, not the final epoch&#x27;,
+                  &#x27;Robust overfitting: retrain with per-epoch robust validation and keep the best checkpoint&#x27;,
+                  lambda e: e.selected_on_robust_validation),
+    ChecklistItem(5, &#x27;Operating threshold recalibrated on the hardened model&#x27;,
+                  &#x27;Adversarial training moves the decision boundary; re-fit the threshold to the FPR target&#x27;,
+                  lambda e: e.threshold_recalibrated),
+    ChecklistItem(6, &#x27;Every norm in the threat model has been evaluated&#x27;,
+                  &#x27;Robustness is norm-specific; run the evaluator for each missing norm&#x27;,
+                  lambda e: e.threat_norms &lt;= e.evaluated_norms),
+]
+
+
+def run_checklist(evidence: HardeningEvidence) -&gt; bool:
+    print(&#x27;Adversarial Training Deployment Checklist&#x27;)
+    print(&#x27;=&#x27; * 60)
+    failed = 0
+    for item in CHECKLIST:
+        ok = item.check(evidence)
+        failed += not ok
+        print(f&#x27;[{&quot;OK&quot; if ok else &quot;FAIL&quot;}] Item {item.item_number}: {item.gate}&#x27;)
+        if not ok:
+            print(f&#x27;       -&gt; {item.remediation}&#x27;)
+    print()
+    print(f&#x27;PASS {len(CHECKLIST) - failed}/{len(CHECKLIST)}&#x27;)
+    if failed:
+        print(&#x27;ACTION REQUIRED: do not ship the hardened model until every item passes.&#x27;)
+    return failed == 0
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # Numbers from adversarial_training_evaluator.py on the synthetic task, plus a threat
+    # model that also names L2 -- which the evaluator has not covered with a fixed-budget attack.
+    run_checklist(HardeningEvidence(
+        eval_pgd_steps=40, eval_pgd_restarts=5,
+        clean_accuracy_baseline=0.993, clean_accuracy_hardened=0.903, accuracy_drop_budget=0.10,
+        fgsm_accuracy=0.903, pgd_accuracy=0.903, transfer_accuracy=0.903,
+        selected_on_robust_validation=True, threshold_recalibrated=True,
+        threat_norms={&#x27;linf&#x27;, &#x27;l2&#x27;}, evaluated_norms={&#x27;linf&#x27;},
+    ))</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Reporting robustness measured with the training attack</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The training loop already computes PGD accuracy on every batch with k = 7, so that number is
+logged and reported.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">k = 7 with one restart is a weak attacker. The reported robustness is inflated, sometimes by
+many points, and the model is shipped with a claim that evaluation-grade PGD would have refuted.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Keep training and evaluation configs separate: PGDConfig.madry_training for the inner loop,
+PGDConfig.evaluation_grade (k = 40, five restarts) for every reported number. Checklist item 1
+enforces this.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Shipping the final epoch</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Standard training habits: train for the scheduled epochs and save the last weights.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Robust overfitting means robust test accuracy has often peaked and declined by the final
+epoch. The shipped model is less robust than a checkpoint the run already produced.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Evaluate robust accuracy on held-out data every epoch and keep the best checkpoint, as
+adversarial_train does. Record the selected epoch in the model card.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Trusting fast FGSM training without a PGD guard</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Fast training reports FGSM accuracy, which stays high, and the run looks healthy.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Catastrophic overfitting can drop PGD robustness to near zero within one epoch while FGSM
+accuracy stays high. Without a PGD check the collapsed model is the one that ships.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Evaluate a short PGD attack on a held-out batch every epoch and roll back on a sharp drop,
+as fast_adversarial_train does. Always use random initialisation.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Generating adversarial examples in training mode</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The attack runs inside the training loop, so the model is already in train mode.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Batch normalisation updates its running statistics on every PGD step, so after training the
+statistics describe adversarial batches. Dropout randomises the gradient the attack follows,
+producing weaker training examples. Clean and robust accuracy both suffer, and the cause is hard
+to see.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Switch to eval mode to generate the attack and back to train mode for the weight update, as
+train_epoch does.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Claiming robustness beyond the norm and epsilon that were trained and evaluated</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">&quot;Adversarially trained&quot; reads as a property of the model rather than of a specific threat model.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">An L-infinity-trained model can be weaker than the standard model under L2, as the evaluator demo
+shows. Attackers choose the norm; a robustness claim that does not name it invites the one that
+was not tested.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Record norm and epsilon with every robustness number, evaluate every norm in the threat model,
+and let checklist item 6 block deployment until coverage is complete.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Adversarial training implements the Madry et al. min-max objective: PGD solves the inner
+maximisation on every batch and the weight update minimises the loss at those worst-case inputs.
+It is the strongest empirical defence against the Chapter 10 attacks and costs about eight times
+standard training at k = 7, plus clean accuracy -- a cost the robust/non-robust feature view explains:
+the model gives up predictive features that small perturbations can flip. Fast FGSM training with
+random initialisation matches PGD training at a fraction of the cost but can collapse
+catastrophically, so it needs a per-epoch PGD guard. TRADES makes the accuracy-robustness trade
+explicit through beta. Robust overfitting means checkpoints must be selected on held-out robust
+accuracy. A hardened model must be evaluated with evaluation-grade PGD, transfer and C&amp;W, and
+across every norm in the threat model, because robustness is norm-specific. Adversarial training
+is the upstream surface of the Chapter 10 defence; Track 7 remains the runtime surface.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Train with k = 7 PGD, evaluate with k = 40 and five restarts; a robustness claim is only as strong as the evaluation</li><li>Generate the inner attack in eval mode and update weights in train mode</li><li>Select the checkpoint on held-out robust accuracy; the final epoch is often not the most robust</li><li>Fast FGSM training is viable only with random initialisation and a PGD guard against catastrophic overfitting</li><li>beta in TRADES is a business decision about clean accuracy, not a constant from a paper</li><li>Robustness is norm-specific: evaluate every norm in the threat model and recalibrate all thresholds after hardening</li></ul>
+<h2 class="sh1">Preview Section 10 16</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 10.16: Chapter 10 Summary -- Evasion Defence Architecture and Part 2 Closure</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 10.16 assembles the chapter into one architecture: adversarial training and
+noise-augmented training upstream, feature squeezing before inference, randomised smoothing in
+inference, and consistency checking, the adversarial classifier and the AML.T0043/T0015 Sigma
+rules after it. It then closes Part 2, mapping Chapters 5 through 10 onto one threat landscape and
+one gateway, and names the known gaps that Part 3&#x27;s detection engineering programme picks up.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 10.3: fgsm_attack.py (evaluator FGSM column)</li><li>Section 10.4: pgd_attack.py and PGDConfig (inner loop and evaluation presets)</li><li>Section 10.5: cw_attack.py (evaluator C&amp;W column)</li><li>Section 10.7: transferability (evaluator transfer column)</li><li>Section 10.14: certified robustness (formal complement)</li><li>Chapter 7 Section 7.9: GCG adversarial suffixes (adversarial training for LLM safety)</li><li>Chapter 8 Section 8.13: defensive training (upstream defence pattern)</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 10.16: evasion defence architecture (adversarial training as the upstream empirical control)</li><li>Chapter 12: ML-based detection systems (hardening Part 3 detectors with the same loop)</li><li>Chapter 17: monitoring and tuning (threshold recalibration after model updates)</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>adversarial-training</li><li>madry-2018</li><li>min-max-optimisation</li><li>fast-adversarial-training</li><li>free-adversarial-training</li><li>catastrophic-overfitting</li><li>trades</li><li>robust-overfitting</li><li>non-robust-features</li><li>norm-specific-robustness</li></ul>
+</article>

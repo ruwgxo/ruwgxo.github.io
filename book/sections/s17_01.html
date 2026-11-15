@@ -1,0 +1,195 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 17 · Section 1 · ~6 pages</div>
+<h1>Monitoring and Tuning Taxonomy: The Continuous Improvement Loop</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">A deployed, integrated detector suite is not a finished artifact -- its detection quality decays as attacks and traffic evolve away from what it was built on -- and Section 17.01 is the map of the continuous improvement loop that reverses that decay: measure the detectors with detection and performance metrics, curate a labelled dataset from analyst dispositions, retrain, validate, and A/B-test the improvement before promoting it, all driving three concrete targets -- false positives down, true-positive rate up toward 95%+, and latency held under 50ms.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapters 15 and 16 built the detector suite and wired it into security operations. A reader could reasonably think the job is done: the detectors work, they are deployed, their detections reach the SIEM. This section exists to refute that. A detector suite is not a finished artifact but a system that degrades the moment it stops being maintained, because the world it detects does not hold still -- attackers change their techniques, legitimate traffic shifts, and the distribution the detectors learned drifts out from under them. This is the same silent decay the Chapter 13 drift monitors detect; Chapter 17 is the operational answer to it, a full loop that measures the degradation and reverses it.
+
+The section anchors the chapter the way 15.01 and 16.01 anchored theirs, and it makes the loop concrete rather than aspirational. The loop has two halves. The measurement half quantifies the current state: detection metrics (true-positive rate, false-positive rate, precision, recall) say how well the detectors detect, and performance metrics (latency, throughput, errors) say how well they run. The improvement half acts on what measurement reveals: dataset curation collects true and false positives by reading analyst dispositions of SIEM alerts, retraining refreshes the detectors on that curated data when drift and label accumulation warrant it, and A/B testing compares a candidate against the incumbent on live traffic before it is promoted. Between them the two halves close a feedback loop from operations back to the detectors, and that loop drives the chapter&#x27;s optimisation targets. State the loop and the targets once here, and the following six sections are each a deliberate build of one stage.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 17.01 is the taxonomy anchor for the six sections that follow. It frames the continuous improvement loop that 17.02-17.03 measure, 17.04-17.05 feed and refresh, and 17.06 closes and assembles, and it states the optimisation targets the whole chapter tunes toward. It builds on the Chapter 14 observability stack and the Chapter 13 drift detection, and depends on the Chapter 16 SIEM integration whose alert dispositions become the curation labels.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 15: the detector suite whose effectiveness this chapter maintains</li><li>Chapter 16 Section 16.06: the SIEM alert dispositions that provide the curation labels</li><li>Chapter 14 Section 14.08: the observability stack the performance monitoring builds on</li><li>Chapter 13 Section 13.05: the drift detection that signals when retraining is warranted</li><li>Chapter 12 Section 12.14: the live dataset curation and model registry this chapter extends</li><li>Chapter 1 Section 1.11: the evaluation metrics -- precision, recall, TPR, FPR -- this chapter monitors</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why a Deployed Suite Is Not a Finished Suite</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">It is tempting to read the end of Chapter 16 as the end of the work. The detectors are built, tuned to a quality bar, deployed behind a production gateway, and their detections flow into the SIEM as actionable alerts. Every visible task is complete. And yet the suite, left exactly as it is, will get worse -- not because anything breaks, but because the world it was built to detect keeps moving. Attackers revise their techniques the moment the old ones stop working; legitimate traffic shifts as the product changes and users find new ways to phrase things; the statistical distribution the detectors learned during training slowly stops matching the distribution they see in production. A detector is a snapshot of a moving target, and a snapshot ages.
+
+This is the same phenomenon Chapter 13 named as drift and built monitors to detect. There, drift was a signal to watch. Here, it is a problem to solve operationally. A detector whose training distribution has drifted away from live traffic quietly loses accuracy: it misses attacks it would once have caught because they no longer look like its examples, and it flags benign traffic that has wandered into territory its training marked as suspicious. Neither failure announces itself. There is no error, no alarm, no crash -- just a slow erosion of detection quality that is invisible unless something is measuring it. The premise of this chapter is that a detection system must be treated as a living thing that requires continuous maintenance, and that the maintenance has a definite shape: a loop that measures the erosion and reverses it. The rest of the section lays out that loop.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Continuous Improvement Loop</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The maintenance is not a grab-bag of tuning tricks; it is a single loop with a fixed sequence, and naming the sequence is what turns ad-hoc tinkering into a discipline. The loop is: measure, curate, retrain, validate, A/B-test, promote -- and then measure again, because the loop never terminates. Measure establishes the current detection and performance quality, so tuning has an objective baseline rather than a hunch. Curate collects labelled examples from live operation -- the true and false positives that analysts confirm -- so retraining has fresh, real data rather than a stale training set. Retrain produces a candidate detector from the curated data. Validate checks that candidate against the quality bar and current traffic before it is allowed anywhere near production. A/B-test compares it against the incumbent on a bounded slice of live traffic to see which is actually better. And promote installs the winner, at which point the loop returns to measuring the newly-promoted suite.
+
+The order matters and the loop&#x27;s closure matters. Each stage produces exactly what the next consumes: measurement identifies where the suite is weak, curation turns operation into training data, retraining turns data into a candidate, validation and A/B testing turn a candidate into a trusted promotion. And because the loop closes -- promotion feeds back into measurement -- the suite does not merely get fixed once but keeps improving as the loop runs. A suite outside such a loop is maintained by heroics: someone notices a problem, investigates, hand-tunes a fix, and hopes. A suite inside the loop is maintained by process: the degradation is measured, the fix is data-driven, and the improvement is proven before it ships. This chapter builds each stage of the loop as a concrete, running component.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Two Metric Families: Detecting Well and Running Well</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Measurement -- the first stage of the loop -- splits into two questions that must not be confused, because they answer to different owners and trade against each other. The first is: how well does the suite detect? That is the detection metrics -- true-positive rate, false-positive rate, precision, and recall -- computed by comparing what the detectors decided against what was actually true. They are the security-quality metrics: a detector with a high true-positive rate catches the attacks, and one with a low false-positive rate does not drown analysts in false alarms. The second question is: how well does the suite run? That is the performance metrics -- latency, throughput, error rate -- the operational metrics that say whether the suite meets its sub-50ms budget and its capacity under load.
+
+Both families must be monitored, and monitoring only one is a classic failure. A suite watched only for performance can be fast, cheap, and quietly blind -- missing attacks while every latency dashboard stays green. A suite watched only for detection quality can be accurate and unusably slow, catching everything a hundred milliseconds too late. Worse, the two families are coupled: tuning a detector for higher recall often costs latency, because catching more attacks may mean running a heavier model or an extra layer. So the two families are not independent dashboards to glance at separately; they are two axes of one optimisation, and a tuning decision that improves one while ignoring the other is not actually an improvement. Sections 17.02 and 17.03 build the two families precisely so that later tuning can weigh them against each other rather than optimise one blind to the other.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Optimisation Targets and Their Trade-offs</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Measurement is only useful if there is a target to measure against, and this chapter&#x27;s targets are concrete: reduce false positives, raise the true-positive rate toward 95% and above, and hold the P99 latency under 50 milliseconds. These are not independent goals to be maximised in isolation -- they are a trade-off surface, and the value of stating them together is that it forces every tuning decision to be honest about what it costs. Raising the true-positive rate by lowering a detector&#x27;s threshold will, on the same detector, raise the false-positive rate too, because a threshold that catches more attacks also catches more benign traffic that resembles them. Driving false positives to near zero by raising thresholds will let more real attacks slip through as missed detections. And squeezing either detection target hard enough will eventually cost latency, as the suite reaches for heavier models to make the distinction.
+
+The base-rate problem, which Section 17.02 develops in full, sharpens the false-positive target into the dominant constraint. Because real attacks are rare, precision -- the fraction of alerts that are real -- is governed far more by the false-positive rate than by the true-positive rate: even a small false-positive rate, applied to the vast majority of traffic that is benign, produces more false alerts than there are real attacks to find. So &#x27;reduce false positives&#x27; is not one target among three; for a suite facing rare attacks it is often the binding one, the number that decides whether the alerts are worth an analyst&#x27;s attention at all. Tuning, then, is not maximising three numbers. It is choosing a defensible point on a surface where moving toward one target moves away from another, with the base rate deciding how much a given false-positive rate really costs. The metrics exist so that this choice is made with evidence rather than asserted.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Building on Chapter 14 and 13, and Closing the Loop at the Analyst</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The improvement loop does not start from nothing. Its measurement half is built on the Chapter 14 observability stack: the golden-signal instrumentation, the metrics pipeline, the logging and tracing already emit the raw execution data that performance monitoring reads, so Section 17.03 watches the suite over time by consuming what Chapter 14 already produces rather than instrumenting afresh. Its trigger comes from Chapter 13: the drift detection that Chapter 13 built as a warning signal becomes, in Section 17.05, the trigger that decides when retraining is warranted, so the suite is refreshed when the data has actually moved rather than on an arbitrary calendar. And its validation reuses the Chapter 12 model registry, so a retrained detector is promoted as a versioned artifact with a rollback path rather than swapped in place. Chapter 17 is less a new construction than the assembly of pieces the earlier chapters left ready.
+
+The one genuinely new piece is where the loop closes: at the security analyst. The detections flowing into the SIEM from Chapter 16 are not just alerts to be actioned -- they are unlabelled examples waiting to be labelled, and the analyst who dispositions an alert as a true or false positive is, in that act, labelling the detection that produced it. Those dispositions are the ground truth the whole improvement half runs on: they are the labels dataset curation collects (17.04), which become the data retraining consumes (17.05), which produces the candidate A/B testing evaluates (17.06). The feedback loop from operations back to detection is, concretely, the analyst&#x27;s disposition flowing backward into the training set. This is why the loop could only be built now, after the SIEM integration: without detections reaching analysts and analysts dispositioning them, there is no label supply, and without labels there is nothing to retrain on. The chapter proceeds through the loop in order -- metrics (17.02-17.03), curation (17.04), retraining (17.05), A/B testing and the assembled loop (17.06), and synthesis (17.07) -- each section a stage made concrete.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Continuous Improvement Loop</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The six stages of the loop, what each consumes and produces, and where the chapter builds it. The loop never terminates: promote returns to measure.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Stage</li><li>Consumes</li><li>Produces</li><li>Built in</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Measure</li><li>Live detections and executions</li><li>Detection and performance metrics</li><li>17.02-17.03</li></ul>
+<ul class="blist"><li>Curate</li><li>Analyst dispositions of alerts</li><li>A labelled, quality-gated dataset</li><li>17.04</li></ul>
+<ul class="blist"><li>Retrain</li><li>The curated dataset</li><li>A candidate detector</li><li>17.05</li></ul>
+<ul class="blist"><li>Validate</li><li>The candidate</li><li>A registry-promoted, rollback-able version</li><li>17.05</li></ul>
+<ul class="blist"><li>A/B-test</li><li>Candidate vs. incumbent on live traffic</li><li>A proven winner</li><li>17.06</li></ul>
+<ul class="blist"><li>Promote</li><li>The winner</li><li>The new incumbent (loop returns to Measure)</li><li>17.06</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection Metrics versus Performance Metrics</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The two metric families measure different things, answer to different owners, and trade against each other. Both must be monitored.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li></li><li>Detection metrics</li><li>Performance metrics</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Question</li><li>How well does the suite detect?</li><li>How well does the suite run?</li></ul>
+<ul class="blist"><li>Members</li><li>TPR, FPR, precision, recall</li><li>Latency, throughput, error rate</li></ul>
+<ul class="blist"><li>Ground truth</li><li>Analyst-dispositioned labels</li><li>Observed execution samples</li></ul>
+<ul class="blist"><li>Target</li><li>FP down, TPR toward 95%+</li><li>P99 latency under 50ms</li></ul>
+<ul class="blist"><li>Built on</li><li>Chapter 1 evaluation metrics</li><li>Chapter 14 golden signals</li></ul>
+<ul class="blist"><li>Built in</li><li>Section 17.02</li><li>Section 17.03</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Optimisation Targets and What They Trade Against</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The three targets form a trade-off surface, not three independent goals. Moving toward one moves away from another; the base rate sets the exchange rate.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Target</li><li>Pushed by</li><li>Traded against</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Reduce false positives</li><li>Raising thresholds</li><li>Missing more real attacks (lower TPR)</li></ul>
+<ul class="blist"><li>Raise TPR toward 95%+</li><li>Lowering thresholds</li><li>More false positives, often more latency</li></ul>
+<ul class="blist"><li>Hold latency under 50ms P99</li><li>Lighter models, fewer layers</li><li>Less headroom for detection accuracy</li></ul>
+<ul class="blist"><li>(Governing constraint)</li><li>The base-rate problem</li><li>Rare attacks make FPR dominate precision</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Chapter 17 Roadmap: Topic to Section</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Each following section builds one stage of the improvement loop, in the order the loop runs.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Section</li><li>Loop stage</li><li>Focus</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>17.02</li><li>Measure (detection)</li><li>TPR, FPR, precision, recall; the base-rate problem</li></ul>
+<ul class="blist"><li>17.03</li><li>Measure (performance)</li><li>Latency, throughput, errors; regression against budget</li></ul>
+<ul class="blist"><li>17.04</li><li>Curate</li><li>Labels from analyst dispositions; class imbalance</li></ul>
+<ul class="blist"><li>17.05</li><li>Retrain + validate</li><li>Drift-triggered retraining; registry promotion, rollback</li></ul>
+<ul class="blist"><li>17.06</li><li>A/B-test + promote</li><li>Guarded live comparison; the assembled loop</li></ul>
+<ul class="blist"><li>17.07</li><li>Synthesis</li><li>The loop, the targets met, and the path to Chapter 18</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Monitoring and Tuning Taxonomy Reference</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">(section reference -- no standalone code)</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The taxonomy itself is the deliverable of this anchor section: the continuous improvement loop (measure, curate, retrain, validate, A/B-test, promote), the two metric families and how they trade off, the optimisation targets as a trade-off surface, and the topic-to-section roadmap. It is presented as the reference tables above rather than as code, because 17.01 defines the structure the subsequent sections implement.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">No standalone Python: this section is the conceptual anchor, and its deliverables are the loop diagram, the detection-versus-performance reference, and the roadmap given in the reference materials. The first running code is detection_metrics.py in Section 17.02. This mirrors the anchor sections 15.01 and 16.01, which likewise define contracts and structure that later sections build.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># Section 17.01 is the chapter&#x27;s taxonomy anchor and has no standalone code
+# deliverable. Its deliverables are the reference tables above: the continuous
+# improvement loop, the detection-versus-performance metric families, the
+# optimisation targets, and the topic-to-section roadmap.
+#
+# The continuous improvement loop, as pseudocode, to fix the sequence the rest
+# of the chapter implements:
+#
+#     while True:                     # the loop never terminates
+#         metrics = measure(suite)            # 17.02 detection, 17.03 performance
+#         dataset = curate(analyst_dispositions)   # 17.04
+#         if drift_triggered(metrics) or dataset.enough_new_labels():
+#             candidate = retrain(dataset)         # 17.05
+#             if validate(candidate):              # 17.05 -- against the quality bar
+#                 result = ab_test(candidate, incumbent)   # 17.06 -- guarded, on live traffic
+#                 if result.candidate_wins:
+#                     promote(candidate)           # 17.06 -- via the Chapter 12 registry
+#         # loop returns to measure the (possibly newly-promoted) suite
+#
+# Detection metrics and performance metrics are the two measurement families;
+# the optimisation targets are FP down, TPR toward 95%+, latency under 50ms.
+print(&#x27;Section 17.01: monitoring and tuning taxonomy -- see reference tables.&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating a deployed, integrated detector suite as finished</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Every visible engineering task is complete -- the detectors work, they are deployed, their detections reach the SIEM -- so the work feels done.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The suite silently decays as attacks and traffic drift away from its training distribution, missing new attacks and flagging shifted-but-benign traffic, with no error to announce it.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat the suite as a living system inside a continuous improvement loop that measures the decay and reverses it, so degradation is caught and corrected rather than accumulating unseen.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Tuning the detectors by intuition instead of against measured metrics</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A specific false positive or missed attack is vivid and prompts an immediate hand-tuned fix, which feels responsive.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Each fix optimises for the last anecdote and may worsen the aggregate, because there is no baseline to show whether the change improved or regressed the suite overall.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Measure detection and performance metrics first, tune against them, and confirm the change improved the aggregate -- the metrics are the objective, not the anecdote.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Monitoring only performance, or only detection quality</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Performance dashboards are standard operational hygiene and detection quality feels like a build-time concern, so one family gets watched and the other does not.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A performance-only view misses a suite that is fast and quietly blind; a detection-only view misses a suite that is accurate and unusably slow -- and the two are coupled, so tuning one blind damages the other.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Monitor both families as two axes of one optimisation, so a tuning decision can weigh a recall gain against its latency cost rather than optimise one in ignorance of the other.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Retraining or swapping in a candidate detector without validating it first</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A retrained model built from fresh data is assumed to be an improvement, so it is promoted directly.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A candidate can be worse than the incumbent -- trained on noisy or imbalanced labels, or a poisoned dataset -- and deploying it unvalidated silently degrades the suite it was meant to improve.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Validate every candidate against the quality bar, promote through the versioned registry with a rollback path, and A/B-test on bounded live traffic before full promotion, because improvement must be safe.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Section 17.01 anchors Chapter 17 by refuting the idea that a deployed, integrated detector suite is finished. A suite decays without maintenance because the attacks and traffic it faces evolve away from the distribution it was built on -- the same silent drift Chapter 13 detects, now addressed operationally. The answer is a continuous improvement loop with a fixed sequence: measure, curate, retrain, validate, A/B-test, promote, and then measure again, because the loop never terminates and each stage produces exactly what the next consumes. Measurement splits into two coupled families that must both be watched: detection metrics (TPR, FPR, precision, recall) say how well the suite detects, and performance metrics (latency, throughput, errors) say how well it runs, and because tuning for recall often costs latency they are two axes of one optimisation rather than independent dashboards. The loop tunes toward three concrete targets -- reduce false positives, raise the true-positive rate toward 95%+, hold P99 latency under 50ms -- which form a trade-off surface where moving toward one moves away from another, and the base-rate problem makes false-positive reduction the governing constraint because rare attacks let even a small false-positive rate dominate precision. The loop is assembled from pieces the earlier chapters left ready: it measures on the Chapter 14 observability stack, triggers retraining from the Chapter 13 drift signal, and promotes through the Chapter 12 model registry. Its one new piece is where it closes -- at the analyst, whose disposition of a SIEM alert as a true or false positive labels that detection and supplies the ground truth the whole improvement half runs on.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>A deployed, integrated detector suite degrades without tuning because attacks and traffic drift away from its training distribution</li><li>The continuous improvement loop -- measure, curate, retrain, validate, A/B-test, promote -- is the discipline that reverses the decay and never terminates</li><li>Detection metrics and performance metrics are two coupled axes of one optimisation, and both must be monitored</li><li>The optimisation targets -- FP down, TPR toward 95%+, latency under 50ms -- form a trade-off surface, not three independent goals</li><li>The base-rate problem makes false-positive reduction the governing constraint, because rare attacks let a small FPR dominate precision</li><li>The loop closes at the analyst: a disposition of a SIEM alert labels the detection and supplies the ground truth for retraining</li></ul>
+<h2 class="sh1">Preview Section 17 02</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Detection Metrics: TPR, FPR, Precision, and Recall</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 17.02 builds the first measurement family: the detection metrics that quantify how well the detectors detect. It computes true-positive rate, false-positive rate, precision, and recall per detector and at the suite level from a confusion matrix, develops the precision-recall trade-off that the detector threshold controls, and makes the base-rate problem calculable -- showing why, for rare attacks, precision is dominated by the false-positive rate and a strong detector still floods analysts with false alarms unless its FPR is driven very low. These metrics are the objective the whole tuning loop optimises.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 13 Section 13.05: the drift detection that triggers retraining in the improvement loop</li><li>Chapter 14 Section 14.08: the observability stack the performance monitoring builds on</li><li>Chapter 12 Section 12.14: the live dataset curation and model registry the loop extends</li><li>Chapter 16 Section 16.06: the SIEM alert dispositions that become the curation labels</li><li>Chapter 1 Section 1.11: the evaluation metrics -- precision, recall, TPR, FPR -- the loop monitors</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 17.02: the detection metrics that measure how well the detectors detect</li><li>Section 17.03: the performance metrics that measure how well the detectors run</li><li>Section 17.04: dataset curation, where the loop closes at the analyst&#x27;s disposition</li><li>Section 17.06: A/B testing and the assembled continuous improvement loop</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>monitoring</li><li>tuning</li><li>continuous-improvement</li><li>improvement-loop</li><li>detection-metrics</li><li>performance-metrics</li><li>optimization-targets</li><li>false-positive-reduction</li><li>feedback-loops</li><li>drift</li><li>observability</li><li>model-registry</li><li>analyst-disposition</li><li>part-4-chapter-3</li></ul>
+</article>

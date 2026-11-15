@@ -1,0 +1,518 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 19 · ~6 pages</div>
+<h1>Naive Bayes</h1>
+<div class="tags"><span class="tag">naive-bayes</span><span class="tag">bayesian</span><span class="tag">probabilistic</span><span class="tag">conditional-probability</span><span class="tag">spam-detection</span><span class="tag">text-classification</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Naive Bayes is beautifully simple: estimate the probability of each class given the 
+features, then predict the most probable class. It&#x27;s based on Bayes&#x27; theorem and makes 
+one &quot;naive&quot; assumption: all features are independent given the class. This assumption 
+is often violated in practice, yet Naive Bayes works surprisingly well.
+
+Despite its simplicity, Naive Bayes is remarkably effective for:
+- Text classification (spam detection, sentiment analysis)
+- Real-time prediction (training and inference both fast)
+- Small datasets (requires fewer samples than discriminative models)
+- Baseline comparisons (simple, fast baseline for any classification task)
+
+This section covers:
+- Bayes&#x27; theorem and conditional probability
+- The naive independence assumption
+- Three variants: Gaussian, Multinomial, Bernoulli
+- Laplace smoothing for unseen feature values
+- Why it works despite violated assumptions
+- Advantages and limitations
+
+For security, Naive Bayes excels at:
+1. Spam/phishing detection (text-based, real-time)
+2. Network traffic classification (fast, probabilistic)
+3. Log analysis (categorical features, many classes)
+4. Baseline detector (quick to deploy, interpretable)</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security applications:
+- Spam filters: Classic Naive Bayes application (word frequencies)
+- Phishing detection: Email content classification
+- Malware detection: API call sequences as features
+- Network IDS: Protocol classification
+
+Real deployments:
+- Gmail spam filter originally used Naive Bayes
+- Still used in many email security products
+- Common in SIEM log classification
+- Fast enough for real-time filtering
+
+Why learn Naive Bayes:
+- Fundamental probabilistic classifier
+- Foundation for understanding Bayesian methods
+- Practical (actually works despite simplicity)
+- Provides probability estimates (unlike SVM)
+- Handles streaming data naturally (incremental updates)</p>
+<h2 class="sh1">Bayes Theorem</h2>
+<h3 class="sh2">Formula</h3>
+<p class="prose">P(Y|X) = P(X|Y) × P(Y) / P(X)</p>
+<h3 class="sh2">In Words</h3>
+<p class="prose">Posterior = (Likelihood × Prior) / Evidence
+
+P(Y|X): Posterior - probability of Y given we observed X
+P(X|Y): Likelihood - probability of observing X given Y
+P(Y): Prior - probability of Y before seeing X
+P(X): Evidence - probability of observing X</p>
+<h3 class="sh2">Example Spam Detection</h3>
+<p class="prose">Y: Email is spam
+X: Email contains word &quot;viagra&quot;
+
+P(spam|&quot;viagra&quot;) = P(&quot;viagra&quot;|spam) × P(spam) / P(&quot;viagra&quot;)
+
+Components:
+- P(&quot;viagra&quot;|spam): How often spam contains &quot;viagra&quot; (likelihood)
+- P(spam): Overall spam rate (prior)
+- P(&quot;viagra&quot;): How often any email contains &quot;viagra&quot; (evidence)</p>
+<h3 class="sh2">Classification Using Bayes</h3>
+<p class="prose">For classification, we want: argmax_y P(Y=y|X=x)
+
+Using Bayes: P(Y=y|X=x) = P(X=x|Y=y) × P(Y=y) / P(X=x)
+
+Since P(X=x) same for all classes, we can ignore it:
+
+argmax_y P(Y=y|X=x) = argmax_y P(X=x|Y=y) × P(Y=y)
+
+Just compare: Likelihood × Prior for each class</p>
+<h2 class="sh1">Naive Assumption</h2>
+<h3 class="sh2">Problem With Full Bayes</h3>
+<p class="prose">Need to estimate: P(X₁, X₂, ..., Xₙ|Y)
+
+With n features, requires estimating joint distribution
+Exponentially many combinations!
+
+Example: 10 binary features = 2¹⁰ = 1024 combinations
+Need massive dataset to estimate reliably</p>
+<h3 class="sh2">Naive Independence Assumption</h3>
+<p class="prose">Assume: Features are conditionally independent given class
+
+P(X₁, X₂, ..., Xₙ|Y) = P(X₁|Y) × P(X₂|Y) × ... × P(Xₙ|Y)
+
+Now only need to estimate: P(Xᵢ|Y) for each feature i
+Linear in number of features (tractable!)</p>
+<h3 class="sh2">Why Naive</h3>
+<p class="prose">This assumption is &quot;naive&quot; because it&#x27;s often false
+
+Example: Spam email
+- Word &quot;free&quot; appears
+- Word &quot;money&quot; appears
+
+These are NOT independent:
+- P(&quot;money&quot;|spam, &quot;free&quot;) ≠ P(&quot;money&quot;|spam)
+- If email has &quot;free&quot;, more likely to also have &quot;money&quot;
+
+Yet Naive Bayes works well anyway!</p>
+<h3 class="sh2">Naive Bayes Classifier</h3>
+<p class="prose">Classification rule:
+
+ŷ = argmax_y P(Y=y) × ∏ᵢ P(Xᵢ|Y=y)
+
+In words:
+1. For each class y
+2. Compute prior P(Y=y)
+3. Multiply by likelihood of each feature: ∏ᵢ P(Xᵢ|Y=y)
+4. Pick class with highest score</p>
+<h3 class="sh2">Log Probabilities</h3>
+<p class="prose">In practice, use log probabilities (avoid underflow):
+
+ŷ = argmax_y [log P(Y=y) + Σᵢ log P(Xᵢ|Y=y)]
+
+Multiplication becomes addition (numerically stable)</p>
+<h2 class="sh1">Naive Bayes Variants</h2>
+<h3 class="sh2">Gaussian Naive Bayes</h3>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Continuous features (real-valued)</p>
+<h3 class="sh3">Assumption</h3>
+<p class="prose">Features follow Gaussian distribution within each class</p>
+<h3 class="sh3">Likelihood</h3>
+<p class="prose">P(Xᵢ=x|Y=y) = (1/√(2πσ²ᵧ)) × exp(-(x - μᵧ)² / (2σ²ᵧ))
+
+Where:
+- μᵧ: Mean of feature i for class y
+- σ²ᵧ: Variance of feature i for class y</p>
+<h3 class="sh3">Training</h3>
+<p class="prose">For each feature i and class y:
+1. Compute mean: μᵢᵧ = mean of feature i in class y samples
+2. Compute variance: σ²ᵢᵧ = variance of feature i in class y samples
+3. Compute prior: P(Y=y) = count(class y) / total samples</p>
+<h3 class="sh3">Prediction</h3>
+<p class="prose">For new sample x:
+For each class y:
+  score = log P(Y=y) + Σᵢ log N(xᵢ; μᵢᵧ, σ²ᵢᵧ)
+
+Predict class with highest score</p>
+<h3 class="sh3">Security Example</h3>
+<p class="prose">Network intrusion detection:
+Features: [packet_size, inter_arrival_time, payload_entropy]
+Classes: [normal, dos_attack, probe]
+
+Each feature modeled as Gaussian per class</p>
+<h3 class="sh2">Multinomial Naive Bayes</h3>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Count data (word frequencies, event counts)</p>
+<h3 class="sh3">Assumption</h3>
+<p class="prose">Features are counts from multinomial distribution</p>
+<h3 class="sh3">Likelihood</h3>
+<p class="prose">P(Xᵢ=k|Y=y) = θᵢᵧᵏ
+
+Where θᵢᵧ is probability of feature i in class y</p>
+<h3 class="sh3">Training</h3>
+<p class="prose">For each feature i and class y:
+Count occurrences in class y documents
+
+θᵢᵧ = (count of feature i in class y) / (total counts in class y)
+
+With Laplace smoothing:
+θᵢᵧ = (count of feature i in class y + α) / 
+      (total counts in class y + α × n_features)</p>
+<h3 class="sh3">Security Example</h3>
+<p class="prose">Spam detection:
+Features: Word counts in email
+Document: &quot;free money free offer&quot;
+Feature vector: [free:2, money:1, offer:1, ...]</p>
+<h3 class="sh2">Bernoulli Naive Bayes</h3>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Binary features (presence/absence)</p>
+<h3 class="sh3">Assumption</h3>
+<p class="prose">Features are binary (0 or 1)</p>
+<h3 class="sh3">Likelihood</h3>
+<p class="prose">P(Xᵢ=1|Y=y) = θᵢᵧ
+P(Xᵢ=0|Y=y) = 1 - θᵢᵧ
+
+Where θᵢᵧ is probability feature i present in class y</p>
+<h3 class="sh3">Training</h3>
+<p class="prose">θᵢᵧ = (count of documents in class y with feature i present) / 
+      (total documents in class y)</p>
+<h3 class="sh3">Security Example</h3>
+<p class="prose">Malware detection:
+Features: [calls_CreateFile, calls_RegSetValue, has_packer, ...]
+Binary: 1 if API call present, 0 otherwise</p>
+<h3 class="sh2">Choosing Variant</h3>
+<p class="prose">Decision tree:
+
+1. Continuous features (measurements)?
+   → Gaussian Naive Bayes
+
+2. Count data (word frequencies)?
+   → Multinomial Naive Bayes
+
+3. Binary features (presence/absence)?
+   → Bernoulli Naive Bayes
+
+Most common in security: Multinomial (text) or Bernoulli (binary features)</p>
+<h2 class="sh1">Laplace Smoothing</h2>
+<h3 class="sh2">Zero Probability Problem</h3>
+<p class="prose">Problem: If feature never appears in training for a class
+→ P(feature|class) = 0
+→ Entire product becomes 0
+→ Cannot classify samples with that feature!
+
+Example:
+Training spam: &quot;viagra&quot;, &quot;money&quot;, &quot;offer&quot;
+Test email: &quot;lottery&quot;
+
+&quot;lottery&quot; never in training → P(&quot;lottery&quot;|spam) = 0
+→ Cannot compute P(spam|email) (product is 0)</p>
+<h3 class="sh2">Laplace Solution</h3>
+<p class="prose">Add small pseudocount (α, typically 1) to all counts
+
+Without smoothing:
+P(word|spam) = count(word in spam) / count(all words in spam)
+
+With Laplace smoothing (α=1):
+P(word|spam) = (count(word in spam) + 1) / 
+               (count(all words in spam) + V)
+
+Where V = vocabulary size
+
+Effect: All probabilities &gt; 0, even for unseen words</p>
+<h3 class="sh2">Example</h3>
+<p class="prose">Training spam: &quot;free money&quot; (2 words)
+Vocabulary: {free, money, viagra, lottery} (V=4)
+
+Without smoothing:
+P(&quot;free&quot;|spam) = 1/2 = 0.5
+P(&quot;money&quot;|spam) = 1/2 = 0.5
+P(&quot;viagra&quot;|spam) = 0/2 = 0 ← Problem!
+
+With Laplace (α=1):
+P(&quot;free&quot;|spam) = (1+1)/(2+4) = 2/6 ≈ 0.33
+P(&quot;money&quot;|spam) = (1+1)/(2+4) = 2/6 ≈ 0.33
+P(&quot;viagra&quot;|spam) = (0+1)/(2+4) = 1/6 ≈ 0.17 ← Fixed!</p>
+<h3 class="sh2">Alpha Parameter</h3>
+<p class="prose">α = 0: No smoothing (can have zero probabilities)
+α = 1: Standard Laplace smoothing
+α &gt; 1: Stronger smoothing (more uniform probabilities)
+
+Typical: α = 1 (works well in practice)</p>
+<h2 class="sh1">Complete Implementation</h2>
+<pre class="code"><code>import numpy as np
+
+class MultinomialNaiveBayes:
+    &quot;&quot;&quot;
+    Multinomial Naive Bayes for text classification
+    (e.g., spam detection)
+    &quot;&quot;&quot;
+    
+    def __init__(self, alpha=1.0):
+        &quot;&quot;&quot;
+        Args:
+            alpha: Laplace smoothing parameter
+        &quot;&quot;&quot;
+        self.alpha = alpha
+        self.class_log_prior = None
+        self.feature_log_prob = None
+        self.classes = None
+    
+    def fit(self, X, y):
+        &quot;&quot;&quot;
+        Train Naive Bayes classifier
+        
+        Args:
+            X: Feature counts, shape (n_samples, n_features)
+            y: Labels, shape (n_samples,)
+        &quot;&quot;&quot;
+        n_samples, n_features = X.shape
+        self.classes = np.unique(y)
+        n_classes = len(self.classes)
+        
+        # Initialize
+        self.class_log_prior = np.zeros(n_classes)
+        self.feature_log_prob = np.zeros((n_classes, n_features))
+        
+        # Compute for each class
+        for idx, c in enumerate(self.classes):
+            # Samples in this class
+            X_c = X[y == c]
+            
+            # Class prior: P(Y=c)
+            self.class_log_prior[idx] = np.log(len(X_c) / n_samples)
+            
+            # Feature likelihoods: P(Xᵢ|Y=c)
+            # Sum of feature counts in class c
+            feature_counts = X_c.sum(axis=0)
+            
+            # Total count in class c
+            total_count = feature_counts.sum()
+            
+            # Laplace smoothing
+            numerator = feature_counts + self.alpha
+            denominator = total_count + self.alpha * n_features
+            
+            # Log probability
+            self.feature_log_prob[idx] = np.log(numerator / denominator)
+        
+        return self
+    
+    def predict(self, X):
+        &quot;&quot;&quot;Predict class for samples&quot;&quot;&quot;
+        log_probs = self._compute_log_probs(X)
+        return self.classes[np.argmax(log_probs, axis=1)]
+    
+    def predict_proba(self, X):
+        &quot;&quot;&quot;Predict class probabilities&quot;&quot;&quot;
+        log_probs = self._compute_log_probs(X)
+        
+        # Convert log probabilities to probabilities
+        # Use log-sum-exp trick for numerical stability
+        log_probs_normalized = log_probs - np.max(log_probs, axis=1, keepdims=True)
+        probs = np.exp(log_probs_normalized)
+        probs = probs / probs.sum(axis=1, keepdims=True)
+        
+        return probs
+    
+    def _compute_log_probs(self, X):
+        &quot;&quot;&quot;Compute log P(Y|X) for each class&quot;&quot;&quot;
+        # log P(Y|X) = log P(Y) + Σᵢ log P(Xᵢ|Y)
+        log_probs = (self.class_log_prior[:, np.newaxis] + 
+                    (X @ self.feature_log_prob.T).T).T
+        return log_probs
+    
+    def score(self, X, y):
+        &quot;&quot;&quot;Compute accuracy&quot;&quot;&quot;
+        return np.mean(self.predict(X) == y)
+
+# ========================================================================
+# USAGE EXAMPLE: SPAM DETECTION
+# ========================================================================
+
+# Simulate spam detection data
+np.random.seed(42)
+
+# Vocabulary: [&quot;free&quot;, &quot;money&quot;, &quot;viagra&quot;, &quot;meeting&quot;, &quot;report&quot;]
+vocab = [&quot;free&quot;, &quot;money&quot;, &quot;viagra&quot;, &quot;meeting&quot;, &quot;report&quot;]
+n_features = len(vocab)
+
+# Generate training data
+# Spam emails: high counts of &quot;free&quot;, &quot;money&quot;, &quot;viagra&quot;
+X_spam = np.random.poisson(lam=[5, 4, 3, 0.5, 0.5], size=(50, n_features))
+y_spam = np.ones(50)
+
+# Ham emails: high counts of &quot;meeting&quot;, &quot;report&quot;
+X_ham = np.random.poisson(lam=[0.5, 0.5, 0.1, 4, 5], size=(50, n_features))
+y_ham = np.zeros(50)
+
+# Combine
+X = np.vstack([X_spam, X_ham])
+y = np.hstack([y_spam, y_ham])
+
+# Shuffle
+indices = np.random.permutation(len(y))
+X, y = X[indices], y[indices]
+
+# Train/test split
+split = int(0.8 * len(y))
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
+
+# Train Naive Bayes
+nb = MultinomialNaiveBayes(alpha=1.0)
+nb.fit(X_train, y_train)
+
+# Evaluate
+train_acc = nb.score(X_train, y_train)
+test_acc = nb.score(X_test, y_test)
+
+print(&quot;Multinomial Naive Bayes&quot;)
+print(f&quot;Training accuracy: {train_acc:.2%}&quot;)
+print(f&quot;Test accuracy: {test_acc:.2%}&quot;)
+
+# Examine learned probabilities
+print(&quot;\nMost discriminative words for SPAM (class 1):&quot;)
+spam_idx = 1
+spam_probs = np.exp(nb.feature_log_prob[spam_idx])
+for i in np.argsort(spam_probs)[-3:]:
+    print(f&quot;  {vocab[i]}: P(word|spam) = {spam_probs[i]:.4f}&quot;)
+
+# Predict new email
+new_email = np.array([[2, 3, 1, 0, 0]])  # Contains &quot;free&quot;, &quot;money&quot;, &quot;viagra&quot;
+prediction = nb.predict(new_email)
+probability = nb.predict_proba(new_email)
+
+print(f&quot;\nNew email: {new_email[0]}&quot;)
+print(f&quot;Prediction: {&#x27;SPAM&#x27; if prediction[0] == 1 else &#x27;HAM&#x27;}&quot;)
+print(f&quot;P(spam): {probability[0, 1]:.2%}&quot;)</code></pre>
+<h2 class="sh1">Why It Works</h2>
+<h3 class="sh2">Classification Not Estimation</h3>
+<p class="prose">Key insight: We don&#x27;t need accurate probability estimates
+We just need correct ranking of classes
+
+Even if P(spam|email) = 0.7 is wrong (true value 0.9)
+As long as P(spam|email) &gt; P(ham|email), we classify correctly!</p>
+<h3 class="sh2">Feature Contributions Add</h3>
+<p class="prose">With independence assumption:
+- Each feature contributes to overall score
+- Features &quot;vote&quot; independently
+- Correlated features just double-vote
+
+Example: &quot;free&quot; and &quot;money&quot; correlated
+Both vote for spam → strong spam signal (even if double-counted)</p>
+<h3 class="sh2">Works Well With Many Features</h3>
+<p class="prose">With many features (e.g., 10,000 words):
+- Individual correlations matter less
+- Aggregate signal dominates
+- Law of large numbers helps</p>
+<h3 class="sh2">Calibration Vs Discrimination</h3>
+<p class="prose">Naive Bayes:
+- Poor calibration (probabilities not accurate)
+- Good discrimination (ranks classes correctly)
+
+For classification, discrimination is what matters!</p>
+<h2 class="sh1">Security Applications</h2>
+<h3 class="sh2">Spam Phishing Detection</h3>
+<h3 class="sh3">Features</h3>
+<p class="prose">Words/phrases in email:
+- &quot;viagra&quot;, &quot;free&quot;, &quot;money&quot; → spam indicators
+- &quot;meeting&quot;, &quot;report&quot;, &quot;attached&quot; → ham indicators</p>
+<h3 class="sh3">Approach</h3>
+<p class="prose">Multinomial Naive Bayes on word counts
+Train on labeled spam/ham emails
+Fast enough for real-time filtering</p>
+<h3 class="sh3">Incremental Updates</h3>
+<p class="prose">User marks email as spam:
+- Update counts for that class
+- Retrain in O(n_features) time
+- No need to retrain from scratch!</p>
+<h3 class="sh2">Network Traffic Classification</h3>
+<h3 class="sh3">Features</h3>
+<p class="prose">Protocol statistics:
+- Packet sizes, inter-arrival times, port numbers</p>
+<h3 class="sh3">Variant</h3>
+<p class="prose">Gaussian Naive Bayes (continuous features)</p>
+<h3 class="sh3">Benefit</h3>
+<p class="prose">Fast classification (real-time)
+Probabilistic output (confidence scores)</p>
+<h3 class="sh2">Log Analysis</h3>
+<h3 class="sh3">Features</h3>
+<p class="prose">Log event types:
+- login_attempt, file_access, network_connection, etc.
+Binary (event occurred or not)</p>
+<h3 class="sh3">Variant</h3>
+<p class="prose">Bernoulli Naive Bayes</p>
+<h3 class="sh3">Classes</h3>
+<p class="prose">- normal_activity
+- lateral_movement
+- data_exfiltration
+- privilege_escalation</p>
+<h3 class="sh3">Benefit</h3>
+<p class="prose">Multi-class classification with interpretable probabilities</p>
+<h2 class="sh1">Advantages Limitations</h2>
+<h3 class="sh2">Advantages</h3>
+<h3 class="sh3">Simplicity</h3>
+<ul class="blist"><li>Extremely simple to implement</li><li>Few hyperparameters (just α)</li><li>Easy to understand and debug</li></ul>
+<h3 class="sh3">Speed</h3>
+<ul class="blist"><li>Training: O(n × d) - just counting!</li><li>Prediction: O(d) per sample</li><li>Fast enough for real-time</li></ul>
+<h3 class="sh3">Small Data</h3>
+<ul class="blist"><li>Works with small datasets</li><li>Doesn&#x27;t need as much data as discriminative models</li><li>Good for rare classes</li></ul>
+<h3 class="sh3">Probability Estimates</h3>
+<ul class="blist"><li>Outputs probabilities (not just class labels)</li><li>Can set confidence thresholds</li><li>Useful for risk assessment</li></ul>
+<h3 class="sh3">Incremental Learning</h3>
+<ul class="blist"><li>Easy to update with new data</li><li>Online learning naturally supported</li><li>No need to retrain from scratch</li></ul>
+<h3 class="sh3">Handles Irrelevant Features</h3>
+<ul class="blist"><li>Irrelevant features get low probabilities</li><li>Doesn&#x27;t need feature selection</li><li>Robust to noisy features</li></ul>
+<h3 class="sh2">Limitations</h3>
+<h3 class="sh3">Independence Assumption</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Assumes features independent (often false)</p>
+<h4 class="sh3">Impact</h4>
+<p class="prose">Correlated features double-counted
+Probability estimates poor (overconfident)</p>
+<h4 class="sh3">Mitigation</h4>
+<p class="prose">Feature selection to remove redundant features</p>
+<h3 class="sh3">Zero Frequency Problem</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Unseen feature values → zero probability</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Laplace smoothing (always use!)</p>
+<h3 class="sh3">Continuous Features</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Gaussian assumption often violated</p>
+<h4 class="sh3">Alternative</h4>
+<p class="prose">Discretize continuous features or use other models</p>
+<h3 class="sh3">Poor Probability Calibration</h3>
+<h4 class="sh3">Issue</h4>
+<p class="prose">Outputs confident probabilities (often wrong)
+P(spam)=0.99 doesn&#x27;t mean 99% chance</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Use for ranking, not absolute probabilities</p>
+<h3 class="sh3">Linear Decision Boundary</h3>
+<h4 class="sh3">Limitation</h4>
+<p class="prose">Can only learn linear boundaries (like logistic regression)</p>
+<h4 class="sh3">No Kernels</h4>
+<p class="prose">No kernel trick available (unlike SVM)</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Naive Bayes: Probabilistic classifier using Bayes&#x27; theorem</li><li>Naive assumption: Features independent given class</li><li>Three variants: Gaussian (continuous), Multinomial (counts), Bernoulli (binary)</li><li>Laplace smoothing: Prevent zero probabilities</li><li>Works despite naive assumption (classification not estimation)</li><li>Classification rule: argmax_y P(Y=y) × ∏ᵢ P(Xᵢ|Y=y)</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement Multinomial Naive Bayes from scratch</li><li>Apply Laplace smoothing (α=1 default)</li><li>Choose variant based on feature type</li><li>Use log probabilities (avoid underflow)</li><li>Interpret learned probabilities</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Classic spam/phishing detection algorithm</li><li>Fast enough for real-time classification</li><li>Provides probability estimates (risk assessment)</li><li>Incremental learning (update with new data)</li><li>Good baseline (simple, fast, interpretable)</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Naive Bayes = counting + Bayes&#x27; theorem</li><li>Always use Laplace smoothing (α=1)</li><li>Works despite violated independence assumption</li><li>Fastest classifier for text (spam detection)</li><li>Good for small datasets and many classes</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: K-Means Clustering (unsupervised learning)</li><li>You now understand probabilistic classification</li><li>Naive Bayes foundation for Bayesian methods</li></ul>
+</article>

@@ -1,0 +1,937 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 9 · ~6 pages</div>
+<h1>Positional Encoding: Order Without Recurrence</h1>
+<div class="tags"><span class="tag">positional-encoding</span><span class="tag">sinusoidal-encoding</span><span class="tag">learned-embeddings</span><span class="tag">relative-position</span><span class="tag">rope</span><span class="tag">position-awareness</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Positional Encoding: Order Without Recurrence</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.9</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Attention mechanisms are permutation-invariant: they don&#x27;t inherently know word order. 
+&quot;The cat chased the mouse&quot; and &quot;The mouse chased the cat&quot; produce identical attention 
+patterns (just permuted). This is a fundamental problem for language, where order 
+matters critically.
+
+Positional encoding solves this by injecting position information into input embeddings. 
+The original transformer (Vaswani et al., 2017) used sinusoidal functions - elegant 
+mathematical encoding that generalizes to unseen sequence lengths. Modern transformers 
+often use learned positional embeddings or relative position encoding (RoPE).
+
+For security engineers: Positional encoding can leak information about sequence structure. 
+Position-dependent attacks exploit how models process different positions. Understanding 
+positional encoding reveals vulnerabilities in how transformers handle sequence order 
+and enables position-aware adversarial attacks.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand why attention is permutation-invariant</li><li>Grasp how positional encoding injects order information</li><li>Learn sinusoidal encoding: PE(pos, 2i) = sin(pos/10000^(2i/d))</li><li>Compare absolute vs relative position encoding</li><li>Understand Rotary Position Embedding (RoPE)</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement sinusoidal positional encoding from scratch</li><li>Create learned positional embeddings</li><li>Demonstrate permutation invariance without positional encoding</li><li>Visualize positional encoding patterns</li><li>Implement RoPE for modern transformers</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Identify position-dependent attack vectors</li><li>Understand how position encoding leaks sequence structure</li><li>Analyze position-aware adversarial perturbations</li><li>Detect position-based information extraction</li><li>Audit position encoding for unexpected biases</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.8: Multi-head attention</li><li>Section 3.3: Word embeddings</li><li>Trigonometry: sine and cosine functions</li><li>Understanding of permutation invariance</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy broadcasting and vectorization</li><li>Trigonometric functions</li><li>Embedding layer implementation</li><li>Visualization of high-dimensional data</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 8</h3>
+<p class="prose">Section 3.8 completed the multi-head attention mechanism. But attention has a 
+critical flaw: it&#x27;s permutation-invariant (doesn&#x27;t know word order). Now we 
+solve this by adding positional encoding to embeddings.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.10 will introduce self-attention - attention where queries, keys, and 
+values all come from the same sequence. This is the foundation of transformer 
+encoder layers.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Permutation Invariance Problem</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Attention mechanisms compute weighted sums based on content similarity, not position. 
+If you permute the input sequence, you get the same attention weights (just permuted). 
+This means attention alone cannot distinguish &quot;cat chased mouse&quot; from &quot;mouse chased cat&quot;. 
+For language understanding, this is catastrophic - word order is fundamental to meaning.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Permutation Invariance Explained</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Function f is permutation-invariant if:
+f(permute(x)) = permute(f(x))
+
+For any permutation π of indices</p>
+<h4 class="sh3">Attention Is Permutation Invariant</h4>
+<h4 class="sh3">Query Key Scores</h4>
+<p class="prose">score(Q[i], K[j]) depends only on content, not positions i, j
+
+If we permute input:
+- Q, K, V get permuted
+- Attention scores get permuted
+- But relationship between content unchanged</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Input: [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;]
+Permuted: [&quot;sat&quot;, &quot;The&quot;, &quot;cat&quot;]
+
+Attention between &quot;cat&quot; and &quot;sat&quot; is SAME in both
+→ Model can&#x27;t tell which came first!</p>
+<h4 class="sh3">Why This Is Bad</h4>
+<h4 class="sh3">Word Order Matters</h4>
+<h4 class="sh3">Example 1</h4>
+<p class="prose">&quot;The cat chased the mouse&quot; ≠ &quot;The mouse chased the cat&quot;
+Meaning completely different!</p>
+<h4 class="sh3">Example 2</h4>
+<p class="prose">&quot;Not bad&quot; ≠ &quot;Bad not&quot;
+Negation depends on order</p>
+<h4 class="sh3">Example 3</h4>
+<p class="prose">&quot;John loves Mary&quot; ≠ &quot;Mary loves John&quot;
+Subject-object roles depend on position</p>
+<h4 class="sh3">Syntax Requires Order</h4>
+<ul class="blist"><li>Grammatical structure depends on word order</li><li>Modifiers must be in correct position</li><li>Verb tense indicators are position-dependent</li></ul>
+<h4 class="sh3">Semantics Requires Order</h4>
+<ul class="blist"><li>Temporal relationships (before/after)</li><li>Causal relationships (cause → effect)</li><li>Narrative structure (story progression)</li></ul>
+<h3 class="sh3">Demonstration Without Positional Encoding</h3>
+<h4 class="sh3">Experiment</h4>
+<p class="prose">Input: &quot;The dog bit the mailman&quot;
+Permuted: &quot;mailman The bit dog the&quot;
+
+Without positional encoding:
+- Attention patterns are identical (just permuted)
+- Model produces same representation (just permuted positions)
+- Cannot distinguish original from permuted!</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Model is &quot;bag of words&quot; - knows what words are present but not order
+→ Cannot understand language properly</p>
+<h3 class="sh3">Solution Overview</h3>
+<h4 class="sh3">Key Idea</h4>
+<p class="prose">Add position information to word embeddings</p>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Original: embedding(word)
+With position: embedding(word) + positional_encoding(position)
+
+Now embeddings contain both:
+- WHAT the word is (from word embedding)
+- WHERE the word is (from positional encoding)</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Attention can now distinguish positions:
+- &quot;cat&quot; at position 1 has different encoding than &quot;cat&quot; at position 5
+- Model learns position-dependent patterns
+- Word order is preserved!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Demonstrate Permutation Invariance</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+def demonstrate_permutation_invariance():
+    &quot;&quot;&quot;Show that attention is permutation-invariant without positional encoding.&quot;&quot;&quot;
+    
+    print(&quot;=== Permutation Invariance Demonstration ===\n&quot;)
+    
+    # Simulate word embeddings (without positional encoding)
+    embeddings = {
+        &quot;The&quot;: np.array([0.1, 0.2, 0.3, 0.4]),
+        &quot;cat&quot;: np.array([0.5, 0.6, 0.7, 0.8]),
+        &quot;sat&quot;: np.array([0.2, 0.4, 0.6, 0.8]),
+        &quot;on&quot;: np.array([0.1, 0.3, 0.5, 0.7]),
+        &quot;mat&quot;: np.array([0.9, 0.7, 0.5, 0.3]),
+    }
+    
+    # Original sequence
+    original_seq = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;mat&quot;]
+    original_emb = np.array([embeddings[w] for w in original_seq])
+    
+    # Permuted sequence
+    permuted_seq = [&quot;mat&quot;, &quot;The&quot;, &quot;on&quot;, &quot;cat&quot;, &quot;sat&quot;]
+    permuted_emb = np.array([embeddings[w] for w in permuted_seq])
+    
+    print(&quot;Original sequence:&quot;, &quot; &quot;.join(original_seq))
+    print(&quot;Permuted sequence:&quot;, &quot; &quot;.join(permuted_seq))
+    print()
+    
+    # Compute attention scores (simplified: just dot products)
+    # For query = &quot;cat&quot; (position 1 in original, position 3 in permuted)
+    
+    # Original: &quot;cat&quot; at position 1
+    cat_emb = embeddings[&quot;cat&quot;]
+    original_scores = np.dot(original_emb, cat_emb)
+    
+    print(&quot;Attention scores for &#x27;cat&#x27; in original sequence:&quot;)
+    for i, (word, score) in enumerate(zip(original_seq, original_scores)):
+        print(f&quot;  {word:6s} (pos {i}): {score:.3f}&quot;)
+    
+    # Permuted: &quot;cat&quot; at position 3
+    permuted_scores = np.dot(permuted_emb, cat_emb)
+    
+    print(&quot;\nAttention scores for &#x27;cat&#x27; in permuted sequence:&quot;)
+    for i, (word, score) in enumerate(zip(permuted_seq, permuted_scores)):
+        print(f&quot;  {word:6s} (pos {i}): {score:.3f}&quot;)
+    
+    print(&quot;\nObservation:&quot;)
+    print(&quot;  Scores are IDENTICAL, just in different positions!&quot;)
+    print(&quot;  &#x27;cat&#x27; → &#x27;sat&#x27; score is same in both sequences&quot;)
+    print(&quot;  Model cannot tell which sequence is correct!&quot;)
+    print(&quot;\n→ WITHOUT positional encoding, attention is permutation-invariant&quot;)
+
+demonstrate_permutation_invariance()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Position Agnostic Attacks</h3>
+<p class="prose">Permutation invariance creates attack vectors:
+- Adversary can scramble word order without detection
+- Inject malicious content at any position (model doesn&#x27;t distinguish)
+- Bypass position-dependent filters
+- Defense: Always use positional encoding in transformers</p>
+<h3 class="sh3">Bag Of Words Vulnerabilities</h3>
+<p class="prose">Without position info, model is bag-of-words:
+- Adversary knows model ignores order
+- Can craft inputs that look benign when unordered
+- But malicious when ordered correctly
+- Example: &quot;not harmful&quot; vs &quot;harmful not&quot; (both identical without position)</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sinusoidal Positional Encoding</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The original transformer (Vaswani et al., 2017) used sinusoidal functions for 
+positional encoding. These have elegant mathematical properties: generalizable to 
+any sequence length, deterministic (no parameters to learn), and enable the model 
+to easily learn relative positions through linear combinations.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Sinusoidal Formula</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">For position pos and dimension i:
+
+PE(pos, 2i)   = sin(pos / 10000^(2i/d_model))
+PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
+
+Where:
+- pos: position in sequence (0, 1, 2, ...)
+- i: dimension index (0, 1, 2, ..., d_model/2 - 1)
+- d_model: embedding dimension</p>
+<h4 class="sh3">Intuition</h4>
+<h4 class="sh3">Even Dimensions</h4>
+<p class="prose">Use sine function</p>
+<h4 class="sh3">Odd Dimensions</h4>
+<p class="prose">Use cosine function</p>
+<h4 class="sh3">Frequency Varies</h4>
+<p class="prose">Different dimensions use different frequencies</p>
+<h4 class="sh3">Low Dimensions</h4>
+<p class="prose">i = 0: wavelength = 2π
+Fast oscillation across positions</p>
+<h4 class="sh3">High Dimensions</h4>
+<p class="prose">i = d_model/2 - 1: wavelength = 10000 × 2π
+Very slow oscillation</p>
+<h4 class="sh3">Example Calculation</h4>
+<h4 class="sh3">Position 0</h4>
+<h4 class="sh3">Dim 0</h4>
+<p class="prose">sin(0 / 10000^0) = sin(0) = 0</p>
+<h4 class="sh3">Dim 1</h4>
+<p class="prose">cos(0 / 10000^0) = cos(0) = 1</p>
+<h4 class="sh3">Dim 2</h4>
+<p class="prose">sin(0 / 10000^(2/512)) ≈ 0</p>
+<h4 class="sh3">Dim 3</h4>
+<p class="prose">cos(0 / 10000^(2/512)) ≈ 1</p>
+<h4 class="sh3">Position 1</h4>
+<h4 class="sh3">Dim 0</h4>
+<p class="prose">sin(1 / 1) ≈ 0.841</p>
+<h4 class="sh3">Dim 1</h4>
+<p class="prose">cos(1 / 1) ≈ 0.540</p>
+<h4 class="sh3">Dim 2</h4>
+<p class="prose">sin(1 / 10000^(2/512)) ≈ 0.001</p>
+<h4 class="sh3">Dim 3</h4>
+<p class="prose">cos(1 / 10000^(2/512)) ≈ 0.999</p>
+<h3 class="sh3">Why Sinusoidal Works</h3>
+<h4 class="sh3">Generalization To Unseen Lengths</h4>
+<h4 class="sh3">Problem</h4>
+<p class="prose">What if test sequence longer than training?</p>
+<h4 class="sh3">Learned Embeddings</h4>
+<p class="prose">Have fixed maximum length
+Cannot handle longer sequences at test time</p>
+<h4 class="sh3">Sinusoidal Solution</h4>
+<p class="prose">Formula works for ANY position
+pos = 10,000? Just compute sin(10000 / ...)
+→ Generalizes to arbitrary lengths!</p>
+<h4 class="sh3">Relative Position Via Linear Combination</h4>
+<h4 class="sh3">Key Property</h4>
+<p class="prose">For any fixed offset k:
+PE(pos + k) can be represented as linear function of PE(pos)
+
+Mathematically:
+sin(pos + k) = sin(pos)cos(k) + cos(pos)sin(k)</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Model can learn to compute relative positions:
+&quot;How far is position j from position i?&quot;
+→ Useful for learning dependencies</p>
+<h4 class="sh3">Unique Encoding Per Position</h4>
+<h4 class="sh3">Different Frequencies</h4>
+<p class="prose">Low dimensions: fast oscillation (distinguish nearby positions)
+High dimensions: slow oscillation (distinguish distant positions)</p>
+<h4 class="sh3">Combination Is Unique</h4>
+<p class="prose">Each position has unique pattern across all dimensions
+No two positions have identical encoding</p>
+<h3 class="sh3">Adding To Embeddings</h3>
+<h4 class="sh3">Method</h4>
+<p class="prose">Element-wise addition (not concatenation)</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">input = word_embedding(word) + positional_encoding(position)</p>
+<h4 class="sh3">Why Addition</h4>
+<p class="prose">- Preserves embedding dimension
+- Allows model to learn to separate content from position
+- Simpler than concatenation
+- Works well in practice</p>
+<h4 class="sh3">Alternative Concatenation</h4>
+<p class="prose">input = [word_embedding(word), positional_encoding(position)]
+
+Problem: Doubles embedding dimension
+Used in some models, but addition more common</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Sinusoidal Positional Encoding</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class SinusoidalPositionalEncoding:
+    &quot;&quot;&quot;
+    Sinusoidal positional encoding (Vaswani et al., 2017).
+    
+    PE(pos, 2i)   = sin(pos / 10000^(2i/d_model))
+    PE(pos, 2i+1) = cos(pos / 10000^(2i/d_model))
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, max_len: int = 5000):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Embedding dimension (must be even)
+            max_len: Maximum sequence length to pre-compute
+        &quot;&quot;&quot;
+        assert d_model % 2 == 0, &quot;d_model must be even for sinusoidal encoding&quot;
+        
+        self.d_model = d_model
+        self.max_len = max_len
+        
+        # Pre-compute positional encodings
+        self.pe = self._create_positional_encoding()
+    
+    def _create_positional_encoding(self) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Create positional encoding matrix.
+        
+        Returns:
+            pe: (max_len, d_model) positional encoding matrix
+        &quot;&quot;&quot;
+        pe = np.zeros((self.max_len, self.d_model))
+        
+        # Position indices
+        position = np.arange(0, self.max_len).reshape(-1, 1)
+        
+        # Dimension indices
+        div_term = np.exp(np.arange(0, self.d_model, 2) * 
+                         -(np.log(10000.0) / self.d_model))
+        
+        # Apply sin to even dimensions
+        pe[:, 0::2] = np.sin(position * div_term)
+        
+        # Apply cos to odd dimensions
+        pe[:, 1::2] = np.cos(position * div_term)
+        
+        return pe
+    
+    def get_encoding(self, seq_len: int) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Get positional encoding for sequence.
+        
+        Args:
+            seq_len: Sequence length
+        
+        Returns:
+            encoding: (seq_len, d_model) positional encodings
+        &quot;&quot;&quot;
+        if seq_len &gt; self.max_len:
+            # Extend if needed
+            self.max_len = seq_len * 2
+            self.pe = self._create_positional_encoding()
+        
+        return self.pe[:seq_len]
+    
+    def __call__(self, seq_len: int) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for get_encoding.&quot;&quot;&quot;
+        return self.get_encoding(seq_len)
+
+
+# Example usage
+d_model = 512
+max_len = 100
+
+pos_encoder = SinusoidalPositionalEncoding(d_model, max_len)
+
+# Get encoding for sequence of length 10
+seq_len = 10
+pe = pos_encoder(seq_len)
+
+print(f&quot;Sinusoidal Positional Encoding:&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Sequence length: {seq_len}&quot;)
+print(f&quot;  Encoding shape: {pe.shape}&quot;)
+print(f&quot;\nFirst few positions (first 8 dimensions):&quot;)
+for pos in range(min(5, seq_len)):
+    print(f&quot;  Position {pos}: {pe[pos, :8]}&quot;)</code></pre>
+<h3 class="sh3">Visualize Positional Encoding</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_positional_encoding():
+    &quot;&quot;&quot;Visualize sinusoidal positional encoding patterns.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Positional Encoding Visualization ===\n&quot;)
+    
+    d_model = 128
+    max_len = 100
+    
+    pos_encoder = SinusoidalPositionalEncoding(d_model, max_len)
+    pe = pos_encoder(max_len)
+    
+    # Show encoding for a few positions
+    positions_to_show = [0, 1, 5, 10, 50, 99]
+    
+    print(&quot;Positional encodings (first 16 dimensions):&quot;)
+    print(&quot;\nPos | Dimensions 0-15&quot;)
+    print(&quot;----|&quot; + &quot;-&quot; * 80)
+    
+    for pos in positions_to_show:
+        encoding_str = &quot; &quot;.join(f&quot;{pe[pos, i]:5.2f}&quot; for i in range(16))
+        print(f&quot;{pos:3d} | {encoding_str}&quot;)
+    
+    print(&quot;\nObservations:&quot;)
+    print(&quot;  - Even dimensions use sine (oscillates)&quot;)
+    print(&quot;  - Odd dimensions use cosine (offset by π/2)&quot;)
+    print(&quot;  - Different dimensions have different frequencies&quot;)
+    print(&quot;  - Low dimensions change quickly across positions&quot;)
+    print(&quot;  - High dimensions change slowly&quot;)
+    
+    # Demonstrate uniqueness
+    print(&quot;\n=== Uniqueness Check ===&quot;)
+    print(&quot;Checking if any two positions have identical encoding...&quot;)
+    
+    # Compute pairwise distances
+    found_duplicate = False
+    for i in range(min(50, max_len)):
+        for j in range(i + 1, min(50, max_len)):
+            distance = np.linalg.norm(pe[i] - pe[j])
+            if distance &lt; 1e-6:
+                print(f&quot;  Duplicate found: positions {i} and {j}&quot;)
+                found_duplicate = True
+    
+    if not found_duplicate:
+        print(&quot;  ✓ All positions have unique encodings!&quot;)
+
+visualize_positional_encoding()</code></pre>
+<h3 class="sh3">Demonstrate Relative Position</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_relative_position_property():
+    &quot;&quot;&quot;Show that PE(pos+k) is linear function of PE(pos).&quot;&quot;&quot;
+    
+    print(&quot;\n=== Relative Position Property ===\n&quot;)
+    
+    # Simple example with small dimension
+    d_model = 4
+    pos_encoder = SinusoidalPositionalEncoding(d_model, max_len=100)
+    
+    pe = pos_encoder(100)
+    
+    # Pick a position and offset
+    pos = 5
+    offset = 3
+    
+    print(f&quot;Position: {pos}&quot;)
+    print(f&quot;Offset: {offset}&quot;)
+    print(f&quot;Target position: {pos + offset}&quot;)
+    print()
+    
+    # PE(pos)
+    pe_pos = pe[pos]
+    print(f&quot;PE({pos}):        {pe_pos}&quot;)
+    
+    # PE(pos + offset)
+    pe_target = pe[pos + offset]
+    print(f&quot;PE({pos + offset}):     {pe_target}&quot;)
+    
+    # Try to express PE(pos + offset) as linear combination of PE(pos) and PE(0)
+    # This is simplified - in practice, need full linear transformation
+    
+    print(&quot;\nProperty: PE(pos+k) can be computed from PE(pos) via linear transformation&quot;)
+    print(&quot;This allows model to learn relative position easily.&quot;)
+
+demonstrate_relative_position_property()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Position Encoding Fingerprinting</h3>
+<p class="prose">Sinusoidal encoding is deterministic:
+- Same position always gets same encoding
+- Adversary can fingerprint positions in output
+- Infer sequence structure from position patterns
+- Defense: Add noise to positional encodings (careful not to break learning)</p>
+<h3 class="sh3">Position Based Adversarial Perturbations</h3>
+<p class="prose">Adversary can craft position-specific attacks:
+- Exploit how model processes specific positions
+- Position 0 (start) often gets special treatment
+- Position -1 (end) often critical for classification
+- Target attacks at these positions for maximum impact</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Learned Positional Embeddings and Alternatives</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Instead of fixed sinusoidal functions, positions can be learned like word embeddings. 
+Modern transformers (BERT, GPT) often use learned positional embeddings. Other 
+approaches include relative position encoding (focus on distance rather than absolute 
+position) and Rotary Position Embedding (RoPE, used in modern LLMs like LLaMA).</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Learned Positional Embeddings</h3>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Treat positions as tokens with learned embeddings</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code># Create embedding matrix
+position_embeddings = torch.nn.Embedding(max_position, d_model)
+
+# For sequence of length n
+positions = torch.arange(0, n)
+pos_emb = position_embeddings(positions)</code></pre>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Model learns optimal position representation</li><li>Can adapt to specific task/domain</li><li>Often performs slightly better than sinusoidal</li><li>Simpler implementation</li></ul>
+<h4 class="sh3">Disadvantages</h4>
+<ul class="blist"><li>Fixed maximum length (cannot generalize beyond)</li><li>Requires learning (more parameters)</li><li>No built-in relative position properties</li></ul>
+<h4 class="sh3">Used In</h4>
+<p class="prose">BERT, GPT-2, GPT-3 (early versions)</p>
+<h3 class="sh3">Relative Positional Encoding</h3>
+<h4 class="sh3">Motivation</h4>
+<p class="prose">Absolute position (position 5) may not matter
+Relative distance (5 tokens apart) is often more important</p>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Instead of encoding position i and position j separately:
+Encode the DIFFERENCE (i - j) or (j - i)</p>
+<h4 class="sh3">Shaw Et Al 2018</h4>
+<h4 class="sh3">Method</h4>
+<p class="prose">Add relative position bias to attention scores</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">attention_score(i, j) = Q[i]^T K[j] + r(i - j)
+
+Where r(i - j) is learned relative position bias</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Model learns &#x27;how to attend to relative positions&#x27;</p>
+<h4 class="sh3">Limitations</h4>
+<ul class="blist"><li>Still limited to maximum relative distance</li><li>Adds parameters for each relative offset</li><li>Complexity grows with maximum distance</li></ul>
+<h3 class="sh3">Rotary Position Embedding Rope</h3>
+<h4 class="sh3">Motivation</h4>
+<p class="prose">Encode position by rotating embeddings in 2D subspaces
+Relative position emerges naturally from rotation angles</p>
+<h4 class="sh3">Key Idea</h4>
+<p class="prose">For position m, apply rotation matrix:
+
+[cos(mθ)  -sin(mθ)] [q1]
+[sin(mθ)   cos(mθ)] [q2]
+
+Where θ depends on dimension (like sinusoidal encoding)</p>
+<h4 class="sh3">Relative Position Property</h4>
+<p class="prose">Inner product between positions m and n:
+
+&lt;rotate(Q_m), rotate(K_n)&gt; = &lt;Q, K&gt; × cos((m-n)θ)
+
+→ Automatically encodes relative position (m - n)!</p>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Naturally encodes relative position</li><li>No maximum sequence length</li><li>Computationally efficient (rotation matrices)</li><li>Better long-range performance</li></ul>
+<h4 class="sh3">Used In</h4>
+<p class="prose">LLaMA, GPT-NeoX, GPT-J, modern LLMs</p>
+<h3 class="sh3">Comparison Table</h3>
+<h4 class="sh3">Sinusoidal</h4>
+<h4 class="sh3">Type</h4>
+<p class="prose">Fixed (deterministic)</p>
+<h4 class="sh3">Generalization</h4>
+<p class="prose">✓ Any length</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">0 (no learning)</p>
+<h4 class="sh3">Relative Position</h4>
+<p class="prose">Linear combinations</p>
+<h4 class="sh3">Used In</h4>
+<p class="prose">Original Transformer</p>
+<h4 class="sh3">Learned</h4>
+<h4 class="sh3">Type</h4>
+<p class="prose">Learned embeddings</p>
+<h4 class="sh3">Generalization</h4>
+<p class="prose">✗ Fixed max length</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">max_len × d_model</p>
+<h4 class="sh3">Relative Position</h4>
+<p class="prose">Not built-in</p>
+<h4 class="sh3">Used In</h4>
+<p class="prose">BERT, GPT-2/3</p>
+<h4 class="sh3">Relative</h4>
+<h4 class="sh3">Type</h4>
+<p class="prose">Learned biases</p>
+<h4 class="sh3">Generalization</h4>
+<p class="prose">✗ Fixed max distance</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">max_distance (2× for bidirectional)</p>
+<h4 class="sh3">Relative Position</h4>
+<p class="prose">✓ Explicit</p>
+<h4 class="sh3">Used In</h4>
+<p class="prose">Transformer-XL</p>
+<h4 class="sh3">Rope</h4>
+<h4 class="sh3">Type</h4>
+<p class="prose">Rotation matrices</p>
+<h4 class="sh3">Generalization</h4>
+<p class="prose">✓ Any length</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">0 (no learning)</p>
+<h4 class="sh3">Relative Position</h4>
+<p class="prose">✓ Automatic</p>
+<h4 class="sh3">Used In</h4>
+<p class="prose">LLaMA, modern LLMs</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Learned Positional Embeddings Impl</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class LearnedPositionalEmbedding:
+    &quot;&quot;&quot;
+    Learned positional embeddings (like BERT, GPT-2).
+    
+    Positions are treated like tokens with learned embeddings.
+    &quot;&quot;&quot;
+    
+    def __init__(self, max_len: int, d_model: int):
+        &quot;&quot;&quot;
+        Args:
+            max_len: Maximum sequence length
+            d_model: Embedding dimension
+        &quot;&quot;&quot;
+        self.max_len = max_len
+        self.d_model = d_model
+        
+        # Initialize position embeddings randomly
+        self.position_embeddings = np.random.randn(max_len, d_model) * 0.02
+    
+    def get_encoding(self, seq_len: int) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Get position embeddings for sequence.
+        
+        Args:
+            seq_len: Sequence length
+        
+        Returns:
+            embeddings: (seq_len, d_model) position embeddings
+        &quot;&quot;&quot;
+        if seq_len &gt; self.max_len:
+            raise ValueError(f&quot;Sequence length {seq_len} exceeds max_len {self.max_len}&quot;)
+        
+        return self.position_embeddings[:seq_len]
+    
+    def __call__(self, seq_len: int) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for get_encoding.&quot;&quot;&quot;
+        return self.get_encoding(seq_len)
+
+
+# Example usage
+max_len = 512
+d_model = 768
+
+learned_pos = LearnedPositionalEmbedding(max_len, d_model)
+
+seq_len = 10
+pos_emb = learned_pos(seq_len)
+
+print(&quot;Learned Positional Embeddings:&quot;)
+print(f&quot;  Max length: {max_len}&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Parameters: {max_len * d_model:,}&quot;)
+print(f&quot;\nEmbedding shape for length {seq_len}: {pos_emb.shape}&quot;)</code></pre>
+<h3 class="sh3">Rope Simplified Implementation</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class RotaryPositionalEmbedding:
+    &quot;&quot;&quot;
+    Simplified Rotary Position Embedding (RoPE).
+    
+    Rotates query and key embeddings based on position.
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, max_len: int = 2048):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Embedding dimension (must be even)
+            max_len: Maximum sequence length
+        &quot;&quot;&quot;
+        assert d_model % 2 == 0, &quot;d_model must be even for RoPE&quot;
+        
+        self.d_model = d_model
+        self.max_len = max_len
+        
+        # Pre-compute rotation angles
+        self.theta = self._compute_theta()
+    
+    def _compute_theta(self) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Compute rotation angles for each dimension.
+        
+        Returns:
+            theta: (d_model/2,) rotation angles
+        &quot;&quot;&quot;
+        # Similar to sinusoidal encoding frequencies
+        dim_indices = np.arange(0, self.d_model, 2)
+        theta = 1.0 / (10000 ** (dim_indices / self.d_model))
+        return theta
+    
+    def rotate(self, x: np.ndarray, positions: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Apply rotary position encoding.
+        
+        Args:
+            x: Input tensor (seq_len, d_model) or (batch, seq_len, d_model)
+            positions: Position indices (seq_len,)
+        
+        Returns:
+            rotated: Rotated tensor with position encoding
+        &quot;&quot;&quot;
+        # Reshape for pair-wise rotation
+        if x.ndim == 2:
+            seq_len, d = x.shape
+            x_pairs = x.reshape(seq_len, d // 2, 2)
+        else:
+            batch, seq_len, d = x.shape
+            x_pairs = x.reshape(batch, seq_len, d // 2, 2)
+        
+        # Compute rotation angles: position × theta
+        angles = np.outer(positions, self.theta)  # (seq_len, d_model/2)
+        
+        # Compute cos and sin
+        cos_angles = np.cos(angles)
+        sin_angles = np.sin(angles)
+        
+        # Apply rotation to each pair
+        if x.ndim == 2:
+            x1, x2 = x_pairs[..., 0], x_pairs[..., 1]
+            rotated_x1 = x1 * cos_angles - x2 * sin_angles
+            rotated_x2 = x1 * sin_angles + x2 * cos_angles
+            rotated = np.stack([rotated_x1, rotated_x2], axis=-1)
+            return rotated.reshape(seq_len, d)
+        else:
+            x1, x2 = x_pairs[..., 0], x_pairs[..., 1]
+            cos_angles = cos_angles[np.newaxis, :, :]
+            sin_angles = sin_angles[np.newaxis, :, :]
+            rotated_x1 = x1 * cos_angles - x2 * sin_angles
+            rotated_x2 = x1 * sin_angles + x2 * cos_angles
+            rotated = np.stack([rotated_x1, rotated_x2], axis=-1)
+            return rotated.reshape(batch, seq_len, d)
+    
+    def __call__(self, x: np.ndarray, positions: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for rotate.&quot;&quot;&quot;
+        return self.rotate(x, positions)
+
+
+# Example usage
+d_model = 128
+seq_len = 10
+
+rope = RotaryPositionalEmbedding(d_model)
+
+# Simulate query embeddings
+Q = np.random.randn(seq_len, d_model)
+positions = np.arange(seq_len)
+
+# Apply RoPE
+Q_rotated = rope(Q, positions)
+
+print(&quot;\nRotary Position Embedding (RoPE):&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Sequence length: {seq_len}&quot;)
+print(f&quot;  Original Q shape: {Q.shape}&quot;)
+print(f&quot;  Rotated Q shape: {Q_rotated.shape}&quot;)
+print(&quot;\n  Position information now encoded in rotations!&quot;)
+print(&quot;  Relative position emerges from rotation angles.&quot;)</code></pre>
+<h3 class="sh3">Compare Encoding Methods</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def compare_positional_encoding_methods():
+    &quot;&quot;&quot;Compare different positional encoding approaches.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Positional Encoding Methods Comparison ===\n&quot;)
+    
+    d_model = 128
+    max_len = 512
+    
+    # Create encoders
+    sinusoidal = SinusoidalPositionalEncoding(d_model, max_len)
+    learned = LearnedPositionalEmbedding(max_len, d_model)
+    rope = RotaryPositionalEmbedding(d_model)
+    
+    print(&quot;Method            | Max Length | Parameters | Generalizes&quot;)
+    print(&quot;------------------|------------|------------|-------------&quot;)
+    print(f&quot;Sinusoidal        | Unlimited  | {0:10,} | Yes&quot;)
+    print(f&quot;Learned           | {max_len:10,} | {max_len * d_model:10,} | No&quot;)
+    print(f&quot;RoPE              | Unlimited  | {0:10,} | Yes&quot;)
+    
+    print(&quot;\nKey differences:&quot;)
+    print(&quot;  Sinusoidal:&quot;)
+    print(&quot;    + No parameters (deterministic)&quot;)
+    print(&quot;    + Generalizes to any length&quot;)
+    print(&quot;    - Fixed formula (cannot adapt)&quot;)
+    
+    print(&quot;\n  Learned:&quot;)
+    print(&quot;    + Can adapt to task&quot;)
+    print(&quot;    + Often slightly better performance&quot;)
+    print(&quot;    - Fixed maximum length&quot;)
+    print(&quot;    - Requires learning&quot;)
+    
+    print(&quot;\n  RoPE:&quot;)
+    print(&quot;    + Generalizes to any length&quot;)
+    print(&quot;    + Automatic relative position&quot;)
+    print(&quot;    + No parameters&quot;)
+    print(&quot;    + State-of-the-art for modern LLMs&quot;)
+
+compare_positional_encoding_methods()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Learned Embedding Poisoning</h3>
+<p class="prose">Learned positional embeddings are vulnerable to poisoning:
+- Adversary can poison training data at specific positions
+- Model learns corrupted position representations
+- Position-specific backdoors (trigger at position 0, 42, etc.)
+- Defense: Monitor position embedding drift during training</p>
+<h3 class="sh3">Rope Rotation Attacks</h3>
+<p class="prose">RoPE uses rotation matrices:
+- Adversary can craft inputs that exploit rotation geometry
+- Relative position manipulation via rotation angle
+- Numerical precision attacks on rotation computation
+- Defense: Validate rotation angles, monitor for anomalies</p>
+<h3 class="sh3">Position Dependent Vulnerabilities</h3>
+<p class="prose">Different positions have different properties:
+- First position ([CLS] in BERT): Aggregates sentence info
+- Last position: Often critical for generation
+- Middle positions: May be less attended to
+- Adversary targets positions with specific vulnerabilities</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention is permutation-invariant without positional encoding</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Cannot understand word order - catastrophic for language</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Sinusoidal encoding: PE(pos,2i) = sin(pos/10000^(2i/d)), PE(pos,2i+1) = cos(...)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Elegant, generalizes to any length, enables relative position</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Learned embeddings treat positions like tokens with learned representations</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Can adapt to task, but fixed maximum length</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">RoPE encodes position via rotation matrices in 2D subspaces</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Automatic relative position, generalizes, used in modern LLMs</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Position encoding added to word embeddings (not concatenated)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Preserves dimension, allows model to separate content from position</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement sinusoidal positional encoding from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Sin for even dims, cos for odd, different frequencies per dimension</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Demonstrate permutation invariance without positional encoding</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Show attention scores identical for permuted sequences</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Create learned positional embeddings (like BERT)</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Embedding layer for positions, fixed max length</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement simplified RoPE</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Rotate embeddings based on position and dimension</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Compare different encoding methods</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Understand tradeoffs: parameters, generalization, performance</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Positional encoding reveals sequence structure</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary can fingerprint positions, infer lengths</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Different positions have different security properties</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">First/last positions often critical - monitor closely</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Learned embeddings vulnerable to position-specific poisoning</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Audit position embeddings for anomalies during training</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Position-dependent attacks exploit model&#x27;s position processing</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Test model robustness at different positions</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Deterministic encodings (sinusoidal, RoPE) are predictable</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary knows exact encoding - can craft targeted attacks</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting to add positional encoding to transformers</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always add PE to embeddings - attention needs position info</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using learned embeddings beyond trained max length</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Either use sinusoidal/RoPE or retrain with longer sequences</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Concatenating instead of adding positional encoding</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Add PE to embeddings (preserves dimension, works better)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not using even d_model for sinusoidal encoding</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Ensure d_model is even (sin for even dims, cos for odd)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Ignoring position information in security analysis</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Consider position-dependent attacks and vulnerabilities</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 8</h3>
+<ul class="blist"><li>Multi-head attention (needs position info to be useful)</li><li>Attention is permutation-invariant (the problem)</li></ul>
+<h3 class="sh3">From Section 3 3</h3>
+<ul class="blist"><li>Word embeddings (position encoding added to these)</li><li>Embedding dimension d_model</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.10: Self-attention (attention within same sequence)</li><li>Transformer encoder layer (multi-head + FFN + norms)</li><li>Building complete transformer architecture</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Self-attention (Q, K, V from same sequence)</li><li>Encoder-decoder attention (cross-attention)</li><li>Transformer encoder layer architecture</li><li>Layer normalization and residual connections</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement complete transformer encoder layer</li><li>Build transformer decoder layer</li><li>Stack multiple transformer layers</li><li>Train transformer from scratch</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Positional encoding solves a fundamental limitation of attention mechanisms: 
+permutation invariance. Without position information, transformers cannot understand 
+word order - &quot;cat chased mouse&quot; and &quot;mouse chased cat&quot; would be identical. This is 
+catastrophic for language understanding.
+
+The original transformer introduced elegant sinusoidal encoding: sin and cos functions 
+with different frequencies for different dimensions. This generalizes to any sequence 
+length and enables the model to learn relative positions through linear combinations. 
+Modern transformers often use learned positional embeddings (BERT, GPT-2/3) which can 
+adapt to specific tasks but have fixed maximum length.
+
+Rotary Position Embedding (RoPE) has become the standard for modern LLMs (LLaMA, 
+GPT-NeoX). It encodes position by rotating embeddings in 2D subspaces, automatically 
+creating relative position encoding through rotation angles. No parameters, generalizes 
+to any length, and performs better than alternatives.
+
+From a security perspective: positional encoding creates position-dependent 
+vulnerabilities. Different positions have different properties (first token aggregates 
+info, last token critical for generation). Adversaries can target specific positions, 
+poison learned embeddings at particular positions, or exploit deterministic encoding 
+patterns. Position-aware security analysis is essential for defending transformers.
+
+Next: Section 3.10 introduces self-attention - the core mechanism where queries, keys, 
+and values all come from the same sequence. This enables transformers to build rich 
+contextual representations and is the foundation of both encoder and decoder layers.</p>
+</article>

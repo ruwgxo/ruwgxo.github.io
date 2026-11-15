@@ -1,0 +1,942 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 18 · ~6 pages</div>
+<h1>T5: Text-to-Text Transfer Transformer</h1>
+<div class="tags"><span class="tag">t5</span><span class="tag">encoder-decoder</span><span class="tag">text-to-text</span><span class="tag">span-corruption</span><span class="tag">multitask-learning</span><span class="tag">unified-interface</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">T5: Text-to-Text Transfer Transformer</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.18</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">T5 (Text-to-Text Transfer Transformer) by Google (Raffel et al., 2020) unifies all NLP 
+tasks as text-to-text transformations. Every task - translation, summarization, question 
+answering, classification - is framed as generating text output from text input. This 
+unified interface uses the full encoder-decoder transformer, combining BERT&#x27;s bidirectional 
+understanding with GPT&#x27;s generation capabilities.
+
+T5 pre-trains on span corruption: mask contiguous spans of tokens and train the decoder 
+to regenerate them. Unlike BERT&#x27;s single token masking, span corruption requires generating 
+multiple tokens sequentially, better matching downstream generation tasks. T5 also pioneers 
+multitask pre-training - training on many tasks simultaneously with task-specific prefixes.
+
+For security engineers: T5&#x27;s text-to-text framework means all tasks use the same attack 
+surface - encoder input manipulation and decoder output generation. The encoder-decoder 
+design has more components to attack than BERT or GPT alone. Multitask training can create 
+task interference where poisoning one task affects others. Understanding T5 reveals how 
+architectural choices affect security across diverse NLP applications.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand text-to-text framework: unified interface for all tasks</li><li>Grasp span corruption: mask and regenerate contiguous spans</li><li>Learn encoder-decoder advantages: understanding + generation</li><li>See multitask pre-training: learning many tasks together</li><li>Compare T5 vs BERT vs GPT: architectural trade-offs</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement T5 encoder-decoder architecture</li><li>Build span corruption pre-training</li><li>Create task-specific prefixes for multitask learning</li><li>Frame different NLP tasks as text-to-text</li><li>Fine-tune T5 for various applications</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Exploit encoder-decoder attack surface</li><li>Analyze multitask interference vulnerabilities</li><li>Attack span corruption pre-training</li><li>Manipulate task prefix routing</li><li>Audit T5 models across multiple tasks</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.14: Complete transformer (encoder-decoder)</li><li>Section 3.16: BERT (encoder-only)</li><li>Section 3.17: GPT (decoder-only)</li><li>Understanding of various NLP tasks</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>Encoder-decoder implementation</li><li>Multiple pre-training objectives</li><li>Task framing and formatting</li><li>Multitask learning concepts</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 17</h3>
+<p class="prose">Section 3.17 covered GPT - decoder-only for generation. Now we cover T5 - full 
+encoder-decoder that combines understanding and generation, unifying all NLP tasks 
+under a single text-to-text interface.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.19 will compare attention mechanisms and architectural variants, synthesizing 
+the different transformer designs (BERT, GPT, T5) and their trade-offs for different 
+applications.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Text-to-Text Framework: Unified Interface</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">T5&#x27;s key innovation is treating every NLP task as text-to-text transformation. Input 
+is always text, output is always text. Classification becomes generating the class name, 
+question answering generates the answer, translation generates the target language. 
+This unified interface allows using the same model architecture and training procedure 
+for all tasks.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Text To Text Paradigm</h3>
+<h4 class="sh3">Core Idea</h4>
+<p class="prose">All tasks have the same format:
+
+Input: Text string
+Output: Text string
+
+No task-specific architectures needed!</p>
+<h4 class="sh3">Examples</h4>
+<h4 class="sh3">Translation</h4>
+<h4 class="sh3">Task</h4>
+<p class="prose">Translate English to German</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">translate English to German: That is good.</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Das ist gut.</p>
+<h4 class="sh3">Summarization</h4>
+<h4 class="sh3">Task</h4>
+<p class="prose">Summarize text</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">summarize: [long article text]</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">[summary text]</p>
+<h4 class="sh3">Question Answering</h4>
+<h4 class="sh3">Task</h4>
+<p class="prose">Answer question from context</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">question: What is the capital? context: Paris is the capital of France.</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Paris</p>
+<h4 class="sh3">Classification</h4>
+<h4 class="sh3">Task</h4>
+<p class="prose">Classify sentiment</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">cola sentence: The course is jumping well.</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">acceptable</p>
+<h4 class="sh3">Named Entity Recognition</h4>
+<h4 class="sh3">Task</h4>
+<p class="prose">Extract entities</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">ner: John lives in Paris</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">John: PERSON, Paris: LOCATION</p>
+<h4 class="sh3">Task Prefix</h4>
+<p class="prose">Task specified by prefix in input:
+&quot;translate English to German: ...&quot;
+&quot;summarize: ...&quot;
+&quot;question: ... context: ...&quot;
+
+→ Model learns task routing from prefix</p>
+<h3 class="sh3">Advantages Of Unified Interface</h3>
+<h4 class="sh3">Single Architecture</h4>
+<p class="prose">Same encoder-decoder for all tasks
+→ No task-specific heads
+→ Simpler implementation</p>
+<h4 class="sh3">Transfer Learning</h4>
+<p class="prose">Pre-train on many tasks
+→ Knowledge transfers across tasks
+→ Better generalization</p>
+<h4 class="sh3">Multitask Training</h4>
+<p class="prose">Train on all tasks simultaneously
+→ Shared representations
+→ Efficient learning</p>
+<h4 class="sh3">Flexible Generation</h4>
+<p class="prose">Can generate variable-length outputs
+→ Handles open-ended tasks
+→ Not limited to fixed classes</p>
+<h3 class="sh3">Comparison To Other Frameworks</h3>
+<h4 class="sh3">Bert Style</h4>
+<p class="prose">Task-specific heads on [CLS]:
+- Classification: [CLS] → Linear → Softmax
+- NER: Each token → Linear → Softmax
+- QA: Start/end position classifiers
+
+Different architecture per task!</p>
+<h4 class="sh3">Gpt Style</h4>
+<p class="prose">Prompt engineering:
+- Specify task in prompt
+- Model generates completion
+
+Flexible but less structured</p>
+<h4 class="sh3">T5 Style</h4>
+<p class="prose">Text-to-text:
+- Task prefix + input text
+- Generate output text
+
+Unified + structured</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">T5 Architecture</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class T5Model:
+    &quot;&quot;&quot;
+    T5 encoder-decoder transformer.
+    
+    Architecture:
+    - Encoder stack (bidirectional self-attention)
+    - Decoder stack (causal self-attention + cross-attention)
+    - Text-to-text interface for all tasks
+    &quot;&quot;&quot;
+    
+    def __init__(self,
+                vocab_size: int,
+                max_len: int = 512,
+                num_layers: int = 12,
+                d_model: int = 768,
+                num_heads: int = 12,
+                d_ff: int = 3072,
+                dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Vocabulary size (shared encoder/decoder)
+            max_len: Maximum sequence length
+            num_layers: Number of encoder/decoder layers
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        # Import from previous sections
+        from section_3_14_complete_transformer import Transformer
+        
+        # Full encoder-decoder transformer
+        self.transformer = Transformer(
+            src_vocab_size=vocab_size,
+            tgt_vocab_size=vocab_size,  # Shared vocabulary
+            max_len=max_len,
+            num_layers=num_layers,
+            d_model=d_model,
+            num_heads=num_heads,
+            d_ff=d_ff,
+            dropout=dropout
+        )
+        
+        self.vocab_size = vocab_size
+    
+    def forward(self,
+               input_ids: np.ndarray,
+               target_ids: np.ndarray,
+               training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Forward pass through T5.
+        
+        Args:
+            input_ids: Input token IDs (batch, input_len)
+            target_ids: Target token IDs (batch, target_len)
+            training: Whether in training mode
+        
+        Returns:
+            logits: Output logits (batch, target_len, vocab_size)
+        &quot;&quot;&quot;
+        logits = self.transformer(input_ids, target_ids, training=training)
+        return logits
+    
+    def __call__(self, input_ids: np.ndarray, target_ids: np.ndarray,
+                training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(input_ids, target_ids, training)
+
+
+# Example usage
+print(&quot;=== T5 Text-to-Text Architecture ===\n&quot;)
+
+vocab_size = 32000  # SentencePiece vocab
+num_layers = 12
+d_model = 768
+
+t5 = T5Model(vocab_size, num_layers=num_layers, d_model=d_model)
+
+print(f&quot;T5-base configuration:&quot;)
+print(f&quot;  Vocabulary: {vocab_size:,}&quot;)
+print(f&quot;  Encoder layers: {num_layers}&quot;)
+print(f&quot;  Decoder layers: {num_layers}&quot;)
+print(f&quot;  Hidden size: {d_model}&quot;)
+print(f&quot;  Parameters: ~220M&quot;)
+print()
+print(&quot;Architecture:&quot;)
+print(&quot;  - Full encoder-decoder transformer&quot;)
+print(&quot;  - Shared vocabulary&quot;)
+print(&quot;  - Text-to-text for all tasks&quot;)</code></pre>
+<h3 class="sh3">Task Formatting</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def format_task_input(task: str, input_text: str, **kwargs) -&gt; str:
+    &quot;&quot;&quot;
+    Format input for T5 text-to-text interface.
+    
+    Args:
+        task: Task name
+        input_text: Input text
+        **kwargs: Additional task-specific fields
+    
+    Returns:
+        formatted: Formatted input string
+    &quot;&quot;&quot;
+    if task == &quot;translation&quot;:
+        source_lang = kwargs.get(&quot;source_lang&quot;, &quot;English&quot;)
+        target_lang = kwargs.get(&quot;target_lang&quot;, &quot;German&quot;)
+        return f&quot;translate {source_lang} to {target_lang}: {input_text}&quot;
+    
+    elif task == &quot;summarization&quot;:
+        return f&quot;summarize: {input_text}&quot;
+    
+    elif task == &quot;question_answering&quot;:
+        context = kwargs.get(&quot;context&quot;, &quot;&quot;)
+        return f&quot;question: {input_text} context: {context}&quot;
+    
+    elif task == &quot;sentiment&quot;:
+        return f&quot;sentiment: {input_text}&quot;
+    
+    elif task == &quot;ner&quot;:
+        return f&quot;ner: {input_text}&quot;
+    
+    else:
+        return f&quot;{task}: {input_text}&quot;
+
+
+# Example task formatting
+print(&quot;\n=== T5 Task Formatting ===\n&quot;)
+
+# Translation
+trans_input = format_task_input(
+    &quot;translation&quot;, 
+    &quot;That is good.&quot;,
+    source_lang=&quot;English&quot;,
+    target_lang=&quot;German&quot;
+)
+print(f&quot;Translation:\n  Input: {trans_input}&quot;)
+print(f&quot;  Output: Das ist gut.\n&quot;)
+
+# Question answering
+qa_input = format_task_input(
+    &quot;question_answering&quot;,
+    &quot;What is the capital?&quot;,
+    context=&quot;Paris is the capital of France.&quot;
+)
+print(f&quot;Question answering:\n  Input: {qa_input}&quot;)
+print(f&quot;  Output: Paris\n&quot;)
+
+# Sentiment
+sent_input = format_task_input(&quot;sentiment&quot;, &quot;I love this product!&quot;)
+print(f&quot;Sentiment:\n  Input: {sent_input}&quot;)
+print(f&quot;  Output: positive\n&quot;)
+
+print(&quot;Text-to-text advantages:&quot;)
+print(&quot;  - Unified interface for all tasks&quot;)
+print(&quot;  - Task prefix specifies task type&quot;)
+print(&quot;  - Same model architecture everywhere&quot;)
+print(&quot;  - Flexible output generation&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Task Prefix Manipulation</h3>
+<p class="prose">Adversary can manipulate task routing:
+- Inject different task prefix
+- &quot;summarize: [text]&quot; → &quot;translate English to Chinese: [text]&quot;
+- Change task without model knowing
+- Defense: Validate task prefix, separate task specification</p>
+<h3 class="sh3">Unified Attack Surface</h3>
+<p class="prose">All tasks use same encoder-decoder:
+- Single vulnerability affects all tasks
+- Adversary targets common components
+- Cannot isolate tasks architecturally
+- Defense: Task-specific validation, output filtering</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Span Corruption: Pre-training Objective</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">T5 uses span corruption for pre-training: mask contiguous spans of tokens (not 
+individual tokens like BERT) and train the decoder to regenerate them. Spans are 
+replaced with sentinel tokens &lt;X&gt;, &lt;Y&gt;, &lt;Z&gt;. The decoder generates the original 
+spans in order. This objective better matches downstream generation tasks.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Span Corruption Explained</h3>
+<h4 class="sh3">Masking Strategy</h4>
+<p class="prose">1. Select 15% of tokens (like BERT)
+2. Group into contiguous spans (average length 3)
+3. Replace each span with sentinel token
+4. Decoder regenerates spans sequentially</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Original: &quot;Thank you for inviting me to your party last week&quot;
+
+Masked: &quot;Thank you &lt;X&gt; me to your party &lt;Y&gt; week&quot;
+
+Decoder target: &quot;&lt;X&gt; for inviting &lt;Y&gt; last &lt;Z&gt;&quot;</p>
+<h4 class="sh3">Sentinel Tokens</h4>
+<p class="prose">Special tokens &lt;X&gt;, &lt;Y&gt;, &lt;Z&gt;, ...
+→ Mark different masked spans
+→ Decoder generates them in order
+→ Up to 100 sentinels in T5</p>
+<h4 class="sh3">Contrast With Bert Mlm</h4>
+<p class="prose">BERT MLM:
+- Mask individual tokens: &quot;The [MASK] sat&quot;
+- Predict one token: &quot;cat&quot;
+
+T5 Span Corruption:
+- Mask spans: &quot;The &lt;X&gt; the mat&quot;
+- Generate multiple tokens: &quot;&lt;X&gt; cat sat on &lt;Y&gt;&quot;
+
+→ Better for generation tasks!</p>
+<h3 class="sh3">Encoder Decoder Split</h3>
+<h4 class="sh3">Encoder Input</h4>
+<p class="prose">Corrupted sequence with sentinels:
+&quot;Thank you &lt;X&gt; me to your party &lt;Y&gt; week&quot;
+
+→ Encoder sees damaged text</p>
+<h4 class="sh3">Decoder Input</h4>
+<p class="prose">Sentinels and original spans:
+&quot;&lt;X&gt; for inviting &lt;Y&gt; last &lt;Z&gt;&quot;
+
+→ Decoder regenerates content</p>
+<h4 class="sh3">Why This Works</h4>
+<p class="prose">- Encoder learns to understand corrupted text
+- Decoder learns to generate missing content
+- Matches encoder-decoder usage at inference
+- Better than BERT&#x27;s single-token prediction</p>
+<h3 class="sh3">Span Corruption Vs Other Objectives</h3>
+<h4 class="sh3">Vs Bert Mlm</h4>
+<p class="prose">MLM: Predict masked tokens independently
+Span: Generate multiple tokens sequentially
+→ Span better for generation</p>
+<h4 class="sh3">Vs Gpt Lm</h4>
+<p class="prose">LM: Predict all tokens left-to-right
+Span: Predict only corrupted spans
+→ Span more efficient, focused learning</p>
+<h4 class="sh3">Vs Original Transformer</h4>
+<p class="prose">Original: Translation-specific pre-training
+Span: General-purpose, task-agnostic
+→ Span transfers better</p>
+<h3 class="sh3">Denoising Objective Family</h3>
+<h4 class="sh3">Span Corruption</h4>
+<p class="prose">T5&#x27;s choice</p>
+<h4 class="sh3">Word Deletion</h4>
+<p class="prose">Delete words, decoder reconstructs</p>
+<h4 class="sh3">Sentence Shuffling</h4>
+<p class="prose">Shuffle sentences, decoder reorders</p>
+<h4 class="sh3">Document Rotation</h4>
+<p class="prose">Rotate document, find start</p>
+<h4 class="sh3">All Denoising</h4>
+<p class="prose">Common theme: Corrupt input, reconstruct output
+→ Teaches encoder-decoder to work together</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Span Corrupter</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class SpanCorrupter:
+    &quot;&quot;&quot;
+    T5 span corruption for pre-training.
+    
+    Masks contiguous spans and replaces with sentinels.
+    &quot;&quot;&quot;
+    
+    def __init__(self,
+                vocab_size: int,
+                sentinel_start: int = 32000,
+                num_sentinels: int = 100,
+                corruption_rate: float = 0.15,
+                mean_span_length: float = 3.0):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Vocabulary size
+            sentinel_start: Starting ID for sentinel tokens
+            num_sentinels: Number of sentinel tokens
+            corruption_rate: Fraction of tokens to corrupt
+            mean_span_length: Average span length
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.sentinel_start = sentinel_start
+        self.num_sentinels = num_sentinels
+        self.corruption_rate = corruption_rate
+        self.mean_span_length = mean_span_length
+    
+    def corrupt(self, token_ids: np.ndarray) -&gt; tuple:
+        &quot;&quot;&quot;
+        Apply span corruption to sequence.
+        
+        Args:
+            token_ids: Original token IDs (seq_len,)
+        
+        Returns:
+            encoder_input: Corrupted sequence with sentinels
+            decoder_target: Original spans with sentinel markers
+        &quot;&quot;&quot;
+        seq_len = len(token_ids)
+        num_corrupt = int(seq_len * self.corruption_rate)
+        
+        # Sample corruption spans
+        spans = self._sample_spans(seq_len, num_corrupt)
+        
+        # Build encoder input (corrupted) and decoder target
+        encoder_input = []
+        decoder_target = []
+        
+        sentinel_id = 0
+        pos = 0
+        
+        for span_start, span_end in spans:
+            # Add tokens before span
+            encoder_input.extend(token_ids[pos:span_start])
+            
+            # Add sentinel to encoder input
+            sentinel = self.sentinel_start + sentinel_id
+            encoder_input.append(sentinel)
+            
+            # Add sentinel + span content to decoder target
+            decoder_target.append(sentinel)
+            decoder_target.extend(token_ids[span_start:span_end])
+            
+            sentinel_id += 1
+            pos = span_end
+        
+        # Add remaining tokens
+        encoder_input.extend(token_ids[pos:])
+        
+        # Add final sentinel
+        decoder_target.append(self.sentinel_start + sentinel_id)
+        
+        return np.array(encoder_input), np.array(decoder_target)
+    
+    def _sample_spans(self, seq_len: int, num_corrupt: int) -&gt; list:
+        &quot;&quot;&quot;Sample span positions.&quot;&quot;&quot;
+        # Simplified: randomly select span starts
+        starts = np.random.choice(seq_len - 1, 
+                                 size=max(1, num_corrupt // int(self.mean_span_length)),
+                                 replace=False)
+        starts = sorted(starts)
+        
+        spans = []
+        for start in starts:
+            # Sample span length (geometric distribution)
+            length = np.random.geometric(1.0 / self.mean_span_length)
+            length = min(length, seq_len - start)
+            spans.append((start, start + length))
+        
+        return spans
+
+
+# Example usage
+print(&quot;\n=== T5 Span Corruption ===\n&quot;)
+
+corrupter = SpanCorrupter(vocab_size=32000)
+
+# Sample sequence
+# &quot;Thank you for inviting me to your party last week&quot;
+token_ids = np.array([1234, 567, 89, 234, 56, 78, 90, 123, 456, 789])
+
+encoder_input, decoder_target = corrupter.corrupt(token_ids)
+
+print(f&quot;Original: {token_ids}&quot;)
+print(f&quot;Encoder input (corrupted): {encoder_input}&quot;)
+print(f&quot;Decoder target (spans): {decoder_target}&quot;)
+print()
+print(&quot;Span corruption process:&quot;)
+print(&quot;  1. Select ~15% of tokens&quot;)
+print(&quot;  2. Group into contiguous spans (avg length 3)&quot;)
+print(&quot;  3. Replace spans with sentinels &lt;X&gt;, &lt;Y&gt;, &lt;Z&gt;&quot;)
+print(&quot;  4. Decoder generates: &lt;X&gt; span1 &lt;Y&gt; span2 &lt;Z&gt;&quot;)</code></pre>
+<h3 class="sh3">Span Corruption Training</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def train_span_corruption_step(t5: T5Model,
+                              token_ids: np.ndarray,
+                              learning_rate: float = 1e-4) -&gt; float:
+    &quot;&quot;&quot;
+    Single span corruption training step.
+    
+    Args:
+        t5: T5 model
+        token_ids: Original token IDs (batch, seq_len)
+        learning_rate: Learning rate
+    
+    Returns:
+        loss: Cross-entropy loss
+    &quot;&quot;&quot;
+    corrupter = SpanCorrupter(t5.vocab_size)
+    
+    batch_size = token_ids.shape[0]
+    total_loss = 0.0
+    
+    for i in range(batch_size):
+        # Corrupt sequence
+        encoder_input, decoder_target = corrupter.corrupt(token_ids[i])
+        
+        # Forward pass
+        encoder_input_batch = encoder_input[np.newaxis, :]
+        decoder_input = decoder_target[:-1]  # Shift right
+        decoder_input_batch = decoder_input[np.newaxis, :]
+        
+        logits = t5(encoder_input_batch, decoder_input_batch, training=True)
+        
+        # Compute loss on decoder target
+        # (Simplified loss computation)
+        loss = 0.0  # Would compute cross-entropy
+        
+        total_loss += loss
+    
+    avg_loss = total_loss / batch_size
+    
+    # Backward pass
+    # update_parameters(t5, gradients, learning_rate)
+    
+    return avg_loss
+
+
+print(&quot;\n=== Span Corruption Training ===\n&quot;)
+
+t5 = T5Model(32000)
+
+# Sample batch
+batch_size = 4
+seq_len = 64
+token_ids = np.random.randint(0, 32000, (batch_size, seq_len))
+
+# Training step
+loss = train_span_corruption_step(t5, token_ids)
+
+print(f&quot;Batch size: {batch_size}&quot;)
+print(f&quot;Sequence length: {seq_len}&quot;)
+print()
+print(&quot;Training process:&quot;)
+print(&quot;  1. Corrupt each sequence (spans → sentinels)&quot;)
+print(&quot;  2. Encoder processes corrupted sequence&quot;)
+print(&quot;  3. Decoder generates original spans&quot;)
+print(&quot;  4. Loss on decoder predictions&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Span Corruption Memorization</h3>
+<p class="prose">Span corruption can memorize training data:
+- Model learns to complete corrupted sequences
+- Can reproduce exact training text
+- Adversary corrupts public data, model completes with private
+- Defense: Training data sanitization, differential privacy</p>
+<h3 class="sh3">Sentinel Token Manipulation</h3>
+<p class="prose">Sentinel tokens have special meaning:
+- Adversary can inject sentinels in input
+- Confuse encoder-decoder boundaries
+- Trigger unintended generation patterns
+- Defense: Validate input, restrict sentinel usage</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Multitask Learning and Comparison</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">T5 pioneers multitask pre-training - training on many supervised tasks simultaneously 
+along with unsupervised span corruption. Task prefixes route to different behaviors. 
+This approach combines self-supervised and supervised learning, improving performance 
+and enabling comparison of different pre-training strategies.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Multitask Pre Training</h3>
+<h4 class="sh3">Combining Tasks</h4>
+<p class="prose">T5 pre-trains on mixture of:
+- Span corruption (unsupervised)
+- Translation (supervised)
+- Summarization (supervised)
+- Question answering (supervised)
+- Classification (supervised)
+- Many more...</p>
+<h4 class="sh3">Task Mixing</h4>
+<p class="prose">Sample tasks proportionally:
+- Span corruption: 50%
+- Translation: 10%
+- Summarization: 5%
+- etc.
+
+→ Balanced exposure to all tasks</p>
+<h4 class="sh3">Advantages</h4>
+<h4 class="sh3">Shared Representations</h4>
+<p class="prose">Learn general features across tasks</p>
+<h4 class="sh3">Task Transfer</h4>
+<p class="prose">Knowledge transfers between related tasks</p>
+<h4 class="sh3">Efficient Learning</h4>
+<p class="prose">One model for many tasks</p>
+<h4 class="sh3">Better Initialization</h4>
+<p class="prose">Strong starting point for fine-tuning</p>
+<h3 class="sh3">Bert Vs Gpt Vs T5</h3>
+<h4 class="sh3">Bert Encoder Only</h4>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Encoder only</p>
+<h4 class="sh3">Pre Training</h4>
+<p class="prose">Masked Language Model (MLM)</p>
+<h4 class="sh3">Context</h4>
+<p class="prose">Bidirectional</p>
+<h4 class="sh3">Strength</h4>
+<p class="prose">Understanding tasks (classification, NER)</p>
+<h4 class="sh3">Weakness</h4>
+<p class="prose">Limited generation</p>
+<h4 class="sh3">Gpt Decoder Only</h4>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Decoder only</p>
+<h4 class="sh3">Pre Training</h4>
+<p class="prose">Causal Language Modeling</p>
+<h4 class="sh3">Context</h4>
+<p class="prose">Unidirectional (left-to-right)</p>
+<h4 class="sh3">Strength</h4>
+<p class="prose">Generation, few-shot learning</p>
+<h4 class="sh3">Weakness</h4>
+<p class="prose">No bidirectional context</p>
+<h4 class="sh3">T5 Encoder Decoder</h4>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Encoder + Decoder</p>
+<h4 class="sh3">Pre Training</h4>
+<p class="prose">Span Corruption + Multitask</p>
+<h4 class="sh3">Context</h4>
+<p class="prose">Bidirectional (encoder) + Causal (decoder)</p>
+<h4 class="sh3">Strength</h4>
+<p class="prose">Both understanding and generation</p>
+<h4 class="sh3">Weakness</h4>
+<p class="prose">More complex, more parameters</p>
+<h3 class="sh3">When To Use Which</h3>
+<h4 class="sh3">Use Bert When</h4>
+<p class="prose">- Pure understanding tasks
+- Classification, NER, sentiment
+- No generation needed
+- Want bidirectional context</p>
+<h4 class="sh3">Use Gpt When</h4>
+<p class="prose">- Generation primary goal
+- Open-ended text generation
+- Few-shot/in-context learning
+- Simplicity valued</p>
+<h4 class="sh3">Use T5 When</h4>
+<p class="prose">- Both understanding and generation
+- Translation, summarization, QA
+- Multitask learning
+- Unified interface preferred</p>
+<h3 class="sh3">T5 Variants</h3>
+<h4 class="sh3">T5 Base</h4>
+<p class="prose">220M params, 12 layers</p>
+<h4 class="sh3">T5 Large</h4>
+<p class="prose">770M params, 24 layers</p>
+<h4 class="sh3">T5 3B</h4>
+<p class="prose">3B params</p>
+<h4 class="sh3">T5 11B</h4>
+<p class="prose">11B params</p>
+<h4 class="sh3">Mt5</h4>
+<p class="prose">Multilingual T5 (100+ languages)</p>
+<h4 class="sh3">Byt5</h4>
+<p class="prose">Byte-level T5 (no tokenization)</p>
+<h4 class="sh3">T5X</h4>
+<p class="prose">Improved training, better performance</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Architecture Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def compare_architectures():
+    &quot;&quot;&quot;Compare BERT, GPT, T5 architectures.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Architecture Comparison ===\n&quot;)
+    
+    print(&quot;BERT (Encoder-Only):&quot;)
+    print(&quot;  Components: Encoder stack&quot;)
+    print(&quot;  Attention: Bidirectional self-attention&quot;)
+    print(&quot;  Pre-training: Masked Language Model (MLM)&quot;)
+    print(&quot;  Use case: Understanding (classification, NER)&quot;)
+    print(&quot;  Example: \&quot;[CLS] This is great [SEP]\&quot; → positive&quot;)
+    print()
+    
+    print(&quot;GPT (Decoder-Only):&quot;)
+    print(&quot;  Components: Decoder stack (no encoder)&quot;)
+    print(&quot;  Attention: Causal self-attention&quot;)
+    print(&quot;  Pre-training: Causal Language Modeling&quot;)
+    print(&quot;  Use case: Generation, few-shot learning&quot;)
+    print(&quot;  Example: \&quot;The future of AI is\&quot; → [generates continuation]&quot;)
+    print()
+    
+    print(&quot;T5 (Encoder-Decoder):&quot;)
+    print(&quot;  Components: Encoder + Decoder stack&quot;)
+    print(&quot;  Attention: Bidirectional (enc) + Causal (dec) + Cross-attention&quot;)
+    print(&quot;  Pre-training: Span Corruption + Multitask&quot;)
+    print(&quot;  Use case: Understanding + Generation&quot;)
+    print(&quot;  Example: \&quot;translate: Hello\&quot; → \&quot;Hola\&quot;&quot;)
+    print()
+    
+    print(&quot;Summary:&quot;)
+    print(&quot;  BERT: Bidirectional context, best for understanding&quot;)
+    print(&quot;  GPT: Unidirectional generation, best for text generation&quot;)
+    print(&quot;  T5: Full encoder-decoder, best for seq2seq tasks&quot;)
+
+compare_architectures()</code></pre>
+<h3 class="sh3">Task Performance Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def compare_task_performance():
+    &quot;&quot;&quot;Compare model performance on different tasks.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Task Performance Comparison ===\n&quot;)
+    
+    tasks = {
+        &quot;Sentiment Classification&quot;: {
+            &quot;BERT&quot;: &quot;Excellent (bidirectional context)&quot;,
+            &quot;GPT&quot;: &quot;Good (in-context learning)&quot;,
+            &quot;T5&quot;: &quot;Excellent (text-to-text)&quot;
+        },
+        &quot;Text Generation&quot;: {
+            &quot;BERT&quot;: &quot;Poor (not designed for generation)&quot;,
+            &quot;GPT&quot;: &quot;Excellent (core capability)&quot;,
+            &quot;T5&quot;: &quot;Excellent (decoder generates)&quot;
+        },
+        &quot;Translation&quot;: {
+            &quot;BERT&quot;: &quot;N/A (encoder-only)&quot;,
+            &quot;GPT&quot;: &quot;Good (with prompting)&quot;,
+            &quot;T5&quot;: &quot;Excellent (encoder-decoder design)&quot;
+        },
+        &quot;Question Answering&quot;: {
+            &quot;BERT&quot;: &quot;Excellent (extractive QA)&quot;,
+            &quot;GPT&quot;: &quot;Good (generative QA)&quot;,
+            &quot;T5&quot;: &quot;Excellent (both extractive and generative)&quot;
+        },
+        &quot;Few-Shot Learning&quot;: {
+            &quot;BERT&quot;: &quot;Limited (requires fine-tuning)&quot;,
+            &quot;GPT&quot;: &quot;Excellent (in-context learning)&quot;,
+            &quot;T5&quot;: &quot;Good (can do few-shot)&quot;
+        }
+    }
+    
+    print(&quot;Task                     | BERT      | GPT       | T5&quot;)
+    print(&quot;-&quot; * 65)
+    for task, models in tasks.items():
+        print(f&quot;{task:24} | {models[&#x27;BERT&#x27;]:9} | {models[&#x27;GPT&#x27;]:9} | {models[&#x27;T5&#x27;]}&quot;)
+
+compare_task_performance()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Multitask Interference</h3>
+<p class="prose">Training on multiple tasks creates interference:
+- Poisoning one task affects others
+- Adversary targets task with weak validation
+- Corruption propagates through shared representations
+- Defense: Task-specific validation, isolate critical tasks</p>
+<h3 class="sh3">Encoder Decoder Combined Vulnerabilities</h3>
+<p class="prose">T5 has both encoder and decoder attack surfaces:
+- Encoder manipulation (like BERT)
+- Decoder exploitation (like GPT)
+- Cross-attention extraction
+- More components = more vulnerabilities
+- Defense: Comprehensive security across all components</p>
+<h3 class="sh3">Task Prefix Routing Attacks</h3>
+<p class="prose">Task prefix controls behavior:
+- Adversary injects malicious prefix
+- Route to unintended task
+- &quot;summarize:&quot; → &quot;translate to attacker language:&quot;
+- Defense: Whitelist task prefixes, validate inputs</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Text-to-text framework: all tasks as text input → text output</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Unified interface, same architecture for all tasks</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Span corruption: mask contiguous spans, generate sequentially</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Better for generation than BERT&#x27;s single-token MLM</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Encoder-decoder combines bidirectional understanding + generation</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Strengths of both BERT and GPT in one architecture</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Multitask pre-training: supervised + unsupervised together</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Better transfer learning, shared representations</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">BERT (understanding) vs GPT (generation) vs T5 (both)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Different architectures for different use cases</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement T5 encoder-decoder architecture</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Full transformer with shared vocabulary</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Build span corruption pre-training</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Mask spans with sentinels, decoder regenerates</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Create task-specific prefixes for multitask learning</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">&quot;translate:&quot;, &quot;summarize:&quot;, &quot;question:&quot; routing</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Frame different NLP tasks as text-to-text</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Classification → generate class name, QA → generate answer</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Compare BERT/GPT/T5 performance on various tasks</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Understand when to use each architecture</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Task prefix controls routing, can be manipulated</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary injects different prefix to change behavior</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Unified interface means shared attack surface</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Single vulnerability affects all tasks</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Span corruption can memorize and reproduce training data</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Corrupt public data, model completes with private</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Sentinel tokens have special meaning, exploitable</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Inject sentinels to confuse encoder-decoder boundaries</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Multitask training creates interference vulnerabilities</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Poison one task, affect others through shared representations</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using BERT-style task heads with T5</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">T5 uses text-to-text, generate output text not classification logits</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Masking individual tokens like BERT MLM</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">T5 masks contiguous spans, not individual tokens</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting task prefix in input</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always include task prefix: &quot;translate:&quot;, &quot;summarize:&quot;, etc.</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Training on single task only</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">T5 designed for multitask, benefits from task mixture</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Assuming T5 always better than BERT or GPT</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Choose based on task: BERT for pure understanding, GPT for pure generation</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 14</h3>
+<ul class="blist"><li>Complete transformer (T5&#x27;s architecture basis)</li><li>Encoder-decoder design</li></ul>
+<h3 class="sh3">From Section 3 16</h3>
+<ul class="blist"><li>BERT for comparison (encoder-only)</li><li>Pre-training objectives</li></ul>
+<h3 class="sh3">From Section 3 17</h3>
+<ul class="blist"><li>GPT for comparison (decoder-only)</li><li>Generation capabilities</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.19: Attention mechanisms comparison</li><li>Architectural variants and trade-offs</li><li>Synthesis of transformer designs</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Attention mechanism variants</li><li>Efficient transformers</li><li>Architectural trade-offs</li><li>Practical deployment considerations</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Compare attention mechanisms</li><li>Optimize transformer efficiency</li><li>Choose architectures for tasks</li><li>Deploy transformers in production</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">T5 (Text-to-Text Transfer Transformer) unifies all NLP tasks under a single text-to-text 
+framework. Every task - translation, summarization, question answering, classification - 
+becomes generating text output from text input. This elegant abstraction uses the full 
+encoder-decoder transformer, combining BERT&#x27;s bidirectional understanding with GPT&#x27;s 
+generation capabilities. Task prefixes in the input (&quot;translate:&quot;, &quot;summarize:&quot;) route 
+to different behaviors while using the same architecture.
+
+Span corruption is T5&#x27;s pre-training objective: mask contiguous spans (not individual 
+tokens) and train the decoder to regenerate them sequentially. Spans are replaced with 
+sentinel tokens &lt;X&gt;, &lt;Y&gt;, &lt;Z&gt;, and the decoder generates the original content in order. 
+This better matches downstream generation tasks compared to BERT&#x27;s single-token MLM 
+prediction. T5 also pioneers multitask pre-training - combining span corruption with 
+supervised tasks like translation and summarization for better transfer learning.
+
+Comparing architectures: BERT (encoder-only) excels at understanding with bidirectional 
+context but struggles with generation. GPT (decoder-only) excels at generation and 
+few-shot learning but lacks bidirectional context. T5 (encoder-decoder) combines both 
+strengths - bidirectional understanding in the encoder, autoregressive generation in 
+the decoder, but has more complexity and parameters. Choose based on task: BERT for 
+pure understanding, GPT for pure generation, T5 for sequence-to-sequence.
+
+From a security perspective: T5&#x27;s text-to-text framework means all tasks share the same 
+attack surface - a single vulnerability affects everything. Task prefixes can be 
+manipulated to change routing. The encoder-decoder design combines vulnerabilities from 
+both BERT and GPT - more components means more attack vectors. Multitask training creates 
+interference where poisoning one task affects others through shared representations. 
+Span corruption can memorize training data, and sentinel tokens can be exploited to 
+confuse encoder-decoder boundaries. Understanding T5 reveals how architectural unification 
+affects security across diverse applications.
+
+Next: Section 3.19 will compare attention mechanisms and architectural variants, 
+synthesizing the different transformer designs covered so far and examining trade-offs 
+for practical deployment.</p>
+</article>

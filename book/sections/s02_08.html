@@ -1,0 +1,690 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 8 · ~6 pages</div>
+<h1>Advanced Optimizers</h1>
+<div class="tags"><span class="tag">optimization</span><span class="tag">momentum</span><span class="tag">rmsprop</span><span class="tag">adam</span><span class="tag">adamw</span><span class="tag">adaptive-learning-rate</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Vanilla gradient descent has problems: slow convergence, sensitivity to
+learning rate, stuck in ravines. Advanced optimizers solve these issues
+using momentum (accumulate velocity), adaptive learning rates (per-parameter
+scaling), or both.
+
+This section covers the four most important optimizers: Momentum (SGD with
+velocity), RMSprop (adaptive learning rates), Adam (momentum + adaptive),
+and AdamW (Adam with proper weight decay). These are the workhorses of
+modern deep learning - 99% of papers use Adam or AdamW.
+
+You&#x27;ll implement all four from scratch, understand their mathematical
+foundations, compare convergence behavior, learn hyperparameter tuning,
+and know when to use each optimizer.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand momentum as velocity accumulation</li><li>Grasp adaptive learning rates (why and how)</li><li>Know how Adam combines momentum and adaptation</li><li>Understand weight decay vs L2 regularization difference</li><li>Recognize optimizer convergence patterns</li><li>Connect hyperparameters to optimization behavior</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement Momentum, RMSprop, Adam, AdamW from scratch</li><li>Compare convergence speed and stability</li><li>Tune hyperparameters (β1, β2, ε, weight_decay)</li><li>Visualize optimization trajectories</li><li>Select appropriate optimizer for task</li><li>Debug optimizer issues (exploding, NaN, poor convergence)</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Momentum amplifies adversarial gradients</li><li>Adaptive rates affect backdoor stability</li><li>Adam&#x27;s bias correction leaks training progress</li><li>Weight decay impacts model robustness</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 02_07 (gradient descent variants)</li><li>Understanding of gradient computation</li><li>Exponential moving averages</li></ul>
+<h2 class="sh1">Momentum</h2>
+<h3 class="sh2">Motivation</h3>
+<h3 class="sh3">Problem With Vanilla Gd</h3>
+<h4 class="sh3">Ravines</h4>
+<p class="prose">In ravine-shaped loss surfaces (steep in one direction, shallow in another):
+- Gradient points mostly down steep walls (not toward optimum)
+- Oscillates across ravine, slow progress along bottom
+- Wastes updates bouncing side-to-side</p>
+<h4 class="sh3">Local Minima</h4>
+<p class="prose">Gradient descent can get stuck in poor local minima.
+No way to escape once gradient becomes small.</p>
+<h4 class="sh3">Visual</h4>
+<p class="prose">Loss surface:
+          ╱╲
+         ╱  ╲
+Optimum→ •   ╲
+        ╱     ╲
+       ╱       ╲
+
+Vanilla GD: Zigzags down walls, slow progress to •
+Momentum: Accumulates velocity, shoots straight to •</p>
+<h3 class="sh3">Solution</h3>
+<p class="prose">Add momentum - accumulate velocity in consistent directions</p>
+<h3 class="sh2">Algorithm</h3>
+<h3 class="sh3">Update Rule</h3>
+<p class="prose">v_t = β·v_{t-1} + ∇L_t
+θ_t = θ_{t-1} - α·v_t
+
+Where:
+- v_t = velocity at step t
+- β = momentum coefficient (typically 0.9)
+- ∇L_t = gradient at step t
+- α = learning rate</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Think of ball rolling downhill:
+- Gradient = current slope (instantaneous force)
+- Velocity = accumulated momentum (from past gradients)
+- β = friction coefficient (0.9 = low friction, keeps rolling)
+
+Past gradients influence current update (exponentially decaying):
+v_t = ∇L_t + β·∇L_{t-1} + β²·∇L_{t-2} + β³·∇L_{t-3} + ...</p>
+<h3 class="sh3">Nesterov Variant</h3>
+<p class="prose">Nesterov Accelerated Gradient (NAG):
+Look ahead before computing gradient:
+
+θ_lookahead = θ_{t-1} - α·β·v_{t-1}
+v_t = β·v_{t-1} + ∇L(θ_lookahead)
+θ_t = θ_{t-1} - α·v_t
+
+Advantage: &quot;Look before you leap&quot; - more stable</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Momentum Optimizer</h3>
+<pre class="code"><code>class MomentumOptimizer:
+    &quot;&quot;&quot;
+    SGD with momentum.
+    
+    Parameters:
+    - learning_rate: step size (α)
+    - momentum: velocity decay (β), typically 0.9
+    - nesterov: use Nesterov variant (default False)
+    &quot;&quot;&quot;
+    
+    def __init__(self, parameters, learning_rate=0.01, momentum=0.9, nesterov=False):
+        self.learning_rate = learning_rate
+        self.momentum = momentum
+        self.nesterov = nesterov
+        
+        # Initialize velocities (one per parameter)
+        self.velocities = {}
+        for param_name, param in parameters.items():
+            self.velocities[param_name] = np.zeros_like(param)
+    
+    def step(self, parameters, gradients):
+        &quot;&quot;&quot;
+        Update parameters using momentum.
+        
+        Parameters:
+        - parameters: dict {param_name: param_value}
+        - gradients: dict {param_name: gradient}
+        &quot;&quot;&quot;
+        for param_name in parameters:
+            param = parameters[param_name]
+            grad = gradients[param_name]
+            v = self.velocities[param_name]
+            
+            if self.nesterov:
+                # Nesterov momentum
+                v = self.momentum * v + grad
+                param -= self.learning_rate * (self.momentum * v + grad)
+            else:
+                # Standard momentum
+                v = self.momentum * v + grad
+                param -= self.learning_rate * v
+            
+            # Update velocity
+            self.velocities[param_name] = v</code></pre>
+<h3 class="sh3">Usage Example</h3>
+<p class="prose"># Create optimizer
+params = network.get_parameters()
+optimizer = MomentumOptimizer(
+    parameters=params,
+    learning_rate=0.01,
+    momentum=0.9
+)
+
+# Training loop
+for epoch in range(epochs):
+    for X_batch, y_batch in dataloader:
+        # Forward and backward
+        loss, _ = network.forward(X_batch, y_batch)
+        network.backward()
+        
+        # Get gradients and update
+        grads = network.get_gradients()
+        optimizer.step(params, grads)</p>
+<h3 class="sh2">Hyperparameters</h3>
+<h3 class="sh3">Momentum Coefficient</h3>
+<p class="prose">β = 0.0: No momentum (vanilla GD)
+β = 0.5: Moderate momentum
+β = 0.9: Standard choice (most common)
+β = 0.95: High momentum (faster but less stable)
+β = 0.99: Very high momentum (use with caution)
+
+Rule of thumb: Start with 0.9, increase if loss curve too noisy</p>
+<h3 class="sh3">Learning Rate With Momentum</h3>
+<p class="prose">Momentum effectively amplifies learning rate:
+
+Effective LR ≈ α / (1 - β)
+
+Example:
+α = 0.01, β = 0.9 → Effective LR ≈ 0.1 (10x amplification!)
+
+Guideline: Use smaller α with momentum than vanilla GD</p>
+<h3 class="sh2">Advantages Disadvantages</h3>
+<h3 class="sh3">Advantages</h3>
+<ul class="blist"><li>Faster convergence: accumulates velocity in consistent directions</li><li>Escapes ravines: builds speed along valleys</li><li>Smooths noise: averages out gradient fluctuations</li><li>Helps escape local minima: momentum carries through flat regions</li></ul>
+<h3 class="sh3">Disadvantages</h3>
+<ul class="blist"><li>Overshoots: can bounce past minimum if momentum too high</li><li>Hyperparameter: need to tune β</li><li>Memory: stores velocity for each parameter (2x memory)</li></ul>
+<h2 class="sh1">Rmsprop</h2>
+<h3 class="sh2">Motivation</h3>
+<h3 class="sh3">Problem With Fixed Lr</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Different parameters need different learning rates:
+- Some parameters: large gradients (need small LR)
+- Other parameters: small gradients (need large LR)
+
+Fixed LR is compromise (suboptimal for all parameters)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Parameter W1: gradients typically 0.01
+Parameter W10: gradients typically 10.0
+
+If α = 0.01:
+- W1 updates: 0.01 × 0.01 = 0.0001 (too small, slow)
+- W10 updates: 0.01 × 10.0 = 0.1 (reasonable)
+
+If α = 1.0:
+- W1 updates: 1.0 × 0.01 = 0.01 (reasonable)
+- W10 updates: 1.0 × 10.0 = 10.0 (too large, explodes!)</p>
+<h3 class="sh3">Solution</h3>
+<p class="prose">Adapt learning rate per parameter based on gradient history</p>
+<h3 class="sh2">Algorithm</h3>
+<h3 class="sh3">Update Rule</h3>
+<p class="prose">s_t = β·s_{t-1} + (1-β)·(∇L_t)²
+θ_t = θ_{t-1} - α / √(s_t + ε) · ∇L_t
+
+Where:
+- s_t = running average of squared gradients
+- β = decay rate (typically 0.9 or 0.99)
+- ε = small constant for numerical stability (1e-8)
+- Division is element-wise</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">s_t tracks gradient magnitude history:
+- Parameters with large gradients: large s_t → small effective LR
+- Parameters with small gradients: small s_t → large effective LR
+
+Effective learning rate per parameter:
+α_effective = α / √(s_t + ε)
+
+Adapts automatically to gradient scale!</p>
+<h3 class="sh3">Why Squared Gradients</h3>
+<p class="prose">Using (∇L)² instead of |∇L|:
+- Emphasizes recent large gradients
+- Smooth (differentiable everywhere)
+- Computationally efficient (no abs or sqrt in accumulation)</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Rmsprop Optimizer</h3>
+<pre class="code"><code>class RMSpropOptimizer:
+    &quot;&quot;&quot;
+    RMSprop: Adaptive learning rate per parameter.
+    
+    Parameters:
+    - learning_rate: global learning rate (α)
+    - decay: decay rate for running average (β), typically 0.9
+    - epsilon: numerical stability constant (ε), typically 1e-8
+    &quot;&quot;&quot;
+    
+    def __init__(self, parameters, learning_rate=0.001, decay=0.9, epsilon=1e-8):
+        self.learning_rate = learning_rate
+        self.decay = decay
+        self.epsilon = epsilon
+        
+        # Initialize squared gradient accumulators
+        self.squared_grads = {}
+        for param_name, param in parameters.items():
+            self.squared_grads[param_name] = np.zeros_like(param)
+    
+    def step(self, parameters, gradients):
+        &quot;&quot;&quot;
+        Update parameters using RMSprop.
+        &quot;&quot;&quot;
+        for param_name in parameters:
+            param = parameters[param_name]
+            grad = gradients[param_name]
+            s = self.squared_grads[param_name]
+            
+            # Update squared gradient running average
+            s = self.decay * s + (1 - self.decay) * (grad ** 2)
+            
+            # Compute adaptive learning rate
+            # Element-wise division: each element gets its own LR
+            adapted_lr = self.learning_rate / (np.sqrt(s) + self.epsilon)
+            
+            # Update parameter
+            param -= adapted_lr * grad
+            
+            # Save updated squared gradients
+            self.squared_grads[param_name] = s</code></pre>
+<h3 class="sh3">Numerical Stability</h3>
+<p class="prose">Why epsilon (ε) is critical:
+
+Without ε:
+- If s_t = 0 (no gradients yet): division by zero → NaN
+- If s_t very small: division by tiny number → explodes
+
+With ε = 1e-8:
+- Minimum effective LR: α / √(1e-8) ≈ 10,000·α (bounded)
+- Prevents division by zero
+- Doesn&#x27;t affect adaptation when s_t &gt;&gt; ε</p>
+<h3 class="sh2">Hyperparameters</h3>
+<h3 class="sh3">Decay Rate</h3>
+<p class="prose">β = 0.9: Standard choice, adapts quickly to recent gradients
+β = 0.95: Slower adaptation, more stable
+β = 0.99: Very slow adaptation, long memory
+
+Lower β: More responsive to gradient changes (noisy)
+Higher β: More stable but slower to adapt</p>
+<h3 class="sh3">Learning Rate</h3>
+<p class="prose">RMSprop typically uses smaller base LR than SGD:
+- SGD: α = 0.01-0.1
+- RMSprop: α = 0.001-0.01
+
+Reason: Adaptation can amplify effective LR significantly</p>
+<h3 class="sh3">Epsilon</h3>
+<p class="prose">Typical values: 1e-8 to 1e-6
+Rarely needs tuning (1e-8 works almost always)</p>
+<h3 class="sh2">Advantages Disadvantages</h3>
+<h3 class="sh3">Advantages</h3>
+<ul class="blist"><li>Per-parameter adaptation: each parameter gets appropriate LR</li><li>Handles ill-conditioned problems: different gradient scales</li><li>Less sensitive to global LR: adaptation compensates</li><li>Works well for RNNs: helps with vanishing/exploding gradients</li></ul>
+<h3 class="sh3">Disadvantages</h3>
+<ul class="blist"><li>Can be too aggressive: may adapt too quickly</li><li>Accumulator grows unbounded: s_t always increases (never forgets)</li><li>Hyperparameters: need to tune β and α</li><li>Memory: stores squared gradients (2x memory)</li></ul>
+<h2 class="sh1">Adam</h2>
+<h3 class="sh2">Motivation</h3>
+<h3 class="sh3">Best Of Both Worlds</h3>
+<p class="prose">Momentum: Good for accelerating and smoothing
+RMSprop: Good for adapting per-parameter
+
+Adam: Combine both!
+- First moment (mean): like momentum
+- Second moment (variance): like RMSprop</p>
+<h3 class="sh3">Why Adam Dominates</h3>
+<p class="prose">Most robust optimizer, works well with default hyperparameters</p>
+<h3 class="sh2">Algorithm</h3>
+<h3 class="sh3">Update Rule</h3>
+<p class="prose"># Compute moments
+m_t = β1·m_{t-1} + (1-β1)·∇L_t          (first moment)
+v_t = β2·v_{t-1} + (1-β2)·(∇L_t)²       (second moment)
+
+# Bias correction
+m̂_t = m_t / (1 - β1^t)
+v̂_t = v_t / (1 - β2^t)
+
+# Update
+θ_t = θ_{t-1} - α · m̂_t / (√v̂_t + ε)
+
+Where:
+- β1 = 0.9 (first moment decay)
+- β2 = 0.999 (second moment decay)
+- ε = 1e-8 (numerical stability)
+- t = current iteration</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">m_t: exponential moving average of gradients (like momentum)
+v_t: exponential moving average of squared gradients (like RMSprop)
+
+Bias correction: m_t and v_t initially biased toward 0
+(because initialized at 0). Correction fixes this.
+
+Update: move in direction of m̂_t (momentum), scaled by 1/√v̂_t (adaptation)</p>
+<h3 class="sh2">Bias Correction</h3>
+<h3 class="sh3">Why Necessary</h3>
+<p class="prose">Without correction:
+
+Iteration 1:
+m_1 = 0.9·0 + 0.1·∇L_1 = 0.1·∇L_1 (biased low!)
+v_1 = 0.999·0 + 0.001·(∇L_1)² = 0.001·(∇L_1)² (biased low!)
+
+Early iterations: m_t and v_t much smaller than true values
+→ Effective LR too large → instability</p>
+<h3 class="sh3">With Correction</h3>
+<p class="prose">m̂_1 = 0.1·∇L_1 / (1 - 0.9^1) = 0.1·∇L_1 / 0.1 = ∇L_1 (corrected!)
+
+As t → ∞:
+(1 - β^t) → 1, so m̂_t → m_t (correction vanishes)</p>
+<h3 class="sh3">Impact</h3>
+<p class="prose">Without correction: unstable first few iterations
+With correction: stable from iteration 1
+
+Critical for good convergence!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Adam Optimizer</h3>
+<pre class="code"><code>class AdamOptimizer:
+    &quot;&quot;&quot;
+    Adam: Adaptive Moment Estimation.
+    
+    Combines momentum (first moment) and RMSprop (second moment).
+    
+    Parameters:
+    - learning_rate: step size (α), default 0.001
+    - beta1: first moment decay (β1), default 0.9
+    - beta2: second moment decay (β2), default 0.999
+    - epsilon: numerical stability (ε), default 1e-8
+    &quot;&quot;&quot;
+    
+    def __init__(self, parameters, learning_rate=0.001, 
+                beta1=0.9, beta2=0.999, epsilon=1e-8):
+        self.learning_rate = learning_rate
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        
+        # Initialize moments
+        self.m = {}  # First moment (momentum)
+        self.v = {}  # Second moment (variance)
+        
+        for param_name, param in parameters.items():
+            self.m[param_name] = np.zeros_like(param)
+            self.v[param_name] = np.zeros_like(param)
+        
+        # Iteration counter for bias correction
+        self.t = 0
+    
+    def step(self, parameters, gradients):
+        &quot;&quot;&quot;
+        Update parameters using Adam.
+        &quot;&quot;&quot;
+        self.t += 1  # Increment iteration counter
+        
+        for param_name in parameters:
+            param = parameters[param_name]
+            grad = gradients[param_name]
+            
+            # Get current moments
+            m = self.m[param_name]
+            v = self.v[param_name]
+            
+            # Update biased first moment
+            m = self.beta1 * m + (1 - self.beta1) * grad
+            
+            # Update biased second moment
+            v = self.beta2 * v + (1 - self.beta2) * (grad ** 2)
+            
+            # Bias correction
+            m_hat = m / (1 - self.beta1 ** self.t)
+            v_hat = v / (1 - self.beta2 ** self.t)
+            
+            # Update parameter
+            param -= self.learning_rate * m_hat / (np.sqrt(v_hat) + self.epsilon)
+            
+            # Save updated moments
+            self.m[param_name] = m
+            self.v[param_name] = v</code></pre>
+<h3 class="sh3">Memory Usage</h3>
+<p class="prose">Adam requires:
+- Parameters: 1x memory
+- First moments (m): 1x memory
+- Second moments (v): 1x memory
+
+Total: 3x parameter memory
+
+Example: 1M parameters = 4MB
+Adam state: 8MB (m + v)
+Total: 12MB (manageable)</p>
+<h3 class="sh2">Hyperparameters</h3>
+<h3 class="sh3">Default Values</h3>
+<p class="prose">α = 0.001 (learning rate)
+β1 = 0.9 (first moment decay)
+β2 = 0.999 (second moment decay)
+ε = 1e-8 (epsilon)
+
+These defaults work 90% of the time!</p>
+<h3 class="sh3">Tuning Guidelines</h3>
+<h4 class="sh3">Learning Rate</h4>
+<p class="prose">Most important hyperparameter.
+
+Try: 0.1, 0.01, 0.001, 0.0001
+Usually 0.001 or 0.0001 works best</p>
+<h4 class="sh3">Beta1</h4>
+<p class="prose">Rarely needs tuning.
+Increase to 0.95 if training unstable.
+Decrease to 0.8 if want less momentum.</p>
+<h4 class="sh3">Beta2</h4>
+<p class="prose">Rarely needs tuning.
+Can decrease to 0.99 for sparse gradients.</p>
+<h4 class="sh3">Epsilon</h4>
+<p class="prose">Almost never needs tuning.
+Increase to 1e-7 or 1e-6 if getting NaNs.</p>
+<h3 class="sh2">Advantages Disadvantages</h3>
+<h3 class="sh3">Advantages</h3>
+<ul class="blist"><li>Robust: works well across wide variety of problems</li><li>Default hyperparameters: rarely need tuning</li><li>Per-parameter adaptation: handles different scales</li><li>Momentum: accelerates convergence</li><li>Most popular: 99% of papers use Adam or variant</li></ul>
+<h3 class="sh3">Disadvantages</h3>
+<ul class="blist"><li>Memory: 3x parameter memory (m, v, params)</li><li>Generalization: sometimes worse than SGD+momentum</li><li>Weight decay: naive implementation incorrect (use AdamW)</li></ul>
+<h2 class="sh1">Adamw</h2>
+<h3 class="sh2">Motivation</h3>
+<h3 class="sh3">Weight Decay Vs L2 Regularization</h3>
+<h4 class="sh3">L2 Regularization</h4>
+<p class="prose">Add L2 penalty to loss:
+L_total = L + λ/2 · ||θ||²
+
+Gradient: ∇L_total = ∇L + λ·θ</p>
+<h4 class="sh3">Weight Decay</h4>
+<p class="prose">Directly shrink weights:
+θ_t = θ_{t-1} - α·∇L - α·λ·θ_{t-1}
+
+Equivalent for vanilla SGD, but NOT for Adam!</p>
+<h3 class="sh3">Problem With Adam And L2</h3>
+<p class="prose">L2 regularization in Adam:
+Gradient becomes ∇L + λ·θ
+Adam adapts this gradient (divides by √v̂)
+
+Weight decay gets adapted too! (Wrong!)
+Large weights → large λ·θ → large second moment → small effective decay
+
+Result: Weight decay doesn&#x27;t work as intended in Adam</p>
+<h3 class="sh3">Adamw Solution</h3>
+<p class="prose">Decouple weight decay from gradient-based update</p>
+<h3 class="sh2">Algorithm</h3>
+<h3 class="sh3">Update Rule</h3>
+<p class="prose"># Same as Adam
+m_t = β1·m_{t-1} + (1-β1)·∇L_t
+v_t = β2·v_{t-1} + (1-β2)·(∇L_t)²
+m̂_t = m_t / (1 - β1^t)
+v̂_t = v_t / (1 - β2^t)
+
+# Different: decoupled weight decay
+θ_t = θ_{t-1} - α·m̂_t / (√v̂_t + ε) - α·λ·θ_{t-1}
+               \_______________________/   \__________/
+                 Adam gradient update      Weight decay</p>
+<h3 class="sh3">Key Difference</h3>
+<p class="prose">Adam with L2:
+- Gradient: ∇L + λ·θ
+- Gets adapted by Adam
+
+AdamW:
+- Gradient: ∇L
+- Gets adapted by Adam
+- Weight decay: applied separately, NOT adapted</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Adamw Optimizer</h3>
+<pre class="code"><code>class AdamWOptimizer:
+    &quot;&quot;&quot;
+    AdamW: Adam with decoupled weight decay.
+    
+    Parameters:
+    - weight_decay: coefficient for weight decay (λ), default 0.01
+    - Other parameters same as Adam
+    &quot;&quot;&quot;
+    
+    def __init__(self, parameters, learning_rate=0.001,
+                beta1=0.9, beta2=0.999, epsilon=1e-8, weight_decay=0.01):
+        self.learning_rate = learning_rate
+        self.beta1 = beta1
+        self.beta2 = beta2
+        self.epsilon = epsilon
+        self.weight_decay = weight_decay
+        
+        # Initialize moments
+        self.m = {}
+        self.v = {}
+        for param_name, param in parameters.items():
+            self.m[param_name] = np.zeros_like(param)
+            self.v[param_name] = np.zeros_like(param)
+        
+        self.t = 0
+    
+    def step(self, parameters, gradients):
+        &quot;&quot;&quot;
+        Update parameters using AdamW.
+        &quot;&quot;&quot;
+        self.t += 1
+        
+        for param_name in parameters:
+            param = parameters[param_name]
+            grad = gradients[param_name]
+            
+            # Get moments
+            m = self.m[param_name]
+            v = self.v[param_name]
+            
+            # Update moments (using gradient WITHOUT weight decay)
+            m = self.beta1 * m + (1 - self.beta1) * grad
+            v = self.beta2 * v + (1 - self.beta2) * (grad ** 2)
+            
+            # Bias correction
+            m_hat = m / (1 - self.beta1 ** self.t)
+            v_hat = v / (1 - self.beta2 ** self.t)
+            
+            # Adam update
+            adam_update = self.learning_rate * m_hat / (np.sqrt(v_hat) + self.epsilon)
+            
+            # Weight decay (decoupled, applied to original parameter)
+            decay_update = self.learning_rate * self.weight_decay * param
+            
+            # Combined update
+            param -= adam_update + decay_update
+            
+            # Save moments
+            self.m[param_name] = m
+            self.v[param_name] = v</code></pre>
+<h3 class="sh2">Hyperparameters</h3>
+<h3 class="sh3">Weight Decay Coefficient</h3>
+<p class="prose">λ = 0.0: No regularization
+λ = 0.01: Standard choice (most common)
+λ = 0.05: Strong regularization
+λ = 0.1: Very strong regularization
+
+Guideline:
+- Start with 0.01
+- Increase if overfitting (large gap between train/val loss)
+- Decrease if underfitting (both train and val loss high)</p>
+<h3 class="sh3">When To Exclude Weight Decay</h3>
+<p class="prose">Don&#x27;t apply weight decay to:
+- Biases (only decay weights)
+- Batch normalization parameters (γ, β)
+- Embedding layers
+
+Implementation:
+if param_name.endswith(&#x27;b&#x27;) or param_name.startswith(&#x27;bn&#x27;):
+    # Skip weight decay for biases and BN params
+    decay_update = 0</p>
+<h3 class="sh2">Advantages Over Adam</h3>
+<h3 class="sh3">Better Generalization</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">AdamW often achieves better test accuracy than Adam</p>
+<h4 class="sh3">Reason</h4>
+<p class="prose">Proper weight decay acts as effective regularization</p>
+<h3 class="sh3">Consistent With Sgd</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Weight decay behaves same as SGD+momentum+weight_decay</p>
+<h4 class="sh3">Reason</h4>
+<p class="prose">Decoupled, not mixed with adaptive learning rate</p>
+<h3 class="sh3">Recommended Default</h3>
+<p class="prose">Use AdamW instead of Adam in most cases</p>
+<h2 class="sh1">Optimizer Comparison</h2>
+<h3 class="sh2">Side By Side Table</h3>
+<p class="prose">Optimizer    | Momentum | Adaptive | Memory | Best For
+-------------|----------|----------|--------|---------------------------
+SGD          | No       | No       | 1x     | Baseline
+Momentum     | Yes      | No       | 2x     | Convex, simple problems
+RMSprop      | No       | Yes      | 2x     | RNNs, non-stationary
+Adam         | Yes      | Yes      | 3x     | Default choice, most tasks
+AdamW        | Yes      | Yes      | 3x     | Default + regularization</p>
+<h3 class="sh2">Convergence Speed</h3>
+<h3 class="sh3">Typical Behavior</h3>
+<p class="prose">Epochs to 95% validation accuracy on MNIST:
+
+SGD (no momentum): 50 epochs
+SGD + Momentum: 30 epochs
+RMSprop: 20 epochs
+Adam: 15 epochs
+AdamW: 15 epochs
+
+Adam/AdamW converge fastest!</p>
+<h3 class="sh2">Generalization</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Sometimes SGD + momentum achieves better test accuracy than Adam.
+
+Theory: Adam&#x27;s adaptive LR may converge to &quot;sharp&quot; minima
+(high loss curvature) which generalize worse.
+
+Practice: For most tasks, Adam/AdamW fine. For state-of-the-art
+results on specific benchmarks, SGD + momentum sometimes better.</p>
+<h3 class="sh2">Selection Guidelines</h3>
+<h3 class="sh3">Default Choice</h3>
+<p class="prose">Use AdamW with default hyperparameters:
+- learning_rate = 0.001
+- beta1 = 0.9
+- beta2 = 0.999
+- weight_decay = 0.01
+
+Works 90% of the time!</p>
+<h3 class="sh3">When To Use Sgd Momentum</h3>
+<ul class="blist"><li>Training from scratch on large datasets (ImageNet)</li><li>When test accuracy critical (research benchmarks)</li><li>When have time to tune hyperparameters extensively</li><li>Following specific paper&#x27;s training recipe</li></ul>
+<h3 class="sh3">When To Use Rmsprop</h3>
+<ul class="blist"><li>Recurrent neural networks (RNNs, LSTMs)</li><li>When gradients highly variable</li><li>Legacy code (less common now, Adam preferred)</li></ul>
+<h3 class="sh3">When To Use Adam</h3>
+<ul class="blist"><li>Default choice for most problems</li><li>Fine-tuning pretrained models</li><li>When need fast convergence</li><li>When don&#x27;t have time for extensive tuning</li></ul>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Momentum Amplifies Adversarial Gradients</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Adversarial examples computed via:
+δ* = argmax_δ L(f(x + δ), y_wrong)
+
+With momentum, attack becomes:
+v_t = β·v_{t-1} + ∇_x L
+δ_t = δ_{t-1} + α·v_t
+
+Momentum accumulates adversarial gradients → stronger attacks!</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Momentum-based optimizers more vulnerable to iterative attacks</p>
+<h3 class="sh2">Adaptive Rates And Backdoors</h3>
+<h3 class="sh3">Backdoor Persistence</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Backdoor parameters have small gradients (only triggered by rare inputs).
+Adam&#x27;s adaptation: small gradients → small second moment → large effective LR.
+
+Result: Backdoor updates amplified, harder to remove.</p>
+<h4 class="sh3">Defense</h4>
+<p class="prose">SGD with fixed LR may be more resistant to backdoors</p>
+<h3 class="sh3">Detection Via Optimizer State</h3>
+<h4 class="sh3">Method</h4>
+<p class="prose">Adam&#x27;s moments (m, v) encode gradient history.
+Backdoored parameters: anomalous moment patterns.
+
+Detection: Analyze m and v distributions, flag outliers.</p>
+<h3 class="sh2">Bias Correction Leaks Progress</h3>
+<h3 class="sh3">Information Leakage</h3>
+<p class="prose">Bias correction factor: 1 - β^t
+
+As t increases, factor approaches 1.
+Observing model outputs, adversary can infer training progress.
+
+Privacy concern: Reveals how long model has been training.</p>
+<h3 class="sh3">Mitigation</h3>
+<p class="prose">Use fixed bias correction after warmup (e.g., t &gt; 1000)</p>
+<h3 class="sh2">Weight Decay And Robustness</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Weight decay encourages smaller weights.
+Smaller weights → less sensitive to input perturbations.
+
+AdamW with higher weight_decay → more robust models.</p>
+<h3 class="sh3">Tradeoff</h3>
+<p class="prose">Higher weight_decay improves robustness but may reduce accuracy</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Momentum adds velocity: v_t = β·v_{t-1} + ∇L, accumulates gradients in consistent directions</li><li>RMSprop adapts per-parameter LR: divides by √(running avg of grad²), handles different scales</li><li>Adam combines both: momentum (first moment) + adaptation (second moment) + bias correction</li><li>AdamW decouples weight decay: applies weight decay separately, not through gradient</li><li>Bias correction essential: m and v biased toward 0 initially, correction fixes early instability</li><li>Memory costs: Momentum 2x, RMSprop 2x, Adam/AdamW 3x (m, v, params)</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Use AdamW as default: learning_rate=0.001, beta1=0.9, beta2=0.999, weight_decay=0.01</li><li>Tune learning rate first: most important hyperparameter, try 0.1, 0.01, 0.001, 0.0001</li><li>Start with defaults for β1, β2: rarely need tuning, 0.9 and 0.999 work 95% of time</li><li>Increase weight_decay if overfitting: 0.01 → 0.05 → 0.1</li><li>Switch to SGD+momentum for SOTA: if AdamW not achieving best results after extensive tuning</li><li>Monitor gradient norms: if exploding despite Adam, check LR and gradient clipping</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Momentum amplifies attacks: iterative adversarial examples stronger with momentum optimizers</li><li>Adaptive rates affect backdoors: Adam&#x27;s adaptation may amplify backdoor updates</li><li>Optimizer state leaks info: m and v distributions can reveal backdoored parameters</li><li>Weight decay improves robustness: AdamW with higher weight_decay → less sensitive to perturbations</li></ul>
+<h3 class="sh2">Debugging Tips</h3>
+<ul class="blist"><li>Loss explodes: reduce learning rate by 10x</li><li>Loss plateaus early: increase learning rate or reduce weight_decay</li><li>NaN in training: reduce learning rate, increase epsilon (1e-8 → 1e-6)</li><li>Slow convergence: check if Adam parameters updated correctly (verify m, v not zero)</li><li>Memory issues: use gradient checkpointing or switch to SGD+momentum (2x memory vs 3x)</li></ul>
+</article>

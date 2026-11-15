@@ -1,0 +1,1578 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 12 · Section 17 · ~8 pages</div>
+<h1>Production ML Gateway Capstone: Four-Detector Ensemble in the Seven-Track Architecture</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The production ML gateway is the Chapter 12 capstone: it assembles every component built across the chapter into a single deployable detection system that runs four ML detectors in parallel alongside the Chapter 11 signature rules within the 50ms P99 budget.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapter 12 built the pieces of an ML detection system across sixteen sections: five detector
+families, a feature pipeline, calibration, inference optimisation, a model registry, live
+curation, an ensemble, and a benchmarking layer. Each piece was developed and validated in
+isolation. Section 12.17 assembles them into the production gateway that actually runs in front
+of the LLM, integrating the Chapter 12 ML detection layer into the Chapter 11 seven-track
+architecture.
+
+The assembly is where the design decisions made across the chapter are realised together. The
+four input-side detectors are distributed across the gateway tracks based on their coverage
+profiles -- the embedding detector and XGBoost on the injection track, the GRU and DistilBERT on
+the jailbreak tracks, the Isolation Forest on the extraction track. The ensemble combines them.
+The PII scanner runs as an output-side stage outside the seven tracks. The feature pipeline and inference optimisation keep
+the whole system within the 50ms P99 budget. The model registry governs the deployed
+configuration. The result is a defence-in-depth system: novel attack variants that evade the
+signature layer are caught by the ML classifiers, and uncertain ML outputs are flagged for
+analyst review rather than blocked or silently passed.
+
+The capstone also addresses the production realities that the isolated sections did not. Graceful
+degradation: when the latency budget is threatened under load, the gateway sheds the
+highest-latency detectors first and falls back to signature-only mode rather than breaching the
+SLO. The deployment checklist: the gateway enforces the registry gate conditions before any new
+detector version handles traffic. The monitoring dashboard: the gateway exposes the metrics that
+make the ML detection layer observable in production. And the ATLAS AML.T0040 Sigma rule: the
+gateway detects adversaries probing for the ML classifiers&#x27; decision boundaries, the meta-attack
+against the detection system itself.
+
+Section 12.17 is the section where the ML detection layer becomes a deployable system that slots
+into the Chapter 11 gateway and bridges to the behavioural analysis of Chapter 13.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 12.17 is the Chapter 12 capstone, integrating every prior section. It consumes the
+ensemble (12.15), the feature pipeline (12.11), the inference optimisation (12.12), the model
+registry (12.13), the calibration (12.10), the PII scanner (12.09), and the benchmarking (12.16),
+and produces the complete production ML gateway. It connects to the Chapter 11 seven-track gateway
+that it extends and to the Chapter 13 behavioural analysis that wraps it. Section 12.18 summarises
+the chapter; this section is where it all comes together.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 12.15: four-detector ensemble -- the input-side detection decision the gateway acts on</li><li>Section 12.12: inference optimisation -- the async parallel scoring and 50ms budget the gateway runs within</li><li>Section 12.11: production feature pipeline -- the feature extraction the detectors consume</li><li>Section 12.13: model registry -- the gate conditions the deployment checklist enforces</li><li>Section 12.09: PII scanner -- the output-side stage outside the seven tracks</li><li>Chapter 11 Section 11.13: seven-track gateway -- the architecture this section extends with ML detectors</li><li>Chapter 11 Section 11.04: Sigma rules -- the signature layer the ML detectors complement</li><li>Chapter 10 Sections 10.11-10.13: adversarial example detection -- the Track 7 adversarial detectors</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Design Brief: ML Detectors in the Seven-Track Gateway</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The Chapter 11 gateway is a seven-track architecture: seven parallel detection tracks, each
+covering a class of threats, with a signature-based Sigma rule layer providing the baseline
+detection. The Chapter 12 ML detection layer does not replace this gateway -- it extends it. The
+ML detectors are added to the tracks they cover, running in parallel with the signature rules, so
+each track has both signature detection (fast, precise on known patterns) and ML detection
+(slower, covers novel variants).
+
+The design brief is to integrate the four-detector ensemble into the seven tracks without
+breaching the 50ms P99 budget and without creating single points of failure. The integration
+principle is complementarity at the track level: the signature layer catches known attacks with
+high precision and near-zero latency; the ML layer catches the novel variants the signatures miss.
+A track with both layers is more robust than either alone -- the signature miss on a novel variant
+is caught by the ML detector, and the ML false positive on an unusual benign request is moderated
+by the signature layer&#x27;s confident non-match.
+
+The defence-in-depth structure has a specific failure semantics. If the ML layer is degraded or
+shed under load, the signature layer continues to provide baseline detection -- the gateway never
+goes fully blind. If a novel attack evades the signatures, the ML layer covers it. The two layers
+fail independently, so the gateway&#x27;s detection survives the failure of either. This is the
+property that makes the integrated gateway more reliable than a pure-ML or pure-signature gateway.
+
+The end-to-end request lifecycle through the integrated gateway has five stages. Ingestion parses
+the request and extracts the features (Section 12.11). Signature detection runs the Sigma rules
+(Chapter 11). ML detection runs the four-detector ensemble in parallel (Section 12.15) on the
+async architecture (Section 12.12). The decision stage combines the signature and ML signals into
+the block-flag-monitor routing. The response stage acts on the decision and, for allowed requests,
+runs the output-side PII scanner (Section 12.09) on the model response before delivery. The
+production_ml_gateway.py in deliverable_1 implements this lifecycle.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Track Assignment: Which Detector Covers Which Track</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Each ML detector is assigned to the gateway tracks its coverage profile fits, based on the
+coverage complementarity analysis from Section 12.15. The assignment is not uniform -- a detector
+runs on the tracks where it adds coverage, not on every track, so the per-track latency is
+controlled by running only the relevant detectors on each track.
+
+Track 1 (injection) runs the embedding similarity detector and the XGBoost injection classifier in
+parallel. The embedding detector catches paraphrase variants of known injections; the XGBoost
+catches the structural patterns of injection attempts. Together they cover the injection track&#x27;s
+attack surface -- the direct injections the signatures catch, plus the paraphrase and structural
+variants the signatures miss.
+
+Tracks 2 through 5 (jailbreak) run the GRU sequence detector and the DistilBERT neural classifier.
+The GRU catches multi-turn jailbreak escalation -- the attacks that build across conversation
+turns, which single-message detection cannot see. The DistilBERT catches single-turn jailbreaks
+with the highest precision of the supervised classifiers. The jailbreak tracks need both because
+jailbreaks come in both single-turn and multi-turn forms.
+
+The output-side PII stage runs the PII scanner after inference; like the Section 9.12 output
+watermark it is not one of the seven tracks, and it is the only output-side detector. It
+does not run in parallel with the input-side detectors -- it runs after model inference on the
+model response, scanning for the PII leakage that no input-side detector can catch.
+
+Track 6 (extraction) runs the Isolation Forest anomaly detector on the API usage patterns. Data
+exfiltration and model extraction attacks manifest as anomalous API usage -- unusual request
+patterns, atypical parameter combinations -- which the anomaly detector flags as deviations from
+the benign usage distribution. Track 7 (adversarial) runs the adversarial example detectors from
+Chapter 10, integrated into the gateway as the adversarial-input detection track. The
+track_ml_assignment.py in deliverable_2 documents the full assignment with the coverage
+justification for each detector-track pairing.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Latency Budget with ML Detectors</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Adding the ML detectors to the gateway consumes latency budget that the signature-only gateway did
+not. The integrated gateway must still meet the 50ms P99 SLO, which requires careful budget
+allocation across the signature layer, the feature pipeline, and the ML detectors.
+
+The budget allocation gives the signature layer a small slice (the Sigma rules are fast, under
+2ms), the feature pipeline up to 5ms (Section 12.11), and the ML detectors the parallel-scoring
+slice of around 15ms (Section 12.12, the maximum of the four detectors run concurrently, not the
+sum). The PII scanner runs output-side and is budgeted separately from the input-side budget
+because it runs after model inference. The remaining budget is headroom for network,
+serialisation, and load spikes.
+
+The per-track latency is controlled by running only the relevant detectors on each track. Track 1
+runs the embedding detector (3ms) and XGBoost (2ms) in parallel, for a 3ms track latency. The
+jailbreak tracks run the GRU (12ms) and DistilBERT (7ms) in parallel, for a 12ms track latency --
+the GRU dominates. The tracks run in parallel with each other as well, so the total ML detection
+latency is the maximum across the tracks, around 12-15ms, not the sum. The async architecture from
+Section 12.12 is what makes this parallel composition possible.
+
+The latency must be validated, not assumed. The ml_gateway_latency_benchmark.py in deliverable_4
+measures the full gateway P99 latency with and without the ML detectors, confirming that the ML
+layer addition stays within the budget. The with-and-without comparison isolates the ML detection
+latency contribution, showing exactly how much budget the ML layer consumes, which is the
+measurement that validates the integrated gateway meets the SLO. If the measurement shows the P99
+at risk, the graceful degradation policy (part 4) provides the load-shedding that recovers the
+budget under load.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Graceful Degradation Under Load</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Under high load, the gateway&#x27;s latency increases due to CPU contention, cache eviction, and
+queueing. If the latency approaches the SLO under load, the gateway must shed work to stay within
+budget rather than breaching the SLO and being disabled. Graceful degradation is the policy that
+sheds the highest-cost detectors first while preserving the most detection coverage per unit of
+latency.
+
+The degradation has tiers. At normal load, all detectors run. As the latency budget comes under
+pressure, the gateway sheds the highest-latency detector first -- the DistilBERT at 7ms -- because
+it consumes the most budget and its coverage (single-turn jailbreaks) is partly covered by the
+other detectors. If the pressure continues, the gateway sheds the GRU next, falling back to the
+fast detectors (Isolation Forest, XGBoost, embedding). At the most severe pressure, the gateway
+sheds all ML detectors and falls back to signature-only detection -- the Sigma rules from Chapter
+11, which are fast and provide baseline detection.
+
+The shedding order is determined by the latency cost and the coverage redundancy. The DistilBERT
+is shed first because it has the highest latency and its coverage is partly redundant with the
+other detectors. The fast detectors are shed last because they are cheap and provide the most
+coverage per millisecond. The signature layer is never shed -- it is the floor that keeps the
+gateway detecting even under the most severe load. The gateway_graceful_degradation.py in
+deliverable_3 implements the priority ranking and the signature-only fallback.
+
+The principle is that some detection is better than none, and staying within the SLO is better than
+breaching it. A gateway that breaches the SLO under load is disabled by the operational response,
+leaving zero detection. A gateway that sheds its slowest detectors under load keeps the fast
+detectors and the signatures running, providing degraded but non-zero detection while staying
+within the budget. Graceful degradation trades coverage for SLO compliance, which is the correct
+trade because SLO compliance keeps the gateway running and a running degraded gateway beats a
+disabled complete one.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The ATLAS AML.T0040 Sigma Rule: Detecting the Meta-Attack</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The ML detectors defend against attacks on the LLM. But the ML detectors are themselves a target:
+a sophisticated adversary attacks the detection system by probing for the ML classifiers&#x27; decision
+boundaries, learning which payloads are flagged and which pass, and crafting payloads that evade
+the classifiers. This is the meta-attack -- an attack on the detector rather than on the model --
+catalogued as MITRE ATLAS AML.T0040 (ML classifier evasion through boundary probing).
+
+The detection signal for AML.T0040 is a behavioural pattern, not a single payload. An adversary
+probing the decision boundary sends a sequence of semantically similar requests with small
+variations, observing which are flagged. The signature of this probing is a cluster of requests
+from the same source that are semantically similar to each other (small embedding distances) and
+concentrated near the decision boundary (calibrated scores in the uncertain 0.4-0.6 range). A
+legitimate user does not send a stream of near-duplicate requests hovering at the decision
+boundary; an adversary probing for the boundary does exactly that.
+
+The Sigma rule for AML.T0040 encodes this pattern. It triggers when a source sends multiple
+requests within a time window that are semantically similar (above an embedding similarity
+threshold) and concentrated near the decision boundary (calibrated scores clustered in the
+uncertain range). The rule&#x27;s detection logic combines the embedding similarity from the Section
+12.07 detector and the calibrated scores from the Section 12.10 calibration -- the same components
+that serve the primary detection, repurposed to detect the probing of those components.
+
+The aml_t0040_sigma_rule_generator.py in deliverable_5 produces the completed Sigma rule. When the
+rule fires, the response is not just to flag the individual requests (which are individually
+near-benign) but to flag the source as conducting boundary probing, which warrants a stronger
+response: rate-limiting the source, escalating to analyst review, or blocking the source entirely.
+Detecting the meta-attack protects the detection system itself, which is essential because a
+successful boundary-probing campaign produces evasion payloads that defeat the primary detection.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Production Deployment Checklist</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Deploying the ML gateway to production -- or deploying a new detector version into it -- is a
+high-stakes operation. A misconfigured or unvalidated detector handling production traffic can
+flood the analyst queue, breach the SLO, or silently miss attacks. The deployment checklist
+enforces the validations that must pass before any detector handles production traffic, turning the
+deployment from a manual operation prone to skipped steps into a gated process.
+
+The checklist enforces the Section 12.13 model registry gate conditions and the production
+validations from across the chapter. Calibration verification confirms each detector&#x27;s ECE is below
+threshold (Section 12.10) -- an uncalibrated detector corrupts the ensemble. Shadow mode validation
+confirms the detector was run in shadow on production traffic and its decisions compared against the
+production model (Section 12.13) -- offline validation alone is insufficient. Canary promotion
+confirms the detector served a traffic fraction with automated rollback monitoring before full
+promotion (Section 12.13). Latency validation confirms the detector&#x27;s P99 is within its budget slice
+(Section 12.12). Monitoring dashboard confirms the detector&#x27;s metrics are exposed and the dashboard
+is configured (part 7) -- an unmonitored detector is undeployable because its degradation would go
+unnoticed.
+
+The checklist is a hard gate, not a recommendation. Each item must pass before the deployment
+proceeds, with no expedient bypass for any item. The bypass is exactly where, under deadline
+pressure, the shadow validation or the calibration check gets skipped, and the skipped check is
+where the production incident originates. The ml_gateway_deployment_checklist.py in deliverable_6
+implements the checklist as an enforced sequence: it runs each validation, reports the result, and
+permits the deployment only when every item passes.
+
+The checklist connects the chapter&#x27;s components into the deployment gate. Each item corresponds to a
+validation built in a prior section -- calibration (12.10), shadow and canary (12.13), latency
+(12.12), monitoring (part 7) -- so the checklist is the integration point where the chapter&#x27;s
+validations are enforced together before production. The checklist is what makes the deployment
+governed rather than ad hoc.</p>
+<h3 class="sh2">Part 7</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Monitoring Dashboard: Observability for the ML Layer</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A deployed ML detection layer that is not observable is undeployable, because its degradation --
+a drifting threshold, a dropping cache hit rate, a latency regression -- would go unnoticed until
+it caused a visible incident. The monitoring dashboard exposes the metrics that make the ML layer
+observable, so its health is continuously visible and its degradation is caught early.
+
+The dashboard exposes four categories of metrics. Detection metrics: the per-detector and ensemble
+flag rates, the block-flag-monitor tier distribution, and the per-attack-family detection rates
+that surface coverage gaps. Latency metrics: the P50, P95, and P99 latency per detector and for the
+full gateway, with the budget threshold marked so a latency regression is immediately visible.
+Quality metrics: the calibration ECE per detector, the threshold drift signal from Section 12.10,
+and the online-offline divergence from Section 12.16. Operational metrics: the feature cache hit
+rate (Section 12.11), the model versions currently in production (Section 12.13), the graceful
+degradation state (which detectors are currently shed), and the annotation throughput from the
+curation flywheel (Section 12.14).
+
+The metrics are exposed via Prometheus -- the standard metrics format for production monitoring --
+and visualised in Grafana dashboards. The Prometheus metrics are instrumented into the gateway: each
+detector inference records its latency and decision, each ensemble combination records its tier, each
+feature extraction records its cache hit, and these are aggregated into the Prometheus time series.
+The Grafana dashboard panels visualise the time series with the thresholds marked, so an on-call
+engineer can see at a glance whether the ML layer is healthy.
+
+The dashboard is the operational interface to the ML detection layer. It connects to the alerting
+that fires when a metric crosses a threshold -- the latency P99 approaching the budget, the
+calibration ECE rising, the cache hit rate dropping, the threshold drift firing. The
+ml_gateway_monitoring_dashboard.py in deliverable_7 produces the Prometheus metric definitions and
+the Grafana dashboard configuration. Observability is not an afterthought -- it is the property that
+makes the ML layer a managed production system rather than a black box that degrades silently.</p>
+<h3 class="sh2">Part 8</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Complete System: From Chapter 11 to Chapter 13</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The production ML gateway is the synthesis of Chapter 12. It takes the seven-track gateway from
+Chapter 11 and adds the ML detection layer built across this chapter: the four-detector ensemble on
+the input side, the PII scanner on the output side, the feature pipeline and inference optimisation
+keeping it within budget, the model registry governing the configuration, the live curation keeping
+it current, the benchmarking validating it, and the monitoring making it observable. The result is a
+complete, deployable ML detection system.
+
+The system&#x27;s place in the broader architecture is specific. Upstream, the Chapter 11 gateway provides
+the seven-track structure, the signature layer, and the request routing that the ML layer plugs into.
+The ML layer is not a standalone system -- it is a detection layer within the gateway, complementing
+the signatures. Downstream, the Chapter 13 behavioural analysis wraps the gateway&#x27;s detection in the
+longer-horizon behavioural context: the gateway makes the per-request detection decision, and the
+behavioural analysis aggregates these decisions across sessions and sources to detect the patterns
+that no single request reveals -- the slow campaigns, the coordinated probing, the account takeover
+sequences.
+
+The chapter&#x27;s central thesis is realised in this capstone: ML-based detection is not a replacement
+for signature-based detection but a complement, and the two together provide defence-in-depth that
+neither achieves alone. The signatures provide fast, precise, interpretable detection of known
+attacks. The ML detectors provide coverage of the novel variants the signatures miss, at the cost of
+higher latency and lower interpretability, managed by the calibration, the ensemble, the inference
+optimisation, and the monitoring built across the chapter. The integrated gateway is more robust
+than either layer alone because they cover each other&#x27;s gaps and fail independently.
+
+The production realities the capstone addresses -- graceful degradation, the deployment checklist,
+the monitoring dashboard, the meta-attack detection -- are what separate a detection system that works
+in a notebook from one that survives production. A detector that is accurate but breaches the SLO
+under load is disabled; a detector that is deployed without the checklist introduces a regression; a
+detector that is not monitored degrades silently; a detection system that does not detect the
+meta-attack is defeated by boundary probing. The capstone integrates the validations and the
+operational controls that make the ML detection layer deployable, observable, and defensible in
+production, which is the bar a real detection system must meet.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Detector to Gateway Track Assignment</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Which ML detector populates which gateway track, with the coverage justification</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Track</li><li>Threat Class</li><li>ML Detectors</li><li>Coverage Justification</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Track 1</li><li>Prompt injection</li><li>Embedding similarity + XGBoost</li><li>Embedding catches paraphrase variants; XGBoost catches structural injection patterns</li></ul>
+<ul class="blist"><li>Tracks 2-5</li><li>Jailbreak</li><li>GRU + DistilBERT</li><li>GRU catches multi-turn escalation; DistilBERT catches single-turn jailbreaks</li></ul>
+<ul class="blist"><li>Output stage</li><li>PII leakage (output)</li><li>PII scanner</li><li>Output-side post-inference scan; the only output-side detector</li></ul>
+<ul class="blist"><li>Track 6</li><li>Data extraction</li><li>Isolation Forest</li><li>Anomalous API usage patterns deviate from the benign distribution</li></ul>
+<ul class="blist"><li>Track 7</li><li>Adversarial input</li><li>Chapter 10 adversarial detectors</li><li>Adversarial example detection integrated from Chapter 10</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Gateway Latency Budget with ML Detectors</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The 50ms P99 budget allocation across the integrated gateway components</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Component</li><li>Budget Slice</li><li>Notes</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Signature layer (Sigma)</li><li>&lt; 2ms</li><li>Fast pattern matching; the baseline detection floor</li></ul>
+<ul class="blist"><li>Feature pipeline</li><li>5ms</li><li>ONNX embedding + early exit (Section 12.11)</li></ul>
+<ul class="blist"><li>ML detectors (parallel)</li><li>12-15ms</li><li>Max across tracks, dominated by the GRU (Section 12.12)</li></ul>
+<ul class="blist"><li>Ensemble combination</li><li>&lt; 1ms</li><li>Weighted vote or meta-learner inference (Section 12.15)</li></ul>
+<ul class="blist"><li>Decision + routing</li><li>&lt; 1ms</li><li>Combine signature and ML signals; block-flag-monitor</li></ul>
+<ul class="blist"><li>PII scanner (output-side)</li><li>15-40ms</li><li>Budgeted separately; runs after model inference</li></ul>
+<ul class="blist"><li>Network + headroom</li><li>~25ms</li><li>Margin for load spikes and gateway overhead</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Graceful Degradation Shedding Order</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The order in which detectors are shed under latency pressure, with the rationale</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Degradation Tier</li><li>Detectors Running</li><li>Shed</li><li>Rationale</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Normal</li><li>All four ML + signatures</li><li>None</li><li>Full detection at normal load</li></ul>
+<ul class="blist"><li>Tier 1 pressure</li><li>IF + XGBoost + embedding + signatures</li><li>DistilBERT</li><li>Highest latency; coverage partly redundant</li></ul>
+<ul class="blist"><li>Tier 2 pressure</li><li>IF + XGBoost + signatures</li><li>GRU</li><li>High latency; multi-turn coverage sacrificed under load</li></ul>
+<ul class="blist"><li>Tier 3 pressure</li><li>Fast ML (IF, XGBoost) + signatures</li><li>Embedding</li><li>Keep the fastest ML detectors</li></ul>
+<ul class="blist"><li>Severe</li><li>Signatures only</li><li>All ML detectors</li><li>Signature floor; never shed; baseline detection preserved</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Production Deployment Checklist Items</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The checklist items that must pass before a detector handles production traffic, with the source validation</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Checklist Item</li><li>Validation</li><li>Source Section</li><li>Gate Action If Failed</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Calibration verified</li><li>ECE below threshold</li><li>Section 12.10</li><li>Block deployment; recalibrate</li></ul>
+<ul class="blist"><li>Shadow mode validated</li><li>Compared against production model on live traffic</li><li>Section 12.13</li><li>Block deployment; run shadow period</li></ul>
+<ul class="blist"><li>Canary promoted</li><li>Served traffic fraction with rollback monitoring</li><li>Section 12.13</li><li>Block deployment; run canary</li></ul>
+<ul class="blist"><li>Latency validated</li><li>P99 within budget slice</li><li>Section 12.12</li><li>Block deployment; optimise or shed</li></ul>
+<ul class="blist"><li>Registry gates passed</li><li>Accuracy, latency, calibration, model card</li><li>Section 12.13</li><li>Block deployment; address gate failure</li></ul>
+<ul class="blist"><li>Monitoring configured</li><li>Metrics exposed and dashboard ready</li><li>Section 12.17 part 7</li><li>Block deployment; configure monitoring</li></ul>
+<h3 class="sh2">Table 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS AML.T0040 Detection Signal</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The behavioural signal for ML classifier evasion through boundary probing</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Signal Component</li><li>Measurement</li><li>Threshold</li><li>Source Section</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Semantic similarity</li><li>Embedding distance between a source requests</li><li>Above similarity threshold (near-duplicates)</li><li>Section 12.07</li></ul>
+<ul class="blist"><li>Boundary concentration</li><li>Calibrated scores in the uncertain range</li><li>0.4-0.6 cluster</li><li>Section 12.10</li></ul>
+<ul class="blist"><li>Request volume</li><li>Count from the same source in a window</li><li>Multiple within the time window</li><li>Gateway telemetry</li></ul>
+<ul class="blist"><li>Source correlation</li><li>Requests attributed to the same source</li><li>Same source identifier</li><li>Gateway telemetry</li></ul>
+<h3 class="sh2">Table 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Monitoring Dashboard Metric Categories</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The metric categories the ML gateway exposes for production observability</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Category</li><li>Metrics</li><li>Alerting Threshold</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Detection</li><li>Per-detector and ensemble flag rates; tier distribution; per-family rates</li><li>Flag rate spike or per-family rate drop</li></ul>
+<ul class="blist"><li>Latency</li><li>P50/P95/P99 per detector and gateway</li><li>P99 approaching the budget</li></ul>
+<ul class="blist"><li>Quality</li><li>Calibration ECE; threshold drift; online-offline divergence</li><li>ECE rising; drift firing; divergence widening</li></ul>
+<ul class="blist"><li>Operational</li><li>Cache hit rate; production model versions; degradation state; annotation throughput</li><li>Cache hit rate dropping; unexpected degradation</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Production ML Gateway</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">production_ml_gateway.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Seven-track gateway with the Chapter 12 four-detector ensemble integrated, async parallel scoring, and 50ms P99 validated. Implements the end-to-end request lifecycle from ingestion through signature and ML detection to the block-flag-monitor response and the output-side PII scan.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: asyncio, numpy. Integrates the ensemble (12.15), feature pipeline (12.11), inference optimisation (12.12), and PII scanner (12.09).</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># production_ml_gateway.py
+# Section 12.17: Production ML Gateway Capstone
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Callable, Dict, List, Optional
+
+
+class GatewayAction(Enum):
+    BLOCK = &#x27;block&#x27;
+    FLAG = &#x27;flag&#x27;
+    MONITOR = &#x27;monitor&#x27;
+    ALLOW = &#x27;allow&#x27;
+
+
+@dataclass
+class GatewayDecision:
+    action: GatewayAction
+    signature_match: bool
+    ensemble_score: float
+    ensemble_tier: str
+    detector_scores: Dict[str, float]
+    degradation_tier: int
+    input_detection_ms: float
+    pii_redacted: bool = False
+    explanation: str = &#x27;&#x27;
+
+
+class ProductionMLGateway:
+    &#x27;&#x27;&#x27;
+    Seven-track gateway integrating the Chapter 12 ML ensemble with the
+    Chapter 11 signature layer.
+
+    Lifecycle: ingest -&gt; signature -&gt; ML ensemble (parallel) -&gt; decide -&gt; respond.
+    Output-side PII scan runs on the model response after inference.
+    &#x27;&#x27;&#x27;
+
+    def __init__(
+        self,
+        feature_pipeline,       # Section 12.11 ProductionFeaturePipeline
+        ensemble,               # Section 12.15 DetectorEnsemble
+        signature_fn: Callable, # Chapter 11 Sigma rule matcher
+        pii_gateway=None,       # Section 12.09 PIIGateway
+        degradation_controller=None,  # Section 12.17 deliverable_3
+        detector_fns: Optional[Dict[str, Callable]] = None,
+    ) -&gt; None:
+        self.feature_pipeline = feature_pipeline
+        self.ensemble = ensemble
+        self.signature_fn = signature_fn
+        self.pii_gateway = pii_gateway
+        self.degradation_controller = degradation_controller
+        self.detector_fns = detector_fns or {}
+
+    async def _run_detectors(
+        self,
+        feature_vector,
+        active_detectors: List[str],
+    ) -&gt; Dict[str, float]:
+        &#x27;&#x27;&#x27;Run the active detectors in parallel.&#x27;&#x27;&#x27;
+        loop = asyncio.get_event_loop()
+        tasks = {
+            name: loop.run_in_executor(None, self.detector_fns[name], feature_vector)
+            for name in active_detectors if name in self.detector_fns
+        }
+        scores = {}
+        for name, task in tasks.items():
+            scores[name] = float(await task)
+        return scores
+
+    async def process_request(
+        self,
+        request,                # PipelineRequest-like
+    ) -&gt; GatewayDecision:
+        t0 = time.perf_counter()
+
+        # Stage 1: Ingestion + feature extraction
+        features = self.feature_pipeline.extract(request)
+
+        # Stage 2: Signature detection (fast baseline)
+        sig_match = bool(self.signature_fn(request.message_text))
+
+        # Stage 3: Determine active detectors (graceful degradation)
+        if self.degradation_controller is not None:
+            active = self.degradation_controller.active_detectors()
+            degradation_tier = self.degradation_controller.current_tier()
+        else:
+            active = list(self.detector_fns.keys())
+            degradation_tier = 0
+
+        # Stage 4: ML detection (parallel)
+        detector_scores = await self._run_detectors(features.vector, active)
+
+        # Stage 5: Ensemble combination
+        if detector_scores:
+            ensemble_result = self.ensemble.evaluate(detector_scores)
+            ensemble_score = ensemble_result.combined_score
+            ensemble_tier = ensemble_result.tier.value
+        else:
+            ensemble_score = 0.0
+            ensemble_tier = &#x27;pass&#x27;
+
+        # Stage 6: Combine signature + ML into a decision
+        action = self._combine_decision(sig_match, ensemble_tier, ensemble_score)
+
+        input_ms = (time.perf_counter() - t0) * 1000
+        return GatewayDecision(
+            action=action,
+            signature_match=sig_match,
+            ensemble_score=ensemble_score,
+            ensemble_tier=ensemble_tier,
+            detector_scores=detector_scores,
+            degradation_tier=degradation_tier,
+            input_detection_ms=input_ms,
+            explanation=self._explain(sig_match, ensemble_tier, detector_scores),
+        )
+
+    def _combine_decision(
+        self,
+        sig_match: bool,
+        ensemble_tier: str,
+        ensemble_score: float,
+    ) -&gt; GatewayAction:
+        # Signature match OR strong ensemble agreement -&gt; block
+        if sig_match or ensemble_tier == &#x27;block&#x27;:
+            return GatewayAction.BLOCK
+        if ensemble_tier == &#x27;flag&#x27;:
+            return GatewayAction.FLAG
+        if ensemble_tier == &#x27;monitor&#x27;:
+            return GatewayAction.MONITOR
+        return GatewayAction.ALLOW
+
+    def _explain(
+        self,
+        sig_match: bool,
+        ensemble_tier: str,
+        detector_scores: Dict[str, float],
+    ) -&gt; str:
+        parts = []
+        if sig_match:
+            parts.append(&#x27;signature match&#x27;)
+        if ensemble_tier != &#x27;pass&#x27;:
+            top = sorted(detector_scores.items(), key=lambda kv: kv[1], reverse=True)[:2]
+            drivers = &#x27;, &#x27;.join(f&#x27;{n}={s:.2f}&#x27; for n, s in top)
+            parts.append(f&#x27;ensemble {ensemble_tier} ({drivers})&#x27;)
+        return &#x27;; &#x27;.join(parts) if parts else &#x27;no detection&#x27;
+
+    def scan_response(self, request, response_text: str) -&gt; tuple:
+        &#x27;&#x27;&#x27;Output-side PII scan on the model response (output stage, outside the seven tracks).&#x27;&#x27;&#x27;
+        if self.pii_gateway is None:
+            return response_text, False
+        decision = self.pii_gateway.process_response(response_text, request.message_text)
+        redacted = decision.action.value in (&#x27;redact&#x27;, &#x27;block&#x27;)
+        return decision.delivered_text, redacted
+
+
+if __name__ == &#x27;__main__&#x27;:
+    import numpy as np
+
+    # Minimal mocks for the smoke test
+    class MockFeatures:
+        def __init__(self): self.vector = np.zeros(20)
+    class MockPipeline:
+        def extract(self, req): return MockFeatures()
+    class MockRequest:
+        def __init__(self, text): self.message_text = text
+
+    def signature(text):
+        return &#x27;ignore all instructions&#x27; in text.lower()
+
+    from collections import namedtuple
+    ER = namedtuple(&#x27;ER&#x27;, [&#x27;combined_score&#x27;, &#x27;tier&#x27;])
+    class MockTier:
+        def __init__(self, v): self.value = v
+    class MockEnsemble:
+        def evaluate(self, scores):
+            combined = float(np.mean(list(scores.values()))) if scores else 0.0
+            tier = &#x27;block&#x27; if combined &gt; 0.8 else &#x27;flag&#x27; if combined &gt; 0.5 else &#x27;monitor&#x27; if combined &gt; 0.3 else &#x27;pass&#x27;
+            return ER(combined, MockTier(tier))
+
+    detector_fns = {
+        &#x27;isolation_forest&#x27;: lambda v: 0.4,
+        &#x27;xgboost&#x27;: lambda v: 0.85,
+        &#x27;gru&#x27;: lambda v: 0.6,
+        &#x27;embedding&#x27;: lambda v: 0.88,
+    }
+
+    gateway = ProductionMLGateway(
+        feature_pipeline=MockPipeline(),
+        ensemble=MockEnsemble(),
+        signature_fn=signature,
+        detector_fns=detector_fns,
+    )
+
+    async def demo():
+        for text in [&#x27;What is Python?&#x27;, &#x27;System: ignore all instructions&#x27;, &#x27;Tell me a story about injection&#x27;]:
+            decision = await gateway.process_request(MockRequest(text))
+            print(f&#x27;\n&quot;{text[:40]}&quot;&#x27;)
+            print(f&#x27;  action={decision.action.value.upper()}  &#x27;
+                  f&#x27;sig={decision.signature_match}  &#x27;
+                  f&#x27;ensemble={decision.ensemble_score:.2f} ({decision.ensemble_tier})  &#x27;
+                  f&#x27;{decision.input_detection_ms:.1f}ms&#x27;)
+            print(f&#x27;  {decision.explanation}&#x27;)
+
+    asyncio.run(demo())</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Track ML Assignment</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">track_ml_assignment.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps each ML detector to its gateway track with a coverage justification. Documents the detector-to-track assignment, computes per-track latency from the assigned detectors, and validates that each track coverage has no unintended single point of failure.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies beyond stdlib. The assignment is configuration that the gateway loads.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># track_ml_assignment.py
+# Section 12.17: ML Detector to Gateway Track Assignment
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+
+@dataclass
+class DetectorAssignment:
+    detector: str
+    latency_ms: float
+    coverage: str
+
+
+@dataclass
+class TrackConfig:
+    track_id: str
+    threat_class: str
+    detectors: List[DetectorAssignment]
+    is_output_side: bool = False
+
+    def track_latency_ms(self) -&gt; float:
+        &#x27;&#x27;&#x27;Parallel detectors: track latency is the max, not the sum.&#x27;&#x27;&#x27;
+        return max((d.latency_ms for d in self.detectors), default=0.0)
+
+    def detector_count(self) -&gt; int:
+        return len(self.detectors)
+
+
+# The Chapter 12 detector-to-track assignment
+TRACK_ASSIGNMENTS: List[TrackConfig] = [
+    TrackConfig(
+        track_id=&#x27;track_1&#x27;, threat_class=&#x27;prompt_injection&#x27;,
+        detectors=[
+            DetectorAssignment(&#x27;embedding&#x27;, 3.0, &#x27;Paraphrase variants of known injections&#x27;),
+            DetectorAssignment(&#x27;xgboost&#x27;, 2.0, &#x27;Structural injection patterns&#x27;),
+        ],
+    ),
+    TrackConfig(
+        track_id=&#x27;track_2_5&#x27;, threat_class=&#x27;jailbreak&#x27;,
+        detectors=[
+            DetectorAssignment(&#x27;gru&#x27;, 12.0, &#x27;Multi-turn jailbreak escalation&#x27;),
+            DetectorAssignment(&#x27;distilbert&#x27;, 7.0, &#x27;Single-turn jailbreaks, highest precision&#x27;),
+        ],
+    ),
+    TrackConfig(
+        track_id=&#x27;output_stage&#x27;, threat_class=&#x27;pii_leakage&#x27;,
+        detectors=[
+            DetectorAssignment(&#x27;pii_scanner&#x27;, 25.0, &#x27;Output-side PII leakage scan&#x27;),
+        ],
+        is_output_side=True,
+    ),
+    TrackConfig(
+        track_id=&#x27;track_6&#x27;, threat_class=&#x27;data_extraction&#x27;,
+        detectors=[
+            DetectorAssignment(&#x27;isolation_forest&#x27;, 2.0, &#x27;Anomalous API usage patterns&#x27;),
+        ],
+    ),
+    TrackConfig(
+        track_id=&#x27;track_7&#x27;, threat_class=&#x27;adversarial_input&#x27;,
+        detectors=[
+            DetectorAssignment(&#x27;adversarial_detector&#x27;, 5.0, &#x27;Adversarial example detection (Chapter 10)&#x27;),
+        ],
+    ),
+]
+
+
+class TrackMLAssignment:
+    &#x27;&#x27;&#x27;Documents and validates the detector-to-track assignment.&#x27;&#x27;&#x27;
+
+    def __init__(self, tracks: List[TrackConfig] = None) -&gt; None:
+        self.tracks = tracks or TRACK_ASSIGNMENTS
+
+    def input_side_latency_ms(self) -&gt; float:
+        &#x27;&#x27;&#x27;Parallel tracks: input-side latency is the max track latency.&#x27;&#x27;&#x27;
+        return max(
+            (t.track_latency_ms() for t in self.tracks if not t.is_output_side),
+            default=0.0,
+        )
+
+    def single_coverage_tracks(self) -&gt; List[str]:
+        &#x27;&#x27;&#x27;Tracks covered by only one ML detector (potential SPOF).&#x27;&#x27;&#x27;
+        return [t.track_id for t in self.tracks
+                if t.detector_count() == 1 and not t.is_output_side]
+
+    def report(self) -&gt; None:
+        print(&#x27;ML Detector to Gateway Track Assignment&#x27;)
+        print(&#x27;=&#x27; * 70)
+        for t in self.tracks:
+            side = &#x27;OUTPUT&#x27; if t.is_output_side else &#x27;INPUT&#x27;
+            print(f&#x27;\n{t.track_id} [{side}] -- {t.threat_class}&#x27;)
+            for d in t.detectors:
+                print(f&#x27;    {d.detector:20} ({d.latency_ms:&gt;5.1f}ms)  {d.coverage}&#x27;)
+            print(f&#x27;    track latency: {t.track_latency_ms():.1f}ms (parallel max)&#x27;)
+        print(&#x27;-&#x27; * 70)
+        print(f&#x27;  Input-side latency (parallel tracks): {self.input_side_latency_ms():.1f}ms&#x27;)
+        spof = self.single_coverage_tracks()
+        if spof:
+            print(f&#x27;  Single-detector tracks (monitor closely): {spof}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    assignment = TrackMLAssignment()
+    assignment.report()</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Gateway Graceful Degradation</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">gateway_graceful_degradation.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Load-shedding policy with detector priority ranking and fallback to signature-only mode. Sheds the highest-latency detectors first under latency pressure, preserving the fastest detectors and the signature floor, keeping the gateway within the SLO under load.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: numpy. The current load signal comes from the live P99 latency measurement.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># gateway_graceful_degradation.py
+# Section 12.17: Graceful Degradation Load-Shedding
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Deque, Dict, List, Optional
+
+import numpy as np
+
+
+@dataclass
+class DegradationTier:
+    tier: int
+    name: str
+    active_detectors: List[str]
+    shed: List[str]
+
+
+# Shedding order: highest latency / most redundant coverage shed first.
+# The signature layer is never shed.
+DEGRADATION_TIERS: List[DegradationTier] = [
+    DegradationTier(0, &#x27;normal&#x27;,
+                    [&#x27;isolation_forest&#x27;, &#x27;xgboost&#x27;, &#x27;gru&#x27;, &#x27;embedding&#x27;], []),
+    DegradationTier(1, &#x27;tier_1_pressure&#x27;,
+                    [&#x27;isolation_forest&#x27;, &#x27;xgboost&#x27;, &#x27;embedding&#x27;], [&#x27;distilbert&#x27;]),
+    DegradationTier(2, &#x27;tier_2_pressure&#x27;,
+                    [&#x27;isolation_forest&#x27;, &#x27;xgboost&#x27;, &#x27;embedding&#x27;], [&#x27;distilbert&#x27;, &#x27;gru&#x27;]),
+    DegradationTier(3, &#x27;tier_3_pressure&#x27;,
+                    [&#x27;isolation_forest&#x27;, &#x27;xgboost&#x27;], [&#x27;distilbert&#x27;, &#x27;gru&#x27;, &#x27;embedding&#x27;]),
+    DegradationTier(4, &#x27;severe_signature_only&#x27;,
+                    [], [&#x27;distilbert&#x27;, &#x27;gru&#x27;, &#x27;embedding&#x27;, &#x27;isolation_forest&#x27;, &#x27;xgboost&#x27;]),
+]
+
+
+class GracefulDegradationController:
+    &#x27;&#x27;&#x27;
+    Adjusts the active detector set based on the live latency pressure.
+    Sheds the highest-latency detectors first; the signature layer is the
+    floor and is never shed.
+
+    The principle: degraded detection within the SLO beats full detection
+    that breaches the SLO and gets the gateway disabled.
+    &#x27;&#x27;&#x27;
+
+    def __init__(
+        self,
+        budget_ms: float = 50.0,
+        pressure_threshold: float = 0.8,    # fraction of budget that triggers shedding
+        recovery_threshold: float = 0.6,    # fraction below which to recover a tier
+        window: int = 100,
+    ) -&gt; None:
+        self.budget_ms = budget_ms
+        self.pressure_threshold = pressure_threshold
+        self.recovery_threshold = recovery_threshold
+        self._latencies: Deque[float] = deque(maxlen=window)
+        self._tier = 0
+
+    def record_latency(self, latency_ms: float) -&gt; None:
+        self._latencies.append(latency_ms)
+
+    def _current_p99(self) -&gt; float:
+        if not self._latencies:
+            return 0.0
+        return float(np.percentile(self._latencies, 99))
+
+    def update_tier(self) -&gt; int:
+        &#x27;&#x27;&#x27;Adjust the degradation tier based on the current P99 pressure.&#x27;&#x27;&#x27;
+        if len(self._latencies) &lt; 10:
+            return self._tier
+        p99 = self._current_p99()
+        pressure = p99 / self.budget_ms
+
+        if pressure &gt;= self.pressure_threshold and self._tier &lt; len(DEGRADATION_TIERS) - 1:
+            self._tier += 1
+            print(f&#x27;DEGRADE -&gt; tier {self._tier} ({DEGRADATION_TIERS[self._tier].name}); &#x27;
+                  f&#x27;P99 {p99:.1f}ms ({pressure:.0%} of budget)&#x27;)
+        elif pressure &lt;= self.recovery_threshold and self._tier &gt; 0:
+            self._tier -= 1
+            print(f&#x27;RECOVER -&gt; tier {self._tier} ({DEGRADATION_TIERS[self._tier].name}); &#x27;
+                  f&#x27;P99 {p99:.1f}ms ({pressure:.0%} of budget)&#x27;)
+        return self._tier
+
+    def active_detectors(self) -&gt; List[str]:
+        return DEGRADATION_TIERS[self._tier].active_detectors
+
+    def current_tier(self) -&gt; int:
+        return self._tier
+
+    def is_signature_only(self) -&gt; bool:
+        return len(self.active_detectors()) == 0
+
+
+if __name__ == &#x27;__main__&#x27;:
+    controller = GracefulDegradationController(budget_ms=50.0)
+
+    rng = np.random.default_rng(42)
+    print(&#x27;Simulating increasing load...&#x27;)
+    # Phase 1: normal load
+    for _ in range(50):
+        controller.record_latency(rng.normal(20, 3))
+    controller.update_tier()
+    print(f&#x27;  Active: {controller.active_detectors()}&#x27;)
+
+    # Phase 2: rising load
+    for _ in range(50):
+        controller.record_latency(rng.normal(43, 4))
+    controller.update_tier()
+    print(f&#x27;  Active: {controller.active_detectors()}&#x27;)
+
+    # Phase 3: severe load
+    for _ in range(50):
+        controller.record_latency(rng.normal(48, 3))
+    controller.update_tier()
+    controller.update_tier()
+    print(f&#x27;  Active: {controller.active_detectors()}  signature_only={controller.is_signature_only()}&#x27;)
+
+    # Phase 4: recovery
+    for _ in range(100):
+        controller.record_latency(rng.normal(22, 3))
+    for _ in range(5):
+        controller.update_tier()
+    print(f&#x27;  Recovered active: {controller.active_detectors()}&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Gateway Latency Benchmark</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_gateway_latency_benchmark.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Full gateway P99 latency measurement with and without the ML detectors. Isolates the ML detection latency contribution and validates the integrated gateway meets the 50ms P99 SLO under representative load.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: asyncio, numpy. Builds on the latency profiling from Section 12.12.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># ml_gateway_latency_benchmark.py
+# Section 12.17: ML Gateway Latency Benchmark
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+import asyncio
+import time
+from dataclasses import dataclass
+from typing import Callable, Dict, List
+
+import numpy as np
+
+
+@dataclass
+class GatewayLatencyComparison:
+    signature_only_p99: float
+    with_ml_p99: float
+    ml_contribution_p99: float
+    budget_ms: float
+    slo_met: bool
+
+
+class MLGatewayLatencyBenchmark:
+    &#x27;&#x27;&#x27;
+    Measures the gateway P99 with and without the ML detectors to isolate
+    the ML latency contribution and validate the SLO.
+    &#x27;&#x27;&#x27;
+
+    def __init__(self, budget_ms: float = 50.0) -&gt; None:
+        self.budget_ms = budget_ms
+
+    async def _measure(
+        self,
+        process_fn: Callable,
+        n_requests: int,
+        concurrency: int,
+    ) -&gt; List[float]:
+        latencies: List[float] = []
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def one():
+            async with semaphore:
+                t0 = time.perf_counter()
+                await process_fn()
+                latencies.append((time.perf_counter() - t0) * 1000)
+
+        await asyncio.gather(*[one() for _ in range(n_requests)])
+        return latencies
+
+    async def compare(
+        self,
+        signature_only_fn: Callable,
+        with_ml_fn: Callable,
+        n_requests: int = 500,
+        concurrency: int = 20,
+    ) -&gt; GatewayLatencyComparison:
+        sig_latencies = await self._measure(signature_only_fn, n_requests, concurrency)
+        ml_latencies = await self._measure(with_ml_fn, n_requests, concurrency)
+
+        sig_p99 = float(np.percentile(sig_latencies, 99))
+        ml_p99 = float(np.percentile(ml_latencies, 99))
+
+        return GatewayLatencyComparison(
+            signature_only_p99=sig_p99,
+            with_ml_p99=ml_p99,
+            ml_contribution_p99=ml_p99 - sig_p99,
+            budget_ms=self.budget_ms,
+            slo_met=ml_p99 &lt;= self.budget_ms,
+        )
+
+
+def print_comparison(comp: GatewayLatencyComparison) -&gt; None:
+    print(f&#x27;ML Gateway Latency Benchmark (SLO: {comp.budget_ms:.0f}ms P99)&#x27;)
+    print(&#x27;=&#x27; * 55)
+    print(f&#x27;  Signature-only P99:  {comp.signature_only_p99:.1f}ms&#x27;)
+    print(f&#x27;  With ML P99:         {comp.with_ml_p99:.1f}ms&#x27;)
+    print(f&#x27;  ML contribution:     {comp.ml_contribution_p99:.1f}ms&#x27;)
+    print(f&#x27;  SLO met:             {comp.slo_met}&#x27;)
+    if not comp.slo_met:
+        print(&#x27;  WARN: ML layer pushes P99 over budget; enable graceful degradation.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    benchmark = MLGatewayLatencyBenchmark(budget_ms=50.0)
+
+    async def signature_only():
+        await asyncio.sleep(0.003)   # ~3ms signature + feature
+
+    async def with_ml():
+        await asyncio.sleep(0.003)    # signature + feature
+        await asyncio.sleep(0.012)    # parallel ML detectors (max ~12ms)
+
+    comparison = asyncio.run(benchmark.compare(signature_only, with_ml, n_requests=200))
+    print_comparison(comparison)</code></pre>
+<h3 class="sh2">Deliverable 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">AML.T0040 Sigma Rule Generator</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">aml_t0040_sigma_rule_generator.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Completed Sigma rule for ATLAS AML.T0040 ML classifier evasion detection. Detects adversaries probing the ML classifier decision boundaries through a pattern of semantically similar requests concentrated near the boundary, combining embedding similarity and calibrated scores.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: PyYAML. Produces a valid Sigma rule YAML for the detection telemetry pipeline.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># aml_t0040_sigma_rule_generator.py
+# Section 12.17: ATLAS AML.T0040 Sigma Rule Generator
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Deque, Dict, List, Optional
+
+import numpy as np
+
+try:
+    import yaml
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
+
+
+def generate_aml_t0040_sigma_rule(
+    similarity_threshold: float = 0.85,
+    uncertainty_low: float = 0.4,
+    uncertainty_high: float = 0.6,
+    min_requests: int = 5,
+    window_minutes: int = 10,
+) -&gt; Dict:
+    &#x27;&#x27;&#x27;
+    Generate the Sigma rule for AML.T0040: ML classifier evasion through
+    boundary probing.
+
+    Detection signal: a source sends multiple semantically similar requests
+    concentrated near the decision boundary -- the signature of an adversary
+    probing for the classifier boundary.
+    &#x27;&#x27;&#x27;
+    rule = {
+        &#x27;title&#x27;: &#x27;ML Classifier Evasion via Boundary Probing (ATLAS AML.T0040)&#x27;,
+        &#x27;id&#x27;: &#x27;aml-t0040-boundary-probing&#x27;,
+        &#x27;status&#x27;: &#x27;stable&#x27;,
+        &#x27;description&#x27;: (
+            &#x27;Detects an adversary probing the ML classifier decision boundary by sending &#x27;
+            &#x27;a sequence of semantically similar requests concentrated near the boundary, &#x27;
+            &#x27;observing which are flagged to craft evasion payloads.&#x27;
+        ),
+        &#x27;references&#x27;: [
+            &#x27;https://atlas.mitre.org/techniques/AML.T0040&#x27;,
+        ],
+        &#x27;author&#x27;: &#x27;Raghav Dinesh&#x27;,
+        &#x27;date&#x27;: &#x27;2026/06/06&#x27;,
+        &#x27;tags&#x27;: [
+            &#x27;attack.ml_classifier_evasion&#x27;,
+            &#x27;atlas.aml_t0040&#x27;,
+            &#x27;detection.boundary_probing&#x27;,
+        ],
+        &#x27;logsource&#x27;: {
+            &#x27;product&#x27;: &#x27;ml_gateway&#x27;,
+            &#x27;service&#x27;: &#x27;detection_telemetry&#x27;,
+        },
+        &#x27;detection&#x27;: {
+            &#x27;boundary_concentration&#x27;: {
+                &#x27;calibrated_score|gte&#x27;: uncertainty_low,
+                &#x27;calibrated_score|lte&#x27;: uncertainty_high,
+            },
+            &#x27;semantic_similarity&#x27;: {
+                &#x27;intra_source_embedding_similarity|gte&#x27;: similarity_threshold,
+            },
+            &#x27;volume&#x27;: {
+                f&#x27;source_request_count_{window_minutes}m|gte&#x27;: min_requests,
+            },
+            &#x27;condition&#x27;: &#x27;boundary_concentration and semantic_similarity and volume&#x27;,
+        },
+        &#x27;fields&#x27;: [
+            &#x27;source_id&#x27;,
+            &#x27;calibrated_score&#x27;,
+            &#x27;intra_source_embedding_similarity&#x27;,
+            f&#x27;source_request_count_{window_minutes}m&#x27;,
+        ],
+        &#x27;falsepositives&#x27;: [
+            &#x27;Legitimate users iterating on a complex query with small refinements&#x27;,
+            &#x27;Automated clients with repetitive but benign request patterns&#x27;,
+        ],
+        &#x27;level&#x27;: &#x27;high&#x27;,
+    }
+    return rule
+
+
+class BoundaryProbingDetector:
+    &#x27;&#x27;&#x27;
+    Runtime detector that implements the AML.T0040 Sigma rule logic.
+    Tracks per-source request patterns and fires when the probing signature appears.
+    &#x27;&#x27;&#x27;
+
+    def __init__(
+        self,
+        similarity_threshold: float = 0.85,
+        uncertainty_low: float = 0.4,
+        uncertainty_high: float = 0.6,
+        min_requests: int = 5,
+        window_seconds: int = 600,
+    ) -&gt; None:
+        self.similarity_threshold = similarity_threshold
+        self.uncertainty_low = uncertainty_low
+        self.uncertainty_high = uncertainty_high
+        self.min_requests = min_requests
+        self.window_seconds = window_seconds
+        self._source_requests: Dict[str, Deque] = {}
+
+    def record_request(
+        self,
+        source_id: str,
+        timestamp: float,
+        embedding: np.ndarray,
+        calibrated_score: float,
+    ) -&gt; bool:
+        &#x27;&#x27;&#x27;Record a request; return True if the probing signature fires.&#x27;&#x27;&#x27;
+        if source_id not in self._source_requests:
+            self._source_requests[source_id] = deque(maxlen=100)
+        window = self._source_requests[source_id]
+        # Drop expired
+        cutoff = timestamp - self.window_seconds
+        while window and window[0][0] &lt; cutoff:
+            window.popleft()
+        window.append((timestamp, embedding, calibrated_score))
+
+        # Check the probing signature
+        near_boundary = [
+            (e, s) for _, e, s in window
+            if self.uncertainty_low &lt;= s &lt;= self.uncertainty_high
+        ]
+        if len(near_boundary) &lt; self.min_requests:
+            return False
+
+        # Semantic similarity among near-boundary requests
+        embs = [e for e, _ in near_boundary]
+        similarities = []
+        for i in range(len(embs)):
+            for j in range(i + 1, len(embs)):
+                na, nb = np.linalg.norm(embs[i]), np.linalg.norm(embs[j])
+                if na &gt; 0 and nb &gt; 0:
+                    similarities.append(np.dot(embs[i], embs[j]) / (na * nb))
+        mean_sim = float(np.mean(similarities)) if similarities else 0.0
+        return mean_sim &gt;= self.similarity_threshold
+
+
+if __name__ == &#x27;__main__&#x27;:
+    rule = generate_aml_t0040_sigma_rule()
+    print(&#x27;Generated AML.T0040 Sigma Rule:&#x27;)
+    if YAML_AVAILABLE:
+        print(yaml.dump(rule, default_flow_style=False, sort_keys=False))
+    else:
+        print(f&#x27;  title: {rule[&quot;title&quot;]}&#x27;)
+        print(f&#x27;  condition: {rule[&quot;detection&quot;][&quot;condition&quot;]}&#x27;)
+
+    # Runtime detection demo
+    print(&#x27;\nRuntime boundary-probing detection:&#x27;)
+    detector = BoundaryProbingDetector(min_requests=5)
+    rng = np.random.default_rng(42)
+    base_emb = rng.normal(0, 1, 384)
+    base_emb /= np.linalg.norm(base_emb)
+
+    fired = False
+    for i in range(8):
+        # Probing: near-duplicate requests near the boundary
+        emb = base_emb + rng.normal(0, 0.05, 384)
+        emb /= np.linalg.norm(emb)
+        score = rng.uniform(0.45, 0.55)
+        fired = detector.record_request(&#x27;attacker_1&#x27;, float(i), emb, score)
+    print(f&#x27;  Boundary probing detected: {fired}&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Gateway Deployment Checklist</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_gateway_deployment_checklist.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Pre-production checklist enforcing calibration, shadow mode, canary, registry gates, latency, and monitoring before any new detector handles production traffic. Implements the checklist as a hard gate with no expedient bypass.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. No external dependencies beyond stdlib. Integrates the validations from Sections 12.10, 12.12, and 12.13.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># ml_gateway_deployment_checklist.py
+# Section 12.17: ML Gateway Production Deployment Checklist
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Callable, Dict, List, Optional
+
+
+class CheckStatus(Enum):
+    PASS = &#x27;pass&#x27;
+    FAIL = &#x27;fail&#x27;
+    SKIP = &#x27;skip&#x27;
+
+
+@dataclass
+class ChecklistItem:
+    name: str
+    source_section: str
+    status: CheckStatus
+    detail: str
+
+
+@dataclass
+class DeploymentVerdict:
+    items: List[ChecklistItem]
+    all_passed: bool
+    can_deploy: bool
+
+    def failures(self) -&gt; List[str]:
+        return [f&#x27;{i.name}: {i.detail}&#x27; for i in self.items if i.status == CheckStatus.FAIL]
+
+
+class MLGatewayDeploymentChecklist:
+    &#x27;&#x27;&#x27;
+    Pre-production deployment checklist. Every item must pass before a
+    detector handles production traffic. No expedient bypass: the bypass
+    is where a skipped check becomes a production incident.
+    &#x27;&#x27;&#x27;
+
+    def __init__(
+        self,
+        ece_threshold: float = 0.05,
+        latency_budget_ms: float = 10.0,
+    ) -&gt; None:
+        self.ece_threshold = ece_threshold
+        self.latency_budget_ms = latency_budget_ms
+
+    def run(
+        self,
+        detector_name: str,
+        ece: Optional[float],
+        shadow_validated: bool,
+        canary_promoted: bool,
+        registry_gates_passed: bool,
+        p99_latency_ms: Optional[float],
+        monitoring_configured: bool,
+    ) -&gt; DeploymentVerdict:
+        items = []
+
+        # Calibration
+        if ece is None:
+            items.append(ChecklistItem(&#x27;calibration_verified&#x27;, &#x27;12.10&#x27;, CheckStatus.FAIL,
+                                       &#x27;ECE not measured&#x27;))
+        elif ece &lt;= self.ece_threshold:
+            items.append(ChecklistItem(&#x27;calibration_verified&#x27;, &#x27;12.10&#x27;, CheckStatus.PASS,
+                                       f&#x27;ECE {ece:.4f} &lt;= {self.ece_threshold}&#x27;))
+        else:
+            items.append(ChecklistItem(&#x27;calibration_verified&#x27;, &#x27;12.10&#x27;, CheckStatus.FAIL,
+                                       f&#x27;ECE {ece:.4f} &gt; {self.ece_threshold}&#x27;))
+
+        # Shadow mode
+        items.append(ChecklistItem(
+            &#x27;shadow_mode_validated&#x27;, &#x27;12.13&#x27;,
+            CheckStatus.PASS if shadow_validated else CheckStatus.FAIL,
+            &#x27;validated on production traffic&#x27; if shadow_validated else &#x27;shadow period not run&#x27;,
+        ))
+
+        # Canary
+        items.append(ChecklistItem(
+            &#x27;canary_promoted&#x27;, &#x27;12.13&#x27;,
+            CheckStatus.PASS if canary_promoted else CheckStatus.FAIL,
+            &#x27;canary served traffic with rollback monitoring&#x27; if canary_promoted else &#x27;canary not run&#x27;,
+        ))
+
+        # Registry gates
+        items.append(ChecklistItem(
+            &#x27;registry_gates_passed&#x27;, &#x27;12.13&#x27;,
+            CheckStatus.PASS if registry_gates_passed else CheckStatus.FAIL,
+            &#x27;accuracy/latency/calibration/model-card gates passed&#x27; if registry_gates_passed
+            else &#x27;registry gates not passed&#x27;,
+        ))
+
+        # Latency
+        if p99_latency_ms is None:
+            items.append(ChecklistItem(&#x27;latency_validated&#x27;, &#x27;12.12&#x27;, CheckStatus.FAIL,
+                                       &#x27;P99 not measured&#x27;))
+        elif p99_latency_ms &lt;= self.latency_budget_ms:
+            items.append(ChecklistItem(&#x27;latency_validated&#x27;, &#x27;12.12&#x27;, CheckStatus.PASS,
+                                       f&#x27;P99 {p99_latency_ms:.1f}ms &lt;= {self.latency_budget_ms}ms&#x27;))
+        else:
+            items.append(ChecklistItem(&#x27;latency_validated&#x27;, &#x27;12.12&#x27;, CheckStatus.FAIL,
+                                       f&#x27;P99 {p99_latency_ms:.1f}ms &gt; {self.latency_budget_ms}ms&#x27;))
+
+        # Monitoring
+        items.append(ChecklistItem(
+            &#x27;monitoring_configured&#x27;, &#x27;12.17&#x27;,
+            CheckStatus.PASS if monitoring_configured else CheckStatus.FAIL,
+            &#x27;metrics exposed and dashboard ready&#x27; if monitoring_configured else &#x27;monitoring not configured&#x27;,
+        ))
+
+        all_passed = all(i.status == CheckStatus.PASS for i in items)
+        return DeploymentVerdict(items=items, all_passed=all_passed, can_deploy=all_passed)
+
+
+def print_verdict(detector_name: str, verdict: DeploymentVerdict) -&gt; None:
+    print(f&#x27;Deployment Checklist: {detector_name}&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for i in verdict.items:
+        symbol = {&#x27;pass&#x27;: &#x27;PASS&#x27;, &#x27;fail&#x27;: &#x27;FAIL&#x27;, &#x27;skip&#x27;: &#x27;SKIP&#x27;}[i.status.value]
+        print(f&#x27;  [{symbol}] {i.name} ({i.source_section}): {i.detail}&#x27;)
+    print(&#x27;-&#x27; * 60)
+    print(f&#x27;  Deployment: {&quot;PERMITTED&quot; if verdict.can_deploy else &quot;BLOCKED&quot;}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    checklist = MLGatewayDeploymentChecklist()
+
+    # Passing deployment
+    verdict = checklist.run(
+        &#x27;distilbert_injection_v2&#x27;,
+        ece=0.03, shadow_validated=True, canary_promoted=True,
+        registry_gates_passed=True, p99_latency_ms=7.2, monitoring_configured=True,
+    )
+    print_verdict(&#x27;distilbert_injection_v2&#x27;, verdict)
+
+    # Failing deployment: shadow and monitoring skipped
+    print()
+    verdict2 = checklist.run(
+        &#x27;gru_jailbreak_v3&#x27;,
+        ece=0.04, shadow_validated=False, canary_promoted=True,
+        registry_gates_passed=True, p99_latency_ms=12.5, monitoring_configured=False,
+    )
+    print_verdict(&#x27;gru_jailbreak_v3&#x27;, verdict2)</code></pre>
+<h3 class="sh2">Deliverable 7</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Gateway Monitoring Dashboard</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_gateway_monitoring_dashboard.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Prometheus metrics and Grafana dashboard configuration for the ML-enabled gateway. Defines the detection, latency, quality, and operational metrics and produces the Grafana panel configuration that makes the ML layer observable.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention. Requires: prometheus_client (optional). Produces metric definitions and a Grafana dashboard JSON.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># ml_gateway_monitoring_dashboard.py
+# Section 12.17: ML Gateway Monitoring Dashboard
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+
+@dataclass
+class MetricDefinition:
+    name: str
+    metric_type: str    # counter, gauge, histogram
+    help_text: str
+    labels: List[str] = field(default_factory=list)
+    alert_threshold: Optional[str] = None
+
+
+# The metrics the ML gateway exposes for observability
+GATEWAY_METRICS: List[MetricDefinition] = [
+    # Detection metrics
+    MetricDefinition(&#x27;ml_gateway_flag_total&#x27;, &#x27;counter&#x27;,
+                     &#x27;Total requests flagged by detector and tier&#x27;,
+                     [&#x27;detector&#x27;, &#x27;tier&#x27;]),
+    MetricDefinition(&#x27;ml_gateway_family_detection_rate&#x27;, &#x27;gauge&#x27;,
+                     &#x27;Per-attack-family detection rate&#x27;,
+                     [&#x27;attack_family&#x27;],
+                     alert_threshold=&#x27;family rate drop &gt; 10%&#x27;),
+    # Latency metrics
+    MetricDefinition(&#x27;ml_gateway_detector_latency_ms&#x27;, &#x27;histogram&#x27;,
+                     &#x27;Per-detector inference latency&#x27;,
+                     [&#x27;detector&#x27;],
+                     alert_threshold=&#x27;P99 &gt; budget slice&#x27;),
+    MetricDefinition(&#x27;ml_gateway_total_latency_ms&#x27;, &#x27;histogram&#x27;,
+                     &#x27;End-to-end gateway latency&#x27;,
+                     [],
+                     alert_threshold=&#x27;P99 &gt; 50ms&#x27;),
+    # Quality metrics
+    MetricDefinition(&#x27;ml_gateway_calibration_ece&#x27;, &#x27;gauge&#x27;,
+                     &#x27;Per-detector calibration ECE&#x27;,
+                     [&#x27;detector&#x27;],
+                     alert_threshold=&#x27;ECE &gt; 0.05&#x27;),
+    MetricDefinition(&#x27;ml_gateway_threshold_drift&#x27;, &#x27;gauge&#x27;,
+                     &#x27;Threshold drift signal (realised vs target FPR)&#x27;,
+                     [&#x27;detector&#x27;],
+                     alert_threshold=&#x27;drift firing&#x27;),
+    MetricDefinition(&#x27;ml_gateway_online_offline_divergence&#x27;, &#x27;gauge&#x27;,
+                     &#x27;Online-offline metric divergence&#x27;,
+                     [&#x27;metric&#x27;],
+                     alert_threshold=&#x27;divergence widening&#x27;),
+    # Operational metrics
+    MetricDefinition(&#x27;ml_gateway_cache_hit_rate&#x27;, &#x27;gauge&#x27;,
+                     &#x27;Feature cache hit rate&#x27;,
+                     [&#x27;cache&#x27;],
+                     alert_threshold=&#x27;hit rate &lt; 0.5&#x27;),
+    MetricDefinition(&#x27;ml_gateway_degradation_tier&#x27;, &#x27;gauge&#x27;,
+                     &#x27;Current graceful degradation tier (0 = normal)&#x27;,
+                     [],
+                     alert_threshold=&#x27;tier &gt; 0 sustained&#x27;),
+    MetricDefinition(&#x27;ml_gateway_annotation_throughput&#x27;, &#x27;gauge&#x27;,
+                     &#x27;Curation annotation throughput per day&#x27;,
+                     [],
+                     alert_threshold=&#x27;throughput dropping&#x27;),
+]
+
+
+class MLGatewayMonitoringDashboard:
+    &#x27;&#x27;&#x27;
+    Defines the Prometheus metrics and generates the Grafana dashboard
+    configuration for the ML-enabled gateway.
+    &#x27;&#x27;&#x27;
+
+    def __init__(self, metrics: List[MetricDefinition] = None) -&gt; None:
+        self.metrics = metrics or GATEWAY_METRICS
+
+    def prometheus_definitions(self) -&gt; List[str]:
+        &#x27;&#x27;&#x27;Return the Prometheus metric declarations.&#x27;&#x27;&#x27;
+        lines = []
+        for m in self.metrics:
+            labels = &#x27;, &#x27;.join(f&quot;&#x27;{l}&#x27;&quot; for l in m.labels)
+            lines.append(f&quot;# {m.metric_type.upper()}: {m.name} -- {m.help_text}&quot;)
+            lines.append(f&quot;{m.name}{{labels=[{labels}]}}&quot;)
+        return lines
+
+    def grafana_dashboard(self) -&gt; Dict:
+        &#x27;&#x27;&#x27;Generate a Grafana dashboard configuration.&#x27;&#x27;&#x27;
+        panels = []
+        categories = {
+            &#x27;Detection&#x27;: [m for m in self.metrics if &#x27;flag&#x27; in m.name or &#x27;family&#x27; in m.name],
+            &#x27;Latency&#x27;: [m for m in self.metrics if &#x27;latency&#x27; in m.name],
+            &#x27;Quality&#x27;: [m for m in self.metrics if any(k in m.name for k in (&#x27;ece&#x27;, &#x27;drift&#x27;, &#x27;divergence&#x27;))],
+            &#x27;Operational&#x27;: [m for m in self.metrics if any(k in m.name for k in (&#x27;cache&#x27;, &#x27;degradation&#x27;, &#x27;annotation&#x27;))],
+        }
+        panel_id = 1
+        y_pos = 0
+        for category, metrics in categories.items():
+            for m in metrics:
+                panels.append({
+                    &#x27;id&#x27;: panel_id,
+                    &#x27;title&#x27;: f&#x27;{category}: {m.name}&#x27;,
+                    &#x27;type&#x27;: &#x27;timeseries&#x27; if m.metric_type == &#x27;histogram&#x27; else &#x27;stat&#x27;,
+                    &#x27;gridPos&#x27;: {&#x27;h&#x27;: 8, &#x27;w&#x27;: 12, &#x27;x&#x27;: (panel_id % 2) * 12, &#x27;y&#x27;: y_pos},
+                    &#x27;targets&#x27;: [{&#x27;expr&#x27;: m.name, &#x27;legendFormat&#x27;: &#x27;{{&#x27; + (m.labels[0] if m.labels else &#x27;&#x27;) + &#x27;}}&#x27;}],
+                    &#x27;alert_threshold&#x27;: m.alert_threshold,
+                })
+                panel_id += 1
+                if panel_id % 2 == 1:
+                    y_pos += 8
+        return {
+            &#x27;dashboard&#x27;: {
+                &#x27;title&#x27;: &#x27;ML Detection Gateway&#x27;,
+                &#x27;tags&#x27;: [&#x27;ml-detection&#x27;, &#x27;gateway&#x27;, &#x27;security&#x27;],
+                &#x27;panels&#x27;: panels,
+                &#x27;refresh&#x27;: &#x27;30s&#x27;,
+            }
+        }
+
+    def alerting_rules(self) -&gt; List[Dict]:
+        &#x27;&#x27;&#x27;Return the alerting rules for the metrics with thresholds.&#x27;&#x27;&#x27;
+        return [
+            {&#x27;metric&#x27;: m.name, &#x27;condition&#x27;: m.alert_threshold}
+            for m in self.metrics if m.alert_threshold
+        ]
+
+
+if __name__ == &#x27;__main__&#x27;:
+    dashboard = MLGatewayMonitoringDashboard()
+
+    print(&#x27;Prometheus metric definitions:&#x27;)
+    for line in dashboard.prometheus_definitions()[:8]:
+        print(f&#x27;  {line}&#x27;)
+
+    print(f&#x27;\nGrafana dashboard: {len(dashboard.grafana_dashboard()[&quot;dashboard&quot;][&quot;panels&quot;])} panels&#x27;)
+
+    print(&#x27;\nAlerting rules:&#x27;)
+    for rule in dashboard.alerting_rules():
+        print(f&#x27;  {rule[&quot;metric&quot;]}: {rule[&quot;condition&quot;]}&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Replacing the signature layer with the ML detectors instead of running them together, losing the fast precise baseline detection</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The ML detectors are more sophisticated than the signature rules and cover more attack variants, so
+the engineer treats them as a replacement for the signatures. The signature layer is removed to
+simplify the gateway, leaving only the ML detection.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The signature layer provided fast, precise, interpretable detection of known attacks at near-zero
+latency, and a baseline that never goes blind. Removing it loses this floor: when the ML detectors
+are degraded under load (graceful degradation), there is nothing left, and the gateway goes fully
+blind. The known attacks that the signatures caught with certainty now depend on the ML detectors,
+which are slower and less certain on them.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Run the ML detectors alongside the signature layer, not instead of it. The signatures provide the
+fast baseline and the floor for graceful degradation; the ML detectors provide the coverage of novel
+variants. The two layers are complementary -- defence-in-depth -- and the gateway is more robust with
+both than with either alone.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Running all four ML detectors on every track instead of assigning detectors to the tracks they cover, wasting latency budget</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Running every detector on every track is simpler than the per-track assignment. The engineer wires
+all four detectors into every track for completeness, reasoning that more detection is better.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The injection track runs the GRU even though multi-turn escalation is not an injection-track concern,
+and the extraction track runs the DistilBERT even though anomalous API usage is the Isolation Forest&#x27;s
+domain. The unnecessary detectors consume latency budget on every track without adding coverage,
+pushing the per-track latency up and the total over budget.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Assign each detector to the tracks its coverage profile fits, per the track_ml_assignment.py. The
+embedding detector and XGBoost on the injection track, the GRU and DistilBERT on the jailbreak tracks,
+the Isolation Forest on the extraction track. Each track runs only the detectors that add coverage,
+controlling the per-track latency.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Breaching the SLO under load instead of degrading gracefully, getting the entire detection layer disabled</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The gateway runs all detectors regardless of load. Under high load, the latency rises and breaches
+the SLO. There is no degradation policy because the gateway was designed for the normal-load latency,
+and the engineer did not anticipate the load-induced latency spike.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The SLO breach triggers the operational response of disabling the detection layer to recover the
+latency, leaving zero detection during exactly the high-load period when attacks are most likely. The
+gateway that ran all detectors under load ends up running none, which is worse than a gateway that
+shed its slowest detectors and kept the rest.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Implement graceful degradation with the gateway_graceful_degradation.py. Under latency pressure, shed
+the highest-latency detectors first and fall back toward signature-only, keeping the gateway within the
+SLO. Degraded detection within the SLO beats full detection that breaches the SLO and gets the whole
+layer disabled.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Deploying a new detector without the deployment checklist, bypassing the shadow, canary, or monitoring validations</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The new detector passed the offline benchmark and the registry gates. Under deadline pressure, the
+engineer deploys it directly, skipping the shadow period or the monitoring configuration because they
+add time and the detector &quot;obviously works.&quot;</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The detector that skipped the shadow validation regresses on the production distribution, or the
+detector that skipped the monitoring configuration degrades silently because no dashboard surfaces its
+metrics. The skipped checklist item is exactly where the production incident originates -- the
+validation that would have caught the problem was bypassed.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Enforce the deployment checklist with the ml_gateway_deployment_checklist.py as a hard gate. Every item
+-- calibration, shadow, canary, registry gates, latency, monitoring -- must pass before the detector
+handles production traffic, with no expedient bypass. The checklist is the integration point where the
+chapter&#x27;s validations are enforced together before production.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Ignoring the meta-attack, leaving the ML classifiers undefended against boundary probing that produces evasion payloads</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The ML detectors defend against attacks on the LLM, and the engineer considers the detection complete.
+The possibility that the detectors themselves are a target -- that an adversary probes their decision
+boundaries to craft evasions -- is not considered, so no detection for the probing is built.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A sophisticated adversary sends a stream of near-duplicate requests hovering at the decision boundary,
+learning which payloads are flagged. The individual requests are near-benign and pass individually. The
+adversary uses the learned boundary to craft an evasion payload that defeats the ML classifiers, and the
+primary detection is bypassed by an attack the gateway never detected because it was an attack on the
+detector, not on the model.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Deploy the AML.T0040 Sigma rule with the aml_t0040_sigma_rule_generator.py. It detects the boundary-probing
+pattern -- a cluster of semantically similar requests concentrated near the decision boundary from the same
+source -- and flags the source for a stronger response (rate-limiting, escalation, blocking). Detecting the
+meta-attack protects the detection system itself, which is essential because a successful probing campaign
+defeats the primary detection.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">The production ML gateway is the Chapter 12 capstone, integrating every component built across the chapter
+into a single deployable detection system. The four input-side detectors are distributed across the seven
+gateway tracks by coverage profile -- embedding and XGBoost on injection, GRU and DistilBERT on jailbreak,
+Isolation Forest on extraction -- and combined by the ensemble; the PII scanner runs as an output-side stage outside the seven tracks.
+The ML layer extends the Chapter 11 signature layer rather than replacing it, providing defence-in-depth:
+the signatures catch known attacks fast and precisely, the ML detectors catch the novel variants the
+signatures miss, and the two fail independently so the gateway never goes fully blind. The feature pipeline
+and inference optimisation keep the integrated gateway within the 50ms P99 budget, validated with-and-without
+the ML detectors. Graceful degradation sheds the highest-latency detectors first under load, falling back
+toward signature-only rather than breaching the SLO, because degraded detection within the SLO beats full
+detection that gets the gateway disabled. The deployment checklist enforces the registry gate conditions,
+shadow, canary, latency, and monitoring as a hard gate before any detector handles traffic. The AML.T0040
+Sigma rule detects the meta-attack -- adversaries probing the classifier decision boundaries to craft
+evasions. The monitoring dashboard exposes the detection, latency, quality, and operational metrics that make
+the ML layer observable. The result is a complete detection system that slots into the Chapter 11 gateway and
+bridges to the Chapter 13 behavioural analysis.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>The ML layer extends the signature layer, it does not replace it: the signatures provide the fast precise floor and the baseline that never goes blind, the ML detectors cover the novel variants, and the two fail independently for defence-in-depth</li><li>Assign each detector to the tracks its coverage profile fits, not every detector to every track: embedding and XGBoost on injection, GRU and DistilBERT on jailbreak, Isolation Forest on extraction, controlling per-track latency</li><li>Prefer graceful degradation to SLO breach: shed the highest-latency detectors first and fall back toward signature-only under load, because degraded detection within the SLO beats full detection that gets the gateway disabled</li><li>Enforce the deployment checklist as a hard gate: calibration, shadow, canary, registry gates, latency, and monitoring must all pass before a detector handles traffic, with no expedient bypass where a skipped check becomes an incident</li><li>Detect the meta-attack with the AML.T0040 Sigma rule: adversaries probing the classifier decision boundaries through near-duplicate requests near the boundary are attacking the detection system itself, and a successful probing campaign defeats the primary detection</li><li>Make the ML layer observable: the monitoring dashboard exposes the detection, latency, quality, and operational metrics, because an unmonitored detection layer degrades silently until it causes a visible incident</li></ul>
+<h2 class="sh1">Preview Section 12 18</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 12.18: Chapter Summary -- The ML Detection System and the Path to Chapter 13</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 12.18 closes Chapter 12 by drawing together the eighteen sections into the complete picture of
+ML-based detection. It revisits the five detector families and the four-detector ensemble, the operational
+infrastructure that makes them deployable, and the central thesis that ML detection complements rather than
+replaces signature detection. The summary consolidates the chapter deliverables -- the production ML gateway
+and its components -- into the detection system that the rest of the book builds on, and it sets up the
+transition to Chapter 13, where the per-request detection decisions made by this gateway are wrapped in the
+longer-horizon behavioural analysis that detects the patterns no single request reveals.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 11 Section 11.13: seven-track gateway -- the architecture this section extends with ML detectors</li><li>Chapter 11 Section 11.04: Sigma rules -- the signature layer the ML detectors complement</li><li>Chapter 10 Sections 10.11-10.13: adversarial example detection -- the Track 7 adversarial detectors</li><li>Section 12.09: PII scanner -- the output-side stage outside the seven tracks</li><li>Section 12.12: inference optimisation -- the async parallel scoring and 50ms budget</li><li>Section 12.13: model registry -- the gate conditions the deployment checklist enforces</li><li>Section 12.15: four-detector ensemble -- the input-side detection decision the gateway acts on</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 12.18: chapter summary -- the gateway is the chapter production deliverable</li><li>Chapter 13: behavioural analysis -- the gateway per-request decisions are wrapped in behavioural context</li><li>Chapter 17: monitoring and tuning -- the monitoring dashboard connects to the broader monitoring system</li><li>Chapter 13: response and remediation -- the gateway decision feeds the response actions</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>production-ml-gateway</li><li>seven-track-architecture</li><li>defence-in-depth</li><li>graceful-degradation</li><li>load-shedding</li><li>deployment-checklist</li><li>atlas-aml-t0040</li><li>boundary-probing</li><li>meta-attack-detection</li><li>monitoring-dashboard</li><li>prometheus</li><li>grafana</li><li>signature-ml-complementarity</li><li>capstone</li><li>track-assignment</li></ul>
+</article>

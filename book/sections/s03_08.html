@@ -1,0 +1,1146 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 8 · ~7 pages</div>
+<h1>Multi-Head Attention: Parallel Attention Pathways</h1>
+<div class="tags"><span class="tag">multi-head-attention</span><span class="tag">attention-heads</span><span class="tag">parallel-attention</span><span class="tag">head-specialization</span><span class="tag">attention-ensemble</span><span class="tag">transformer-architecture</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Multi-Head Attention: Parallel Attention Pathways</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.8</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Multi-head attention (Vaswani et al., 2017) is the key innovation that makes 
+transformers powerful. Instead of a single attention mechanism, multi-head attention 
+runs multiple scaled dot-product attention operations in parallel, each with its own 
+learned projections. Different heads can learn to focus on different aspects: syntax, 
+semantics, long-range dependencies, local patterns.
+
+The architecture projects Q, K, V into h separate subspaces (h heads), computes 
+attention independently in each head, then concatenates and projects the results. 
+With typical h=8 or h=16 heads, the model gains ensemble benefits while maintaining 
+computational efficiency through parallelization.
+
+For security engineers: Different attention heads specialize in different patterns - 
+some may focus on sensitive attributes (names, credentials, locations). Understanding 
+head specialization reveals privacy risks and enables targeted attacks. Analyzing 
+individual head behaviors is critical for auditing transformer security.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand why multiple attention heads improve model capacity</li><li>Grasp how head-specific projections create independent subspaces</li><li>Learn how heads specialize to capture different patterns</li><li>Understand concatenation and output projection</li><li>See multi-head attention as ensemble of attention mechanisms</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement multi-head attention from scratch (NumPy)</li><li>Create head-specific projection matrices (W_q, W_k, W_v per head)</li><li>Compute attention independently for each head in parallel</li><li>Concatenate head outputs and apply final projection</li><li>Visualize different head attention patterns</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Identify which heads focus on sensitive attributes</li><li>Understand head-specific attack vectors</li><li>Analyze head specialization for privacy risks</li><li>Detect adversarial manipulation of specific heads</li><li>Audit head behaviors for unexpected patterns</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.7: Scaled dot-product attention, masking</li><li>Section 3.6: Query-Key-Value formulation</li><li>Linear algebra: matrix multiplication, projection</li><li>Understanding of ensemble methods</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy advanced indexing and reshaping</li><li>Matrix operations and broadcasting</li><li>Parallel computation concepts</li><li>Visualization of attention patterns</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 7</h3>
+<p class="prose">Section 3.7 covered single scaled dot-product attention: compute one set of 
+attention weights for all queries. Now we run multiple attention operations 
+in parallel (multi-head), each learning different patterns.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.9 will address a critical limitation of attention: it&#x27;s permutation-
+invariant (doesn&#x27;t know word order). We&#x27;ll introduce positional encoding to 
+inject position information into transformers.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why Multiple Heads? Capacity and Specialization</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">A single attention head has limited capacity - one set of weights to capture all 
+relationships. Multi-head attention runs h attention operations in parallel, each 
+with its own parameters. Different heads learn to specialize: one for syntax, 
+another for semantics, another for long-range dependencies. This ensemble approach 
+dramatically increases model capacity.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Single Head Limitations</h3>
+<h4 class="sh3">Capacity Constraint</h4>
+<p class="prose">Single attention head learns one attention pattern:
+- One set of Q/K/V projections
+- One attention weight distribution per query
+- Must capture all relationships simultaneously
+
+Result: Limited expressiveness for complex dependencies</p>
+<h4 class="sh3">Example Conflict</h4>
+<h4 class="sh3">Syntactic Attention</h4>
+<p class="prose">&quot;The cat that I saw yesterday was sleeping&quot;
+
+Syntactic: &quot;cat&quot; should attend to &quot;was&quot; (subject-verb)</p>
+<h4 class="sh3">Semantic Attention</h4>
+<p class="prose">Same sentence:
+
+Semantic: &quot;cat&quot; should attend to &quot;sleeping&quot; (what cat was doing)</p>
+<h4 class="sh3">Conflict</h4>
+<p class="prose">Single head must balance:
+- Syntactic relationship (cat → was)
+- Semantic relationship (cat → sleeping)
+
+Can&#x27;t fully capture both simultaneously!</p>
+<h3 class="sh3">Multi Head Solution</h3>
+<h4 class="sh3">Key Idea</h4>
+<p class="prose">Run multiple attention mechanisms in parallel, each can specialize</p>
+<h4 class="sh3">With Multiple Heads</h4>
+<h4 class="sh3">Head 1</h4>
+<p class="prose">Focuses on syntax (cat → was)</p>
+<h4 class="sh3">Head 2</h4>
+<p class="prose">Focuses on semantics (cat → sleeping)</p>
+<h4 class="sh3">Head 3</h4>
+<p class="prose">Focuses on coreference (I → [implied person])</p>
+<h4 class="sh3">Head 4</h4>
+<p class="prose">Focuses on local context (cat → that)</p>
+<h4 class="sh3">Combined</h4>
+<p class="prose">All heads contribute to final representation</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Each head can specialize in one aspect
+→ Capture multiple relationships simultaneously
+→ Richer representations</p>
+<h3 class="sh3">Ensemble Perspective</h3>
+<h4 class="sh3">Analogy To Ensemble Learning</h4>
+<p class="prose">Machine learning ensembles: Train multiple models, combine predictions
+→ More robust, captures different aspects
+
+Multi-head attention: Train multiple attention mechanisms, combine outputs
+→ Same benefits: robustness, diverse patterns</p>
+<h4 class="sh3">Diversity Through Initialization</h4>
+<p class="prose">Each head has different random initialization
+→ Learns different patterns through training
+→ Specialization emerges naturally</p>
+<h4 class="sh3">Combination Strategy</h4>
+<p class="prose">Unlike voting/averaging in ensembles:
+Multi-head uses learned combination (output projection)
+→ Model learns how to weight different heads</p>
+<h3 class="sh3">Empirical Benefits</h3>
+<h4 class="sh3">Performance Gains</h4>
+<h4 class="sh3">Single Head</h4>
+<p class="prose">Baseline performance</p>
+<h4 class="sh3">Multi Head 8</h4>
+<p class="prose">+5-10% performance (typical)</p>
+<h4 class="sh3">Multi Head 16</h4>
+<p class="prose">+10-15% performance</p>
+<h4 class="sh3">Diminishing Returns</h4>
+<p class="prose">Beyond 16-32 heads, benefits plateau</p>
+<h4 class="sh3">Interpretability</h4>
+<p class="prose">Heads develop specialized roles:
+- Some focus on adjacent words
+- Some focus on distant dependencies
+- Some focus on specific linguistic patterns
+
+Easier to understand than single monolithic attention</p>
+<h4 class="sh3">Robustness</h4>
+<p class="prose">If one head learns noisy pattern:
+- Other heads can compensate
+- Output projection learns to downweight noisy head
+
+More robust than single attention mechanism</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Single Vs Multi Head Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+def demonstrate_head_specialization():
+    &quot;&quot;&quot;
+    Demonstrate why multiple heads are beneficial.
+    Simulate heads specializing on different patterns.
+    &quot;&quot;&quot;
+    
+    print(&quot;=== Single Head vs Multi-Head Attention ===\n&quot;)
+    
+    # Simulate a sentence
+    positions = [&quot;The&quot;, &quot;cat&quot;, &quot;that&quot;, &quot;I&quot;, &quot;saw&quot;, &quot;was&quot;, &quot;sleeping&quot;]
+    n = len(positions)
+    
+    print(&quot;Sentence:&quot;, &quot; &quot;.join(positions))
+    print()
+    
+    # Single head: Must balance multiple relationships
+    print(&quot;Single Head Attention:&quot;)
+    print(&quot;  &#x27;cat&#x27; attention weights:&quot;)
+    single_weights = {
+        &quot;The&quot;: 0.15,
+        &quot;cat&quot;: 0.25,  # Self
+        &quot;that&quot;: 0.10,
+        &quot;I&quot;: 0.05,
+        &quot;saw&quot;: 0.05,
+        &quot;was&quot;: 0.20,  # Syntactic (subject-verb)
+        &quot;sleeping&quot;: 0.20  # Semantic (action)
+    }
+    
+    for word, weight in single_weights.items():
+        bar = &quot;█&quot; * int(weight * 50)
+        print(f&quot;    {word:10s}: {bar} {weight:.2f}&quot;)
+    
+    print(&quot;\n  Problem: Must split attention between syntax and semantics!&quot;)
+    print(&quot;  &#x27;was&#x27; and &#x27;sleeping&#x27; compete for attention weight.&quot;)
+    
+    # Multi-head: Different heads specialize
+    print(&quot;\n\nMulti-Head Attention:&quot;)
+    
+    print(&quot;\n  Head 1 (Syntactic): &#x27;cat&#x27; → subject-verb&quot;)
+    head1_weights = {
+        &quot;The&quot;: 0.10,
+        &quot;cat&quot;: 0.15,
+        &quot;that&quot;: 0.05,
+        &quot;I&quot;: 0.05,
+        &quot;saw&quot;: 0.05,
+        &quot;was&quot;: 0.50,  # Strong focus on verb!
+        &quot;sleeping&quot;: 0.10
+    }
+    
+    for word, weight in head1_weights.items():
+        bar = &quot;█&quot; * int(weight * 50)
+        print(f&quot;    {word:10s}: {bar} {weight:.2f}&quot;)
+    
+    print(&quot;\n  Head 2 (Semantic): &#x27;cat&#x27; → action&quot;)
+    head2_weights = {
+        &quot;The&quot;: 0.10,
+        &quot;cat&quot;: 0.15,
+        &quot;that&quot;: 0.05,
+        &quot;I&quot;: 0.05,
+        &quot;saw&quot;: 0.10,
+        &quot;was&quot;: 0.05,
+        &quot;sleeping&quot;: 0.50  # Strong focus on action!
+    }
+    
+    for word, weight in head2_weights.items():
+        bar = &quot;█&quot; * int(weight * 50)
+        print(f&quot;    {word:10s}: {bar} {weight:.2f}&quot;)
+    
+    print(&quot;\n  Benefit: Each head focuses on one aspect!&quot;)
+    print(&quot;  Head 1 captures syntax, Head 2 captures semantics.&quot;)
+    print(&quot;  Combined output uses both signals.&quot;)
+
+demonstrate_head_specialization()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Head Specialization Privacy Risk</h3>
+<p class="prose">Heads specialize on different features:
+- Head 1 might focus on names (PII)
+- Head 2 might focus on numbers (credentials, SSN)
+- Head 3 might focus on locations (addresses)
+
+Adversary can:
+- Target specific heads for information extraction
+- Analyze head patterns to infer sensitive attributes
+- Manipulate inputs to trigger specific head behaviors</p>
+<h3 class="sh3">Ensemble Robustness Tradeoff</h3>
+<p class="prose">Ensemble improves robustness BUT:
+- Adversary only needs to compromise one head
+- If Head 5 learns to leak information, other heads can&#x27;t prevent it
+- Output projection might amplify malicious head&#x27;s signal
+- Defense requires auditing ALL heads, not just overall model</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Multi-Head Architecture: Projections and Parallelization</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Multi-head attention projects Q, K, V into h separate subspaces using head-specific 
+linear transformations. Each head computes attention in its subspace independently. 
+Outputs are concatenated and projected to final representation. The architecture is 
+designed for perfect parallelization - all heads computed simultaneously.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Mathematical Formulation</h3>
+<h4 class="sh3">Overview</h4>
+<p class="prose">MultiHead(Q, K, V) = Concat(head₁, ..., head_h) W^O
+
+Where head_i = Attention(QW_i^Q, KW_i^K, VW_i^V)</p>
+<h4 class="sh3">Head Specific Projections</h4>
+<h4 class="sh3">Query Projection</h4>
+<p class="prose">W_i^Q ∈ ℝ^(d_model × d_k)</p>
+<h4 class="sh3">Key Projection</h4>
+<p class="prose">W_i^K ∈ ℝ^(d_model × d_k)</p>
+<h4 class="sh3">Value Projection</h4>
+<p class="prose">W_i^V ∈ ℝ^(d_model × d_v)</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">Each head has its own W^Q, W^K, W^V matrices</p>
+<h4 class="sh3">Per Head Computation</h4>
+<h4 class="sh3">Input Q</h4>
+<p class="prose">Q ∈ ℝ^(n × d_model)</p>
+<h4 class="sh3">Projected Q</h4>
+<p class="prose">Q_i = QW_i^Q ∈ ℝ^(n × d_k)</p>
+<h4 class="sh3">Similarly</h4>
+<p class="prose">K_i = KW_i^K ∈ ℝ^(n × d_k)
+V_i = VW_i^V ∈ ℝ^(n × d_v)</p>
+<h4 class="sh3">Attention</h4>
+<p class="prose">head_i = Attention(Q_i, K_i, V_i) ∈ ℝ^(n × d_v)</p>
+<h4 class="sh3">Concatenation</h4>
+<h4 class="sh3">All Heads</h4>
+<p class="prose">[head₁, head₂, ..., head_h] each of shape (n × d_v)</p>
+<h4 class="sh3">Concatenated</h4>
+<p class="prose">Concat ∈ ℝ^(n × h×d_v)</p>
+<h4 class="sh3">Output Projection</h4>
+<h4 class="sh3">Weight Matrix</h4>
+<p class="prose">W^O ∈ ℝ^(h×d_v × d_model)</p>
+<h4 class="sh3">Final Output</h4>
+<p class="prose">Output = Concat × W^O ∈ ℝ^(n × d_model)</p>
+<h3 class="sh3">Dimensionality Choices</h3>
+<h4 class="sh3">Typical Configuration</h4>
+<h4 class="sh3">D Model</h4>
+<p class="prose">512 or 768 (model dimension)</p>
+<h4 class="sh3">Num Heads</h4>
+<p class="prose">8 or 16</p>
+<h4 class="sh3">D K Per Head</h4>
+<p class="prose">d_model / num_heads = 64</p>
+<h4 class="sh3">D V Per Head</h4>
+<p class="prose">d_model / num_heads = 64</p>
+<h4 class="sh3">Why D K Equals D Model Divided By H</h4>
+<h4 class="sh3">Reasoning</h4>
+<p class="prose">Total capacity should match single-head case:
+
+Single head: Q, K, V each (n × d_model)
+Multi-head: h heads, each Q, K, V of size (n × d_k)
+
+To preserve capacity: h × d_k = d_model
+Therefore: d_k = d_model / h</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">d_model = 512, h = 8
+→ d_k = 512 / 8 = 64 per head</p>
+<h4 class="sh3">Parameter Count</h4>
+<h4 class="sh3">Per Head</h4>
+<p class="prose">3 × (d_model × d_k) for W^Q, W^K, W^V</p>
+<h4 class="sh3">All Heads</h4>
+<p class="prose">h × 3 × (d_model × d_k) = 3 × d_model²</p>
+<h4 class="sh3">Output Projection</h4>
+<p class="prose">h × d_v × d_model = d_model²</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">4 × d_model² parameters (same as single head with d_k=d_model!)</p>
+<h3 class="sh3">Parallel Computation</h3>
+<h4 class="sh3">Sequential Would Be</h4>
+<h4 class="sh3">Process</h4>
+<p class="prose">For i = 1 to h:
+  Compute head_i
+Concatenate all heads
+Apply output projection</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Sequential - can&#x27;t exploit GPU parallelism</p>
+<h4 class="sh3">Parallel Implementation</h4>
+<h4 class="sh3">Reshape Trick</h4>
+<p class="prose">Instead of looping over heads, reshape:
+
+Q: (batch, n, d_model)
+W^Q for all heads: (d_model, h, d_k)
+
+Q @ W^Q → (batch, n, h, d_k)
+Reshape → (batch, h, n, d_k)
+
+Now: All heads in batch dimension → parallel computation!</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Single matrix multiplication for all heads simultaneously</p>
+<h4 class="sh3">Computational Efficiency</h4>
+<h4 class="sh3">Operations</h4>
+<p class="prose">Single head: O(n² × d_model)
+Multi-head (naively): h × O(n² × (d_model/h)) = O(n² × d_model)
+Multi-head (optimized): O(n² × d_model) with perfect parallelization</p>
+<h4 class="sh3">Conclusion</h4>
+<p class="prose">Same complexity, but h attention patterns instead of 1!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Multi Head Attention From Scratch</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class MultiHeadAttention:
+    &quot;&quot;&quot;
+    Multi-head attention implementation from scratch.
+    
+    MultiHead(Q, K, V) = Concat(head₁, ..., head_h) W^O
+    where head_i = Attention(QW_i^Q, KW_i^K, VW_i^V)
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, num_heads: int):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension (input/output size)
+            num_heads: Number of attention heads
+        &quot;&quot;&quot;
+        assert d_model % num_heads == 0, &quot;d_model must be divisible by num_heads&quot;
+        
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_k = d_model // num_heads  # Dimension per head
+        self.d_v = d_model // num_heads
+        
+        # Head-specific projection matrices
+        # Shape: (d_model, num_heads * d_k) to project all heads at once
+        self.W_q = np.random.randn(d_model, num_heads * self.d_k) * 0.01
+        self.W_k = np.random.randn(d_model, num_heads * self.d_k) * 0.01
+        self.W_v = np.random.randn(d_model, num_heads * self.d_v) * 0.01
+        
+        # Output projection
+        self.W_o = np.random.randn(num_heads * self.d_v, d_model) * 0.01
+    
+    def split_heads(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Split last dimension into (num_heads, d_k).
+        
+        Args:
+            x: (batch, seq_len, num_heads * d_k)
+        
+        Returns:
+            (batch, num_heads, seq_len, d_k)
+        &quot;&quot;&quot;
+        batch_size, seq_len, _ = x.shape
+        # Reshape to (batch, seq_len, num_heads, d_k)
+        x = x.reshape(batch_size, seq_len, self.num_heads, self.d_k)
+        # Transpose to (batch, num_heads, seq_len, d_k)
+        return x.transpose(0, 2, 1, 3)
+    
+    def scaled_dot_product_attention(self, Q: np.ndarray, K: np.ndarray, 
+                                    V: np.ndarray, mask: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;
+        Compute scaled dot-product attention.
+        
+        Args:
+            Q, K, V: (batch, num_heads, seq_len, d_k)
+            mask: Optional mask
+        
+        Returns:
+            output: (batch, num_heads, seq_len, d_v)
+            attention_weights: (batch, num_heads, seq_len, seq_len)
+        &quot;&quot;&quot;
+        d_k = Q.shape[-1]
+        
+        # Scores: (batch, num_heads, seq_len, seq_len)
+        scores = np.matmul(Q, K.transpose(0, 1, 3, 2)) / np.sqrt(d_k)
+        
+        # Apply mask if provided
+        if mask is not None:
+            scores = np.where(mask, scores, -1e9)
+        
+        # Softmax
+        attention_weights = self.softmax(scores, axis=-1)
+        
+        # Weighted sum of values
+        output = np.matmul(attention_weights, V)
+        
+        return output, attention_weights
+    
+    def softmax(self, x: np.ndarray, axis: int = -1) -&gt; np.ndarray:
+        &quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;
+        exp_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
+        return exp_x / np.sum(exp_x, axis=axis, keepdims=True)
+    
+    def forward(self, Q: np.ndarray, K: np.ndarray, V: np.ndarray,
+               mask: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;
+        Multi-head attention forward pass.
+        
+        Args:
+            Q, K, V: (batch, seq_len, d_model)
+            mask: Optional attention mask
+        
+        Returns:
+            output: (batch, seq_len, d_model)
+            attention_weights: (batch, num_heads, seq_len, seq_len)
+        &quot;&quot;&quot;
+        batch_size = Q.shape[0]
+        
+        # 1. Linear projections for all heads at once
+        # (batch, seq_len, d_model) @ (d_model, num_heads * d_k)
+        # = (batch, seq_len, num_heads * d_k)
+        Q_proj = np.matmul(Q, self.W_q)
+        K_proj = np.matmul(K, self.W_k)
+        V_proj = np.matmul(V, self.W_v)
+        
+        # 2. Split into multiple heads
+        # (batch, seq_len, num_heads * d_k) → (batch, num_heads, seq_len, d_k)
+        Q_heads = self.split_heads(Q_proj)
+        K_heads = self.split_heads(K_proj)
+        V_heads = self.split_heads(V_proj)
+        
+        # 3. Scaled dot-product attention for all heads in parallel
+        # (batch, num_heads, seq_len, d_v)
+        attention_output, attention_weights = self.scaled_dot_product_attention(
+            Q_heads, K_heads, V_heads, mask
+        )
+        
+        # 4. Concatenate heads
+        # (batch, num_heads, seq_len, d_v) → (batch, seq_len, num_heads, d_v)
+        attention_output = attention_output.transpose(0, 2, 1, 3)
+        # → (batch, seq_len, num_heads * d_v)
+        attention_output = attention_output.reshape(batch_size, -1, self.num_heads * self.d_v)
+        
+        # 5. Final linear projection
+        # (batch, seq_len, num_heads * d_v) @ (num_heads * d_v, d_model)
+        # = (batch, seq_len, d_model)
+        output = np.matmul(attention_output, self.W_o)
+        
+        return output, attention_weights
+    
+    def __call__(self, Q: np.ndarray, K: np.ndarray, V: np.ndarray,
+                mask: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(Q, K, V, mask)
+
+
+# Example usage
+batch_size = 2
+seq_len = 10
+d_model = 512
+num_heads = 8
+
+# Create multi-head attention layer
+mha = MultiHeadAttention(d_model, num_heads)
+
+# Random inputs
+Q = np.random.randn(batch_size, seq_len, d_model)
+K = np.random.randn(batch_size, seq_len, d_model)
+V = np.random.randn(batch_size, seq_len, d_model)
+
+# Forward pass
+output, attention_weights = mha(Q, K, V)
+
+print(f&quot;Multi-Head Attention:&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Number of heads: {num_heads}&quot;)
+print(f&quot;  Dimension per head: {mha.d_k}&quot;)
+print(f&quot;\nInput shapes:&quot;)
+print(f&quot;  Q, K, V: {Q.shape}&quot;)
+print(f&quot;\nOutput shapes:&quot;)
+print(f&quot;  Output: {output.shape}&quot;)
+print(f&quot;  Attention weights: {attention_weights.shape}&quot;)
+print(f&quot;    (batch, num_heads, seq_len, seq_len)&quot;)</code></pre>
+<h3 class="sh3">Visualize Head Patterns</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_multi_head_patterns():
+    &quot;&quot;&quot;Visualize attention patterns for different heads.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Multi-Head Attention Patterns ===\n&quot;)
+    
+    # Simulate attention weights for 4 heads on a 5-token sequence
+    seq = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;mat&quot;]
+    n = len(seq)
+    num_heads = 4
+    
+    # Simulate different head behaviors
+    heads_patterns = {
+        &quot;Head 0 (Local)&quot;: np.array([
+            [0.7, 0.2, 0.05, 0.03, 0.02],  # The: focuses on self+next
+            [0.3, 0.5, 0.15, 0.03, 0.02],  # cat: focuses on self+neighbors
+            [0.1, 0.2, 0.5, 0.15, 0.05],   # sat: local window
+            [0.05, 0.05, 0.2, 0.5, 0.2],   # on: local window
+            [0.02, 0.03, 0.1, 0.25, 0.6],  # mat: focuses on self+prev
+        ]),
+        
+        &quot;Head 1 (Global)&quot;: np.array([
+            [0.2, 0.2, 0.2, 0.2, 0.2],  # Uniform attention
+            [0.2, 0.2, 0.2, 0.2, 0.2],
+            [0.2, 0.2, 0.2, 0.2, 0.2],
+            [0.2, 0.2, 0.2, 0.2, 0.2],
+            [0.2, 0.2, 0.2, 0.2, 0.2],
+        ]),
+        
+        &quot;Head 2 (First-token)&quot;: np.array([
+            [0.9, 0.02, 0.02, 0.03, 0.03],  # All attend to first token
+            [0.8, 0.05, 0.05, 0.05, 0.05],
+            [0.7, 0.1, 0.07, 0.07, 0.06],
+            [0.75, 0.08, 0.07, 0.05, 0.05],
+            [0.85, 0.05, 0.03, 0.03, 0.04],
+        ]),
+        
+        &quot;Head 3 (Previous token)&quot;: np.array([
+            [1.0, 0.0, 0.0, 0.0, 0.0],     # First: only self
+            [0.8, 0.2, 0.0, 0.0, 0.0],     # Second: mostly previous
+            [0.1, 0.8, 0.1, 0.0, 0.0],     # Third: mostly previous
+            [0.05, 0.05, 0.8, 0.1, 0.0],   # Fourth: mostly previous
+            [0.02, 0.03, 0.1, 0.8, 0.05],  # Fifth: mostly previous
+        ])
+    }
+    
+    for head_name, weights in heads_patterns.items():
+        print(f&quot;{head_name}:&quot;)
+        print(&quot;  Attention weights (rows=queries, cols=keys):&quot;)
+        print(&quot;        &quot;, &quot;  &quot;.join(f&quot;{w:5s}&quot; for w in seq))
+        for i, query in enumerate(seq):
+            weight_str = &quot;  &quot;.join(f&quot;{w:5.2f}&quot; for w in weights[i])
+            print(f&quot;  {query:5s}: {weight_str}&quot;)
+        print()
+    
+    print(&quot;Observation: Different heads learn different patterns!&quot;)
+    print(&quot;  - Head 0: Local context (neighbors)&quot;)
+    print(&quot;  - Head 1: Global context (all positions)&quot;)
+    print(&quot;  - Head 2: Attend to first token (e.g., [CLS])&quot;)
+    print(&quot;  - Head 3: Attend to previous token (sequential)&quot;)
+
+visualize_multi_head_patterns()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Per Head Information Leakage</h3>
+<p class="prose">Each head can leak different types of information:
+- Head specializing on entities → leaks names, locations
+- Head specializing on numbers → leaks credentials, IDs
+- Head specializing on syntax → leaks sentence structure
+
+Adversary analyzes individual heads to find most vulnerable one</p>
+<h3 class="sh3">Targeted Head Attacks</h3>
+<p class="prose">Adversary can target specific heads:
+- Craft inputs to maximize attention in sensitive head
+- Extract information from that head&#x27;s outputs
+- Bypass defenses that only monitor aggregate attention
+- Defense: Monitor all heads individually, not just combined output</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Head Specialization: What Different Heads Learn</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Through training, different attention heads naturally specialize to capture different 
+linguistic phenomena. Empirical analysis of trained transformers reveals consistent 
+patterns: some heads focus on syntax (e.g., subject-verb), others on semantics, 
+others on positional patterns. Understanding specialization is critical for 
+interpretability and security.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Observed Specialization Patterns</h3>
+<h4 class="sh3">Syntactic Heads</h4>
+<h4 class="sh3">Patterns</h4>
+<ul class="blist"><li>Subject-verb agreement</li><li>Determiner-noun relationships</li><li>Modifier-head relationships</li></ul>
+<h4 class="sh3">Example</h4>
+<p class="prose">&quot;The quick brown fox&quot;
+Syntactic head: &#x27;quick&#x27; attends strongly to &#x27;fox&#x27; (adjective → noun)</p>
+<h4 class="sh3">Semantic Heads</h4>
+<h4 class="sh3">Patterns</h4>
+<ul class="blist"><li>Semantic similarity</li><li>Topical coherence</li><li>Argument structure</li></ul>
+<h4 class="sh3">Example</h4>
+<p class="prose">&quot;The chef prepared a delicious meal&quot;
+Semantic head: &#x27;meal&#x27; attends to &#x27;prepared&#x27; (object → action)</p>
+<h4 class="sh3">Positional Heads</h4>
+<h4 class="sh3">Patterns</h4>
+<ul class="blist"><li>Attend to first/last token</li><li>Attend to previous token</li><li>Fixed offset patterns</li></ul>
+<h4 class="sh3">Example</h4>
+<p class="prose">In BERT: Some heads always attend to [CLS] token
+→ Aggregating sentence-level information</p>
+<h4 class="sh3">Coreference Heads</h4>
+<h4 class="sh3">Patterns</h4>
+<ul class="blist"><li>Pronoun → antecedent</li><li>Referential relationships</li></ul>
+<h4 class="sh3">Example</h4>
+<p class="prose">&quot;John went to the store. He bought milk.&quot;
+Coreference head: &#x27;He&#x27; attends to &#x27;John&#x27;</p>
+<h3 class="sh3">Head Pruning Experiments</h3>
+<h4 class="sh3">Methodology</h4>
+<p class="prose">Remove individual heads and measure performance drop</p>
+<h4 class="sh3">Findings</h4>
+<h4 class="sh3">Critical Heads</h4>
+<p class="prose">Removing causes significant performance drop</p>
+<h4 class="sh3">Redundant Heads</h4>
+<p class="prose">Removing causes minimal impact</p>
+<h4 class="sh3">Typical Distribution</h4>
+<p class="prose">~30% heads are critical, ~40% redundant, ~30% moderate</p>
+<h4 class="sh3">Implication</h4>
+<p class="prose">Not all heads contribute equally
+→ Some heads more important than others
+→ Opportunities for model compression
+→ Security: Critical heads are high-value targets</p>
+<h3 class="sh3">Head Attention Distance</h3>
+<h4 class="sh3">Local Heads</h4>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Attend to nearby positions (distance &lt; 5)</p>
+<h4 class="sh3">Linguistic Role</h4>
+<p class="prose">Capture local syntax, phrases</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Adjective-noun, determiner-noun</p>
+<h4 class="sh3">Medium Range Heads</h4>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Attend to positions 5-20 away</p>
+<h4 class="sh3">Linguistic Role</h4>
+<p class="prose">Clause-level dependencies</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Subject-verb across clauses</p>
+<h4 class="sh3">Long Range Heads</h4>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Attend to distant positions (distance &gt; 20)</p>
+<h4 class="sh3">Linguistic Role</h4>
+<p class="prose">Discourse-level relationships</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Cross-sentence coreference</p>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Different heads operate at different scales
+→ Capture multi-scale linguistic structure</p>
+<h3 class="sh3">Layer Dependent Specialization</h3>
+<h4 class="sh3">Early Layers</h4>
+<h4 class="sh3">Focus</h4>
+<p class="prose">Local, syntactic patterns</p>
+<h4 class="sh3">Heads Learn</h4>
+<p class="prose">POS tagging, parsing</p>
+<h4 class="sh3">Attention Distance</h4>
+<p class="prose">Short (1-5 tokens)</p>
+<h4 class="sh3">Middle Layers</h4>
+<h4 class="sh3">Focus</h4>
+<p class="prose">Semantic relationships</p>
+<h4 class="sh3">Heads Learn</h4>
+<p class="prose">Entity relationships, semantic roles</p>
+<h4 class="sh3">Attention Distance</h4>
+<p class="prose">Medium (5-15 tokens)</p>
+<h4 class="sh3">Late Layers</h4>
+<h4 class="sh3">Focus</h4>
+<p class="prose">Task-specific abstractions</p>
+<h4 class="sh3">Heads Learn</h4>
+<p class="prose">High-level reasoning, task objectives</p>
+<h4 class="sh3">Attention Distance</h4>
+<p class="prose">Variable (task-dependent)</p>
+<h4 class="sh3">Hierarchical Processing</h4>
+<p class="prose">Lower layers: Surface features
+→ Middle layers: Semantic features
+→ Upper layers: Abstract reasoning
+
+Similar to CNN hierarchy: edges → shapes → objects</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Analyze Head Specialization</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def analyze_head_behaviors():
+    &quot;&quot;&quot;Analyze and categorize head specialization patterns.&quot;&quot;&quot;
+    
+    print(&quot;=== Head Specialization Analysis ===\n&quot;)
+    
+    # Simulate attention patterns for 8 heads
+    num_heads = 8
+    seq_len = 10
+    
+    # Compute average attention distance for each head
+    # (distance = how far away heads typically attend)
+    
+    head_patterns = {
+        0: {&quot;type&quot;: &quot;Local&quot;, &quot;avg_distance&quot;: 1.2, &quot;focus&quot;: &quot;Adjacent tokens&quot;},
+        1: {&quot;type&quot;: &quot;Local&quot;, &quot;avg_distance&quot;: 1.8, &quot;focus&quot;: &quot;Short phrases&quot;},
+        2: {&quot;type&quot;: &quot;Medium&quot;, &quot;avg_distance&quot;: 4.5, &quot;focus&quot;: &quot;Clause-level&quot;},
+        3: {&quot;type&quot;: &quot;Global&quot;, &quot;avg_distance&quot;: 7.2, &quot;focus&quot;: &quot;Sentence-level&quot;},
+        4: {&quot;type&quot;: &quot;First-token&quot;, &quot;avg_distance&quot;: 0.0, &quot;focus&quot;: &quot;[CLS] token&quot;},
+        5: {&quot;type&quot;: &quot;Previous&quot;, &quot;avg_distance&quot;: 1.0, &quot;focus&quot;: &quot;Sequential&quot;},
+        6: {&quot;type&quot;: &quot;Long-range&quot;, &quot;avg_distance&quot;: 8.5, &quot;focus&quot;: &quot;Discourse&quot;},
+        7: {&quot;type&quot;: &quot;Uniform&quot;, &quot;avg_distance&quot;: 5.0, &quot;focus&quot;: &quot;Global average&quot;},
+    }
+    
+    print(&quot;Head | Type        | Avg Distance | Focus&quot;)
+    print(&quot;-----|-------------|--------------|-------------------------&quot;)
+    for head_id, info in head_patterns.items():
+        print(f&quot;  {head_id}  | {info[&#x27;type&#x27;]:11s} | &quot;
+              f&quot;{info[&#x27;avg_distance&#x27;]:12.1f} | {info[&#x27;focus&#x27;]}&quot;)
+    
+    print(&quot;\nObservations:&quot;)
+    print(&quot;  - Heads 0-1: Local attention (syntax)&quot;)
+    print(&quot;  - Heads 2-3: Medium-range (semantics)&quot;)
+    print(&quot;  - Heads 4-5: Positional patterns&quot;)
+    print(&quot;  - Heads 6-7: Long-range / global&quot;)
+    
+    # Simulate head importance (performance drop if removed)
+    print(&quot;\n\nHead Importance (performance drop if pruned):&quot;)
+    head_importance = {
+        0: 0.08,  # 8% drop - moderately important
+        1: 0.03,  # 3% drop - less important
+        2: 0.15,  # 15% drop - critical!
+        3: 0.12,  # 12% drop - important
+        4: 0.20,  # 20% drop - critical!
+        5: 0.02,  # 2% drop - redundant
+        6: 0.10,  # 10% drop - important
+        7: 0.01,  # 1% drop - redundant
+    }
+    
+    print(&quot;\nHead | Importance | Category&quot;)
+    print(&quot;-----|------------|-------------&quot;)
+    for head_id, importance in head_importance.items():
+        category = (&quot;Critical&quot; if importance &gt; 0.15 else
+                  &quot;Important&quot; if importance &gt; 0.05 else
+                  &quot;Redundant&quot;)
+        bar = &quot;█&quot; * int(importance * 100)
+        print(f&quot;  {head_id}  | {bar:20s} {importance:.2f} | {category}&quot;)
+    
+    print(&quot;\nKey insights:&quot;)
+    print(&quot;  - Head 4 (First-token) is critical → aggregates info&quot;)
+    print(&quot;  - Head 2 (Medium-range) is critical → semantics&quot;)
+    print(&quot;  - Heads 5,7 are redundant → can be pruned&quot;)
+    print(&quot;  - Different heads have different importance!&quot;)
+
+analyze_head_behaviors()</code></pre>
+<h3 class="sh3">Head Attention Heatmap</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_head_attention_heatmap():
+    &quot;&quot;&quot;Create heatmap visualization of multi-head attention.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Multi-Head Attention Heatmap ===\n&quot;)
+    
+    # Simulate attention for 4 heads on a sentence
+    tokens = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;the&quot;, &quot;mat&quot;]
+    n = len(tokens)
+    num_heads = 4
+    
+    # Generate sample attention patterns
+    np.random.seed(42)
+    
+    print(&quot;Visualizing attention for query position 2 (&#x27;sat&#x27;):\n&quot;)
+    print(&quot;Position:&quot;, &quot; &quot;.join(f&quot;{i:3d}&quot; for i in range(n)))
+    print(&quot;Token:   &quot;, &quot; &quot;.join(f&quot;{t:3s}&quot; for t in tokens))
+    print()
+    
+    for h in range(num_heads):
+        # Different pattern for each head
+        if h == 0:  # Local
+            weights = np.array([0.1, 0.3, 0.4, 0.15, 0.03, 0.02])
+        elif h == 1:  # Verb-Object
+            weights = np.array([0.05, 0.1, 0.2, 0.1, 0.1, 0.45])
+        elif h == 2:  # Subject-Verb
+            weights = np.array([0.05, 0.55, 0.25, 0.08, 0.04, 0.03])
+        else:  # Uniform
+            weights = np.array([0.17, 0.16, 0.17, 0.17, 0.16, 0.17])
+        
+        print(f&quot;Head {h}: &quot;, end=&quot;&quot;)
+        for w in weights:
+            # Visual bar
+            bar_len = int(w * 20)
+            bar = &quot;█&quot; * bar_len + &quot; &quot; * (20 - bar_len)
+            print(f&quot;[{bar}]&quot;, end=&quot; &quot;)
+        print()
+        print(f&quot;          &quot;, &quot; &quot;.join(f&quot;{w:.2f}&quot; for w in weights))
+        print()
+    
+    print(&quot;Interpretation:&quot;)
+    print(&quot;  Head 0: Local attention (focuses on &#x27;sat&#x27; and neighbors)&quot;)
+    print(&quot;  Head 1: Object attention (focuses on &#x27;mat&#x27; - verb→object)&quot;)
+    print(&quot;  Head 2: Subject attention (focuses on &#x27;cat&#x27; - subject→verb)&quot;)
+    print(&quot;  Head 3: Global attention (uniform over all tokens)&quot;)
+
+visualize_head_attention_heatmap()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Sensitive Attribute Heads</h3>
+<p class="prose">Some heads specialize on sensitive attributes:
+- Entity head → focuses on names (PII leakage risk)
+- Number head → focuses on digits (credential leakage)
+- Location head → focuses on places (location privacy)
+
+Adversary targets these specific heads for extraction attacks</p>
+<h3 class="sh3">Head Importance Targeting</h3>
+<p class="prose">Critical heads (high performance impact) are valuable targets:
+- Adversary identifies critical heads through pruning analysis
+- Targets those heads for corruption or manipulation
+- Compromising critical head maximizes attack impact
+- Defense: Extra monitoring/protection for critical heads</p>
+<h3 class="sh3">Interpretability Exploitation</h3>
+<p class="prose">Head specialization aids interpretability BUT:
+- Adversary understands what each head does
+- Can craft inputs to trigger specific head behaviors
+- Exploit head specialization for targeted attacks
+- Example: Craft input that activates entity head for extraction</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Implementation Details and Computational Efficiency</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Multi-head attention achieves computational efficiency through careful implementation: 
+matrix operations for parallel head computation, memory layout optimization, and 
+gradient checkpointing. Understanding these details is critical for both performance 
+and security analysis.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Efficient Implementation</h3>
+<h4 class="sh3">Naive Approach</h4>
+<h4 class="sh3">Pseudocode</h4>
+<p class="prose">outputs = []
+for h in range(num_heads):
+    Q_h = Q @ W_q[h]
+    K_h = K @ W_k[h]
+    V_h = V @ W_v[h]
+    head_output = Attention(Q_h, K_h, V_h)
+    outputs.append(head_output)
+concat = concatenate(outputs)
+final = concat @ W_o</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Sequential loop → no parallelization</p>
+<h4 class="sh3">Optimized Approach</h4>
+<h4 class="sh3">Pseudocode</h4>
+<p class="prose"># Project all heads at once
+Q_all = Q @ W_q  # (batch, n, num_heads * d_k)
+K_all = K @ W_k
+V_all = V @ W_v
+
+# Reshape for parallel head processing
+Q_heads = reshape(Q_all, [batch, num_heads, n, d_k])
+K_heads = reshape(K_all, [batch, num_heads, n, d_k])
+V_heads = reshape(V_all, [batch, num_heads, n, d_v])
+
+# Single attention call processes all heads in parallel
+outputs = Attention(Q_heads, K_heads, V_heads)
+
+# Reshape and project
+concat = reshape(outputs, [batch, n, num_heads * d_v])
+final = concat @ W_o</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">All heads computed in parallel → no loop overhead</p>
+<h3 class="sh3">Memory Layout Optimization</h3>
+<h4 class="sh3">Attention Matrix Storage</h4>
+<h4 class="sh3">Per Head</h4>
+<p class="prose">n × n attention weights</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">num_heads × n × n</p>
+<h4 class="sh3">Memory</h4>
+<p class="prose">h × n² × 4 bytes (float32)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">h = 8, n = 512
+Memory = 8 × 512² × 4 = 8MB per sequence
+Batch of 32: 256MB just for attention weights!</p>
+<h4 class="sh3">Memory Reduction Techniques</h4>
+<h4 class="sh3">Gradient Checkpointing</h4>
+<p class="prose">Don&#x27;t store attention weights in forward pass
+Recompute in backward pass when needed
+→ Reduce memory by ~30-40%
+Cost: ~25% slower training</p>
+<h4 class="sh3">Attention Dropping</h4>
+<p class="prose">During training, randomly drop some attention connections
+→ Regularization + memory reduction</p>
+<h4 class="sh3">Mixed Precision</h4>
+<p class="prose">Store attention weights in FP16 instead of FP32
+→ 50% memory reduction
+Must be careful with numerical stability</p>
+<h3 class="sh3">Computational Complexity Analysis</h3>
+<h4 class="sh3">Single Head Cost</h4>
+<h4 class="sh3">Qk Multiply</h4>
+<p class="prose">O(n² × d_k)</p>
+<h4 class="sh3">Attention V Multiply</h4>
+<p class="prose">O(n² × d_v)</p>
+<h4 class="sh3">Total Per Head</h4>
+<p class="prose">O(n² × d)</p>
+<h4 class="sh3">Multi Head Cost</h4>
+<h4 class="sh3">Naive</h4>
+<p class="prose">h × O(n² × (d/h)) = O(n² × d)</p>
+<h4 class="sh3">Optimized</h4>
+<p class="prose">O(n² × d) with parallel execution</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">Same asymptotic complexity, but h patterns instead of 1</p>
+<h4 class="sh3">Projection Overhead</h4>
+<h4 class="sh3">Input Projections</h4>
+<p class="prose">3 × O(n × d × d) = O(n × d²)</p>
+<h4 class="sh3">Output Projection</h4>
+<p class="prose">O(n × d²)</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">O(n × d²)</p>
+<h4 class="sh3">Dominance</h4>
+<p class="prose">For short sequences (n &lt;&lt; d): Projections dominate
+For long sequences (n &gt;&gt; d): Attention dominates</p>
+<h3 class="sh3">Practical Considerations</h3>
+<h4 class="sh3">Hardware Efficiency</h4>
+<h4 class="sh3">Gpu Optimization</h4>
+<p class="prose">Multi-head attention maps perfectly to GPU:
+- Matrix multiplications (BLAS optimized)
+- Parallel head computation (batch dimension)
+- High arithmetic intensity (compute-bound)</p>
+<h4 class="sh3">Cpu Limitation</h4>
+<p class="prose">Less efficient on CPU:
+- Limited parallelism compared to GPU
+- Memory bandwidth bottleneck
+- Better to batch multiple sequences</p>
+<h4 class="sh3">Numerical Stability</h4>
+<h4 class="sh3">Attention Scores</h4>
+<p class="prose">Scale by √d_k per Section 3.7</p>
+<h4 class="sh3">Softmax</h4>
+<p class="prose">Subtract max before exp</p>
+<h4 class="sh3">Projections</h4>
+<p class="prose">Use orthogonal initialization</p>
+<h4 class="sh3">Layer Norm</h4>
+<p class="prose">Stabilize activations (Section 3.11)</p>
+<h4 class="sh3">Framework Implementations</h4>
+<h4 class="sh3">Pytorch</h4>
+<p class="prose">torch.nn.MultiheadAttention</p>
+<h4 class="sh3">Tensorflow</h4>
+<p class="prose">tf.keras.layers.MultiHeadAttention</p>
+<h4 class="sh3">Features</h4>
+<ul class="blist"><li>Optimized kernel fusion</li><li>Flash Attention support</li><li>Gradient checkpointing options</li><li>Mixed precision training</li></ul>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Performance Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import time
+
+def compare_single_vs_multi_head():
+    &quot;&quot;&quot;Compare computational cost: single head vs multi-head.&quot;&quot;&quot;
+    
+    print(&quot;=== Single Head vs Multi-Head Performance ===\n&quot;)
+    
+    batch_size = 32
+    seq_len = 512
+    d_model = 512
+    
+    # Generate random data
+    Q = np.random.randn(batch_size, seq_len, d_model)
+    K = np.random.randn(batch_size, seq_len, d_model)
+    V = np.random.randn(batch_size, seq_len, d_model)
+    
+    # Single head (d_k = d_model)
+    print(f&quot;Configuration:&quot;)
+    print(f&quot;  Batch size: {batch_size}&quot;)
+    print(f&quot;  Sequence length: {seq_len}&quot;)
+    print(f&quot;  Model dimension: {d_model}&quot;)
+    print()
+    
+    # Simulate timing (actual timing would need real implementation)
+    single_head_time = seq_len * seq_len * d_model
+    multi_head_8_time = seq_len * seq_len * d_model  # Same asymptotic
+    
+    print(f&quot;Single head (d_k={d_model}):&quot;)
+    print(f&quot;  Operations: {single_head_time:,}&quot;)
+    print(f&quot;  Memory for attention: {batch_size * seq_len * seq_len * 4 / 1024 / 1024:.2f} MB&quot;)
+    print()
+    
+    num_heads = 8
+    d_k_per_head = d_model // num_heads
+    
+    print(f&quot;Multi-head ({num_heads} heads, d_k={d_k_per_head} each):&quot;)
+    print(f&quot;  Operations: {multi_head_8_time:,} (same as single head)&quot;)
+    print(f&quot;  Memory for attention: {batch_size * num_heads * seq_len * seq_len * 4 / 1024 / 1024:.2f} MB&quot;)
+    print(f&quot;  → {num_heads}x more attention matrices!&quot;)
+    print()
+    
+    print(&quot;Key insights:&quot;)
+    print(f&quot;  - Same computational complexity&quot;)
+    print(f&quot;  - Multi-head uses {num_heads}x memory for attention weights&quot;)
+    print(f&quot;  - But gets {num_heads} different attention patterns&quot;)
+    print(f&quot;  - Perfect parallelization on GPU&quot;)
+
+compare_single_vs_multi_head()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Memory Based Side Channels</h3>
+<p class="prose">Multi-head attention uses h×n² memory:
+- Different sequence lengths → different memory footprint
+- Cache behavior varies with attention patterns
+- Adversary can infer input length from memory access patterns
+- Defense: Pad to consistent length, use oblivious memory access</p>
+<h3 class="sh3">Timing Attacks On Heads</h3>
+<p class="prose">Sparse attention patterns in specific heads:
+- Different heads have different sparsity
+- Computation time varies slightly
+- Adversary measures timing → infers which heads activated
+- Defense: Constant-time attention, masking timing variations</p>
+<h3 class="sh3">Head Specific Backdoors</h3>
+<p class="prose">Adversary can inject backdoors in specific heads:
+- Poison training to corrupt one head
+- Other heads remain clean (appears benign in aggregate)
+- Backdoor activates only when corrupt head is critical
+- Defense: Per-head monitoring, anomaly detection</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Multi-head attention runs h attention mechanisms in parallel</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Dramatically increases model capacity without increasing complexity</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Different heads specialize in different patterns (syntax, semantics, position)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Enables rich representations capturing multiple linguistic phenomena</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Head-specific projections create independent subspaces</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Each head learns different Q/K/V transformations</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Same computational complexity as single head but h patterns</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Efficient parallelization - no overhead for multiple heads</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Head importance varies - some critical, others redundant</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Opportunities for pruning and compression, security targeting</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement multi-head attention from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Split into heads, parallel attention, concatenate, project</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Analyze head specialization patterns</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Identify local, global, syntactic, semantic heads</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Visualize individual head attention patterns</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Show different heads focus on different positions</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Measure head importance via pruning</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Determine which heads are critical vs redundant</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Compare single-head vs multi-head performance</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Same complexity, better representations</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Different heads leak different types of information</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Monitor all heads individually for sensitive attribute focus</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Head specialization enables targeted attacks</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary targets specific heads (e.g., entity head for PII)</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Critical heads are high-value targets</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Extra protection/monitoring for heads with high importance</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Memory usage scales with number of heads (h×n²)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Resource exhaustion attacks amplified by multiple heads</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Head behaviors can be extracted through timing/memory analysis</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Side-channel protection for multi-head computations</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not splitting d_model evenly across heads (d_k = d_model/h)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Ensure d_model divisible by num_heads for even split</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Sequential loop over heads instead of parallel computation</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use matrix reshaping to process all heads simultaneously</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Ignoring individual head behaviors in debugging</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Visualize and analyze each head separately, not just aggregate</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Assuming all heads contribute equally</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Some heads critical, others redundant - verify with pruning</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not accounting for h×n² memory for attention weights</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Memory scales linearly with num_heads - plan accordingly</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 7</h3>
+<ul class="blist"><li>Scaled dot-product attention (used within each head)</li><li>Attention masking (applied to all heads)</li><li>Computational complexity O(n²d)</li></ul>
+<h3 class="sh3">From Section 3 6</h3>
+<ul class="blist"><li>Query-Key-Value formulation (per head)</li><li>Attention as weighted sum</li><li>Differentiable memory access</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.9: Positional encoding (attention is permutation-invariant)</li><li>How to inject position information</li><li>Sinusoidal vs learned positional embeddings</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Positional encoding (attention lacks position awareness)</li><li>Sinusoidal functions for position</li><li>Learned positional embeddings</li><li>Relative position encoding</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement positional encoding</li><li>Build complete transformer layer (attention + FFN + norms)</li><li>Stack multiple transformer layers</li><li>Train transformer from scratch</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Multi-head attention is the architectural innovation that makes transformers powerful. 
+By running h attention mechanisms in parallel, each with its own learned projections, 
+the model captures multiple different patterns simultaneously. Different heads 
+specialize: syntax, semantics, position, coreference - all learned automatically 
+through gradient descent.
+
+The architecture is elegant: project into h subspaces, compute attention in each, 
+concatenate, and project back. Same computational complexity as single-head attention 
+(O(n²d)) but with h different attention patterns. Perfect parallelization on GPUs 
+makes this efficient despite the increased capacity.
+
+Empirical analysis reveals consistent specialization patterns. Early-layer heads 
+focus on local syntax, middle-layer heads on semantics, late-layer heads on 
+task-specific abstractions. Some heads are critical (large performance drop if 
+removed), others redundant. This variance creates opportunities for compression and 
+for targeted attacks.
+
+From a security perspective: multi-head attention creates multiple attack surfaces. 
+Different heads leak different information (entities, numbers, locations). Adversaries 
+can target specific heads for extraction or manipulation. Critical heads are high-value 
+targets. Defense requires monitoring all heads individually, not just aggregate output.
+
+Next: Section 3.9 addresses a fundamental limitation: attention is permutation-invariant 
+(doesn&#x27;t know word order). We&#x27;ll explore positional encoding - the mechanism that 
+injects position information into transformers.</p>
+</article>

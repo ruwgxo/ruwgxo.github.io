@@ -1,0 +1,908 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 13 · Section 11 · ~8 pages</div>
+<h1>Graph-Based Detection and the Behavioural Monitoring Capstone</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Coordinated abuse has no single-entity signal -- each account behaves acceptably alone and the attack is the structure between accounts; Section 13.11 builds the entity-relationship graph and coordinated-network detection, then integrates the whole behavioural layer into the Chapter 12 seven-track gateway as the capstone.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Section 13.11 closes Chapter 13 with the last behavioural signal family and the integration capstone.
+The graph family exists because there is an attack class that even the persistent entity profile of
+13.10 cannot see: coordinated abuse. A network of a hundred accounts, each behaving acceptably on its
+own, sharing no single suspicious request, can collectively run a campaign whose only signal is the
+structure of the relationships between the accounts. Each account passes every single-entity detector
+-- its rate is fine, its sessions are fine, its fingerprint is clean -- and the attack is invisible
+until the accounts are analysed together as a graph.
+
+The entity family of 13.07 and 13.10 began to point at this: distributed-abuse detection aggregated a
+campaign across accounts by a single shared attribute, and entity resolution linked identities that
+were clearly the same actor. The graph family completes the picture by analysing the full relationship
+structure -- not just one shared attribute, and not just identities that are obviously the same actor,
+but the looser coordination between distinct actors who share infrastructure, synchronise timing, or
+move together. This is the structure that community detection and graph anomaly methods surface, and it
+is the only way to see a coordinated network whose individual members are each clean.
+
+The section then turns to the capstone: integrating the entire behavioural layer built across Chapter
+13 -- session scoring, baselines, time-series anomaly, drift, output monitoring, rate limiting,
+profiling, and graph analysis -- into the Chapter 12 seven-track gateway as the fourth detection layer.
+The integration respects the state-latency coupling of 13.01: inline detectors read cheap precomputed
+summaries on the request path, while the expensive session, entity, and graph analysis runs near-real-
+time or in batch off the path and writes its findings back. The result is a detection system that sees
+the individual request, the session, the entity, and the relationships between entities -- the complete
+behavioural picture that Chapter 14 deploys to production.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 13.11 is the capstone of Chapter 13, building the graph family on the resolved entities and
+links of 13.10 and then integrating all four behavioural families into the Chapter 12 gateway. It
+consumes the entity definitions and first-order edges from 13.10, the risk scores and signals from
+every preceding section, and the seven-track gateway from Chapter 12 Section 12.17. It produces the
+behavioural monitoring gateway -- the complete detection system -- that the chapter summary of 13.12
+reviews and that Chapter 14 deploys. It is the integration point where the behavioural layer becomes a
+coherent system rather than a set of separate detectors.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 11 Section 11.13: production seven-track gateway -- the gateway this section integrates the behavioural layer into</li><li>Chapter 12 Section 12.17: production ML gateway -- the per-request gateway the behavioural layer sits above</li><li>Chapter 13 Section 13.01: behavioural detection taxonomy -- the four families integrated here and the state-latency coupling</li><li>Chapter 13 Section 13.07: rate-based detection -- the distributed-abuse linkage this section develops into full graph analysis</li><li>Chapter 13 Section 13.10: user behaviour profiling -- the resolved entities and links that are the graph nodes and edges</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Coordinated Abuse Has No Single-Entity Signal</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The graph family targets an attack that every detector before it is structurally blind to:
+coordinated abuse by a network of individually-clean accounts. Consider a hundred accounts run by a
+single adversary as a campaign. Each account makes a modest number of requests, on ordinary
+endpoints, at an ordinary rate, with a clean session history and a stable fingerprint. Each account,
+examined by itself, passes every single-entity detector -- the rate detector finds nothing, the
+session detector finds nothing, the profile is clean. There is no single account that is the attack.
+
+The attack is the coordination. The hundred accounts were created in the same hour, operate from the
+same IP range, share a credential-generation pattern, and synchronise their activity -- they act
+together as one campaign distributed across many compliant identities. None of this is visible at the
+level of any single account, because the signal is not a property of an account; it is a property of
+the relationships between accounts. To see it, the accounts must be analysed together, as a graph,
+where the structure of their relationships becomes the detectable object.
+
+This is the final and most complete expression of the chapter&#x27;s central thesis. Section 13.01 argued
+that some attacks live in the relationship between requests; the graph family shows that some attacks
+live in the relationship between entities. The session family aggregated requests into sessions; the
+entity family aggregated sessions into entity profiles; the graph family aggregates entities into a
+relationship graph. Each level of aggregation reveals attacks invisible at the level below, and the
+graph is the top of that hierarchy -- the level at which coordinated networks, invisible at every
+lower level, finally become detectable. The entity family pointed here: distributed-abuse detection
+and entity resolution were first steps into relationship analysis, and the graph family is where that
+analysis is done in full.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Building the Entity-Relationship Graph</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Graph-based detection operates on a graph whose nodes are entities and whose edges are relationships
+between them. The nodes are the resolved entities of 13.10 -- the actors, consolidated from their
+fragmented identities. The edges are the relationships that link entities, and constructing them well
+is the foundation that bounds detection quality: the graph detector can only find structure that the
+edges represent.
+
+Edges are drawn from shared attributes and behavioural relationships. Shared infrastructure is the
+most direct: entities operating from the same source IP or range, the same credential family, or the
+same creation-time cohort are linked by an infrastructure edge. Behavioural similarity is a softer
+edge: entities with very similar fingerprints, similar session patterns, or similar coverage behave
+alike in a way that may indicate common control. Synchronised timing is a temporal edge: entities
+whose activity is correlated in time -- active together, quiet together, spiking together -- move as
+if coordinated. Each edge type carries a weight reflecting the strength of the link, and an entity
+pair may be connected by several edge types whose weights combine.
+
+The edge construction inherits the lessons of the chapter. It uses the entity resolution of 13.10 for
+the strongest links -- identities that are the same actor -- and adds the looser coordination edges
+between distinct actors. It must be robust to coincidence: many legitimate entities share an IP
+because they sit behind a common NAT, share a credential family because they use a common SDK, or are
+active at the same times because they are in the same time zone. An edge drawn on a single weak shared
+attribute is mostly noise. The graph is built so that an edge reflects a meaningful relationship --
+multiple corroborating shared attributes, or a shared attribute that is rare enough to be
+informative -- rather than the incidental sharing that pervades legitimate traffic. The quality of
+this edge construction determines whether the graph detector finds real coordination or drowns in the
+coincidental structure of normal traffic.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Coordinated-Network Signatures and Graph Anomaly Detection</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">With the graph built, coordinated networks are found through graph anomaly detection: methods that
+identify structure in the graph that does not occur in normal traffic. The coordinated network has
+characteristic signatures that these methods surface.
+
+The clearest signature is a dense cluster: a group of entities far more interconnected with each other
+than with the rest of the graph, linked by shared infrastructure, similar fingerprints, and
+synchronised timing all at once. Legitimate entities form a sparse, loosely-connected graph -- most
+pairs share no meaningful relationship -- while a coordinated network forms a dense subgraph where the
+members are tightly linked to each other. Community detection finds these dense subgraphs: it
+partitions the graph into communities of densely-interconnected entities, and a community that is both
+dense and exhibits suspicious shared attributes is a candidate coordinated network. A second signature
+is structural outliers: entities or groups whose connectivity pattern is anomalous -- a star of
+accounts all linked to one controller, a clique of accounts created together and behaving identically.
+Centrality and structural-outlier methods surface these.
+
+The detection combines the structural signal with the behavioural signal. A dense cluster alone is not
+proof of abuse -- a legitimate organisation&#x27;s accounts may form a dense cluster because they genuinely
+share infrastructure. The coordinated-abuse signal is a dense cluster whose members also exhibit the
+behavioural markers of a campaign: synchronised activity, similar coverage patterns, shared rate-abuse
+or enumeration signals, accounts created together and behaving identically. The combination of
+structural density and behavioural coordination is far more specific than either alone, the same way
+the multi-turn detector combined structural context-density with the declining-refusal trajectory. The
+graph detector flags a community when its structural density and its behavioural coordination both
+exceed threshold, which separates the coordinated abuse network from the legitimate organisation whose
+accounts merely share infrastructure.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Sybil and Bot-Network Detection Through Structure</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Two specific coordinated-abuse forms are detected primarily through graph structure: Sybil networks
+and bot networks. A Sybil network is many fake identities controlled by one adversary, created to
+appear as independent entities -- to evade per-account limits, manufacture consensus, or distribute a
+campaign. A bot network is many automated accounts acting under common control. Both share the
+property that their structure betrays them even when their individual behaviour is designed to look
+independent.
+
+Sybil detection through structure looks for the signatures of mass-created fake identities: a cohort of
+accounts created in a narrow time window, sharing infrastructure, with thin or templated histories,
+forming a dense cluster with little connection to the legitimate graph. The Sybil cluster is
+structurally distinct from a comparable number of legitimate accounts, which would be created over
+time, use diverse infrastructure, and connect into the broader legitimate graph rather than forming an
+isolated dense island. The structural isolation and synchronised creation of the Sybil cluster is the
+signal, independent of whether any individual fake account behaves anomalously.
+
+Bot-network detection through structure looks for the coordination signatures of automated accounts
+under common control: synchronised activity (the bots act together because one controller drives
+them), similar behavioural fingerprints (the bots run the same automation, so they behave alike), and
+shared infrastructure. The bot network forms a cluster of behaviourally-similar, time-synchronised
+entities, and the periodicity signal from 13.07 reinforces it -- bots exhibit the automation signature
+individually and synchronise it collectively. Detecting these through structure rather than per-account
+behaviour is essential because the per-account behaviour is designed to look independent and clean; the
+coordination is only visible in the graph. The graph detector surfaces the Sybil and bot clusters as
+dense, synchronised, infrastructure-sharing communities, and the behavioural markers confirm them.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Capstone: Integrating the Behavioural Layer into the Gateway</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The capstone of Chapter 13 integrates everything built across the chapter into the Chapter 12 seven-
+track gateway as the fourth detection layer. Chapter 11 built the signature and heuristic layers,
+Chapter 12 built the ML layer, and Chapter 13 has built the behavioural layer; the integration places
+the behavioural layer above the ML gateway so that the complete system sees the individual request,
+the session, the entity, and the relationships between entities.
+
+The integration is governed by the state-latency coupling of 13.01, which dictates where each
+behavioural detector runs. The request hot path remains fast: it runs the Chapter 12 per-request
+classifiers inline and reads the cheap precomputed behavioural summaries -- the entity risk score from
+13.10, the current rate-limit state from 13.08, the session threat accumulator from 13.09, the
+output-monitoring canary check from 13.06. These are all reads of precomputed values, adding little
+latency. The near-real-time tier runs the session scorer, the baseline and time-series detectors, the
+entity profiler, and the output-distribution monitor, updating their state from the event stream and
+writing back the summaries the hot path reads. The batch tier runs the graph detector and the drift
+monitors on a schedule, writing their findings back as entity risk adjustments and alerts.
+
+This tiered architecture is the only way to integrate the behavioural layer without breaking the
+gateway&#x27;s latency budget. Putting the graph traversal or the full profile query inline would blow the
+sub-50ms budget, so the expensive analysis runs off the path and exposes summaries. The gateway verdict
+combines the inline per-request scores with the inline behavioural summaries: a request from an entity
+with a high precomputed risk score, currently throttled, in a session with a climbing threat
+accumulator, is treated very differently from the same request from a clean entity, and all of that
+context is available inline as precomputed values. The behavioural layer thus enriches every per-
+request verdict with session, entity, and graph context without the per-request path ever computing
+that context itself. The integration produces the behavioural monitoring gateway: the complete
+detection system, with each detector placed at the tier its state requires, that is the deployment
+target for Chapter 14.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Complete Detection System and the Behavioural Dashboard</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">With the integration done, the detection system built across Chapters 11, 12, and 13 is complete, and
+it is worth seeing it whole. The signature and heuristic layers catch known patterns cheaply. The ML
+layer catches novel variants of known attack classes per request. The behavioural layer catches the
+attacks that span requests: the session family catches multi-turn escalation, the temporal family
+catches rate abuse and detector drift, the entity family catches account compromise and low-and-slow
+abuse, and the graph family catches coordinated networks. Each layer covers what the layers below it
+miss, and together they see the request, the session, the entity, and the relationships between
+entities. A coordinated multi-turn injection campaign run by a Sybil network -- an attack that touches
+every level -- is caught by the per-turn classifier where it can be, the session detector for the
+escalation, the entity profiler for the compromise, and the graph detector for the coordination, with
+each layer contributing the part of the picture it can see.
+
+The behavioural monitoring dashboard makes this system operable. It presents the three views that the
+behavioural layer produces. The entity-risk view shows the distribution of entity risk scores and the
+entities with elevated or sharply-changed risk -- the fingerprint divergences, the rate abusers, the
+high session-threat entities. The drift view shows the health of the Chapter 12 detectors and the
+model: the population stability indices, the score-distribution shifts, the drift alerts and their
+benign-versus-adversarial routing. The coordinated-network view shows the graph&#x27;s flagged communities:
+the dense clusters, the Sybil and bot candidates, the coordinated campaigns, with the structural and
+behavioural evidence for each. These views turn the behavioural layer&#x27;s signals into an operable
+picture for the security team, and they complete the behavioural layer as a system that not only
+detects but is observable and actionable.
+
+This is also where the behavioural monitoring layer connects forward to Chapter 14. The integration
+built here is a logical architecture -- which detector runs at which tier, what the hot path reads,
+what runs in batch -- and Chapter 14 takes it to production: the deployment patterns that place it
+behind an API gateway, the performance engineering that holds the inline tier within its latency
+budget, the observability that operates it at scale, and the cost optimisation that keeps the batch
+and near-real-time tiers affordable. The behavioural monitoring gateway is the artifact Chapter 13
+produces and Chapter 14 deploys, and with it the detection system is structurally complete: every
+layer present, every behavioural family integrated, every signal observable, ready for production.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why Coordinated Abuse Needs the Graph</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">How a coordinated network evades every single-entity detector and is visible only as graph structure</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Detector Level</li><li>What It Sees</li><li>Coordinated Network Appears As</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Per-request (Ch12)</li><li>One request</li><li>A benign request -- nothing</li></ul>
+<ul class="blist"><li>Session (13.02/13.09)</li><li>One session</li><li>A benign session -- nothing</li></ul>
+<ul class="blist"><li>Entity (13.07/13.10)</li><li>One entity over time</li><li>A clean entity -- nothing</li></ul>
+<ul class="blist"><li>Graph (13.11)</li><li>Relationships between entities</li><li>A dense, synchronised, infrastructure-sharing cluster</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Entity-Relationship Graph Edge Types</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The edge types linking entities in the graph and the coordination each can indicate</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Edge Type</li><li>Links Entities By</li><li>Indicates</li><li>Coincidence Risk</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Infrastructure</li><li>Shared source IP, credential family, cohort</li><li>Common origin or control</li><li>High (shared NAT, common SDK)</li></ul>
+<ul class="blist"><li>Behavioural similarity</li><li>Similar fingerprint, session, coverage</li><li>Common automation or control</li><li>Medium (similar legitimate use)</li></ul>
+<ul class="blist"><li>Synchronised timing</li><li>Correlated activity over time</li><li>Coordinated operation</li><li>Medium (same time zone)</li></ul>
+<ul class="blist"><li>Resolved identity (13.10)</li><li>Same underlying actor</li><li>One actor, many identities</li><li>Low (strong link)</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Graph Anomaly Detection Methods</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The graph methods that surface coordinated-network structure and what each finds</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Method</li><li>Finds</li><li>Coordinated-Abuse Signature</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Community detection</li><li>Densely-interconnected subgraphs</li><li>Dense cluster with shared attributes</li></ul>
+<ul class="blist"><li>Centrality analysis</li><li>Hub entities controlling many others</li><li>A controller linked to many accounts</li></ul>
+<ul class="blist"><li>Structural outliers</li><li>Anomalous connectivity patterns</li><li>Clique created together, behaving identically</li></ul>
+<ul class="blist"><li>Structural isolation</li><li>Clusters disconnected from legit graph</li><li>Sybil island of mass-created identities</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Layer Gateway Integration Tiers</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Where each behavioural detector runs relative to the request path, per the state-latency coupling</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Tier</li><li>Detectors</li><li>Hot Path Interaction</li><li>State Held</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Inline (request path)</li><li>Per-request classifiers; canary check</li><li>Scores directly; reads summaries</li><li>None / cheap reads</li></ul>
+<ul class="blist"><li>Near-real-time</li><li>Session, baseline, time-series, profiler, output monitor</li><li>Writes summaries the path reads</li><li>Session and rolling-window state</li></ul>
+<ul class="blist"><li>Batch (scheduled)</li><li>Graph detector, drift monitors</li><li>Writes risk adjustments and alerts</li><li>Graph and reference distributions</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Entity-Relationship Graph Builder</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">entity_graph_builder.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Constructs the entity-relationship graph from resolved entities and their linking attributes, drawing weighted edges from shared infrastructure, behavioural similarity, and synchronised timing while resisting coincidental sharing. Implements the graph construction from Section 13.11 Part 2.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard library only</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># entity_graph_builder.py
+# Section 13.11: Entity-Relationship Graph Builder
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from itertools import combinations
+from typing import Dict, List, Set, Tuple
+
+
+@dataclass
+class EntityNode:
+    entity_id: str
+    source_ip: str
+    credential_family: str
+    fingerprint_bucket: str
+    creation_cohort: str
+    active_window: Tuple[int, int]  # coarse active hours
+
+
+@dataclass
+class Edge:
+    a: str
+    b: str
+    weight: float
+    types: List[str]
+
+
+class EntityGraph:
+    def __init__(self) -&gt; None:
+        self.edges: Dict[Tuple[str, str], Edge] = {}
+
+    def _key(self, a: str, b: str) -&gt; Tuple[str, str]:
+        return (a, b) if a &lt; b else (b, a)
+
+    def add_edge(self, a: str, b: str, weight: float, edge_type: str) -&gt; None:
+        key = self._key(a, b)
+        if key in self.edges:
+            self.edges[key].weight += weight
+            if edge_type not in self.edges[key].types:
+                self.edges[key].types.append(edge_type)
+        else:
+            self.edges[key] = Edge(key[0], key[1], weight, [edge_type])
+
+    def neighbours(self, entity: str) -&gt; Set[str]:
+        out = set()
+        for (a, b) in self.edges:
+            if a == entity:
+                out.add(b)
+            elif b == entity:
+                out.add(a)
+        return out
+
+
+def build_graph(nodes: List[EntityNode], min_edge_weight: float = 1.5) -&gt; EntityGraph:
+    g = EntityGraph()
+    # Group by each shared attribute; only rare-enough groups produce edges
+    for attr in (&#x27;source_ip&#x27;, &#x27;credential_family&#x27;, &#x27;fingerprint_bucket&#x27;, &#x27;creation_cohort&#x27;):
+        groups: Dict[str, List[str]] = defaultdict(list)
+        for n in nodes:
+            groups[getattr(n, attr)].append(n.entity_id)
+        for value, members in groups.items():
+            # A huge shared group is likely coincidental (shared NAT/SDK) -&gt; low weight
+            size = len(members)
+            weight = 1.0 if size &lt;= 8 else 0.3
+            for a, b in combinations(members, 2):
+                g.add_edge(a, b, weight, attr)
+
+    # Prune edges below the corroboration threshold (need multiple/strong links)
+    pruned = EntityGraph()
+    for key, e in g.edges.items():
+        if e.weight &gt;= min_edge_weight:
+            pruned.edges[key] = e
+    return pruned
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # A coordinated cluster: 4 accounts sharing source, cred, cohort, fingerprint
+    cluster = [
+        EntityNode(f&#x27;bot_{i}&#x27;, &#x27;203.0.113.20&#x27;, &#x27;famX&#x27;, &#x27;fp_bot&#x27;, &#x27;cohort_jan&#x27;, (2, 5))
+        for i in range(4)
+    ]
+    # Legitimate accounts sharing only a common NAT (coincidental)
+    legit = [
+        EntityNode(f&#x27;user_{i}&#x27;, &#x27;198.51.100.1&#x27;, f&#x27;fam_{i}&#x27;, f&#x27;fp_{i}&#x27;, f&#x27;cohort_{i}&#x27;, (9, 18))
+        for i in range(6)
+    ]
+    g = build_graph(cluster + legit)
+    print(f&#x27;Edges retained after pruning: {len(g.edges)}&#x27;)
+    for e in g.edges.values():
+        print(f&#x27;  {e.a} -- {e.b}  weight={e.weight:.1f}  via {e.types}&#x27;)
+    print(&#x27;The bot cluster forms strong multi-attribute edges; the legit accounts&#x27;)
+    print(&#x27;sharing only a NAT do not survive the corroboration threshold.&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Graph Anomaly Detector</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">graph_anomaly_detector.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Detects coordinated networks through community detection and structural analysis, flagging dense clusters that also exhibit behavioural coordination, separating coordinated abuse from a legitimate organisation that merely shares infrastructure. Implements the graph anomaly detection from Section 13.11 Part 3.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard library only; a simple connected-component plus density analysis stands in for full community detection</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># graph_anomaly_detector.py
+# Section 13.11: Graph Anomaly Detector (Coordinated Network)
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Dict, List, Set, Tuple
+
+
+@dataclass
+class Community:
+    members: Set[str]
+    density: float
+    behavioural_coordination: float
+    coordinated_abuse: bool
+
+
+def _components(edges: List[Tuple[str, str]], nodes: Set[str]) -&gt; List[Set[str]]:
+    adj: Dict[str, Set[str]] = defaultdict(set)
+    for a, b in edges:
+        adj[a].add(b)
+        adj[b].add(a)
+    seen: Set[str] = set()
+    comps = []
+    for n in nodes:
+        if n in seen:
+            continue
+        stack = [n]
+        comp = set()
+        while stack:
+            x = stack.pop()
+            if x in seen:
+                continue
+            seen.add(x)
+            comp.add(x)
+            stack.extend(adj[x] - seen)
+        comps.append(comp)
+    return comps
+
+
+def _density(members: Set[str], edges: List[Tuple[str, str]]) -&gt; float:
+    k = len(members)
+    if k &lt; 2:
+        return 0.0
+    internal = sum(1 for a, b in edges if a in members and b in members)
+    possible = k * (k - 1) / 2
+    return internal / possible
+
+
+def detect_communities(
+    edges: List[Tuple[str, str]],
+    nodes: Set[str],
+    behavioural_coordination: Dict[frozenset, float],
+    density_threshold: float = 0.6,
+    coordination_threshold: float = 0.5,
+) -&gt; List[Community]:
+    out = []
+    for comp in _components(edges, nodes):
+        if len(comp) &lt; 3:
+            continue
+        d = _density(comp, edges)
+        coord = behavioural_coordination.get(frozenset(comp), 0.0)
+        abuse = d &gt;= density_threshold and coord &gt;= coordination_threshold
+        out.append(Community(comp, round(d, 3), round(coord, 3), abuse))
+    return out
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # Coordinated bot cluster: fully connected, high behavioural coordination
+    bot_edges = [(&#x27;b1&#x27;, &#x27;b2&#x27;), (&#x27;b1&#x27;, &#x27;b3&#x27;), (&#x27;b1&#x27;, &#x27;b4&#x27;), (&#x27;b2&#x27;, &#x27;b3&#x27;), (&#x27;b2&#x27;, &#x27;b4&#x27;), (&#x27;b3&#x27;, &#x27;b4&#x27;)]
+    # Legit org: connected but low behavioural coordination (diverse use)
+    org_edges = [(&#x27;o1&#x27;, &#x27;o2&#x27;), (&#x27;o2&#x27;, &#x27;o3&#x27;), (&#x27;o1&#x27;, &#x27;o3&#x27;)]
+    edges = bot_edges + org_edges
+    nodes = {&#x27;b1&#x27;, &#x27;b2&#x27;, &#x27;b3&#x27;, &#x27;b4&#x27;, &#x27;o1&#x27;, &#x27;o2&#x27;, &#x27;o3&#x27;}
+    coordination = {
+        frozenset({&#x27;b1&#x27;, &#x27;b2&#x27;, &#x27;b3&#x27;, &#x27;b4&#x27;}): 0.9,   # synchronised, similar fingerprints
+        frozenset({&#x27;o1&#x27;, &#x27;o2&#x27;, &#x27;o3&#x27;}): 0.2,         # diverse legitimate use
+    }
+    for c in detect_communities(edges, nodes, coordination):
+        tag = &#x27;COORDINATED ABUSE&#x27; if c.coordinated_abuse else &#x27;benign cluster&#x27;
+        print(f&#x27;{sorted(c.members)}: density={c.density}, coordination={c.behavioural_coordination} -&gt; {tag}&#x27;)
+    print(&#x27;The dense, behaviourally-coordinated bot cluster is flagged; the legit&#x27;)
+    print(&#x27;org cluster, dense but behaviourally diverse, is not.&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Sybil and Bot Network Detector</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">sybil_network_detector.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Detects Sybil and bot networks through graph structure: mass-created cohorts forming structurally-isolated dense clusters, and behaviourally-similar time-synchronised account groups, independent of individual account behaviour. Implements the Sybil and bot detection from Section 13.11 Part 4.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard library only</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># sybil_network_detector.py
+# Section 13.11: Sybil and Bot Network Detector
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List, Set
+
+
+@dataclass
+class AccountCohort:
+    members: Set[str]
+    creation_window_hours: float    # how tightly clustered creation times are
+    internal_density: float         # connectivity within the cohort
+    external_connections: int       # edges to the legitimate graph
+    fingerprint_similarity: float   # how alike the members behave
+    timing_synchrony: float         # how synchronised their activity is
+
+
+@dataclass
+class NetworkVerdict:
+    kind: str
+    flagged: bool
+    detail: str
+
+
+def detect_sybil(c: AccountCohort) -&gt; NetworkVerdict:
+    # Sybil: mass-created, dense, structurally isolated from the legit graph
+    flagged = (
+        c.creation_window_hours &lt;= 2.0
+        and c.internal_density &gt;= 0.6
+        and c.external_connections &lt;= 1
+        and len(c.members) &gt;= 4
+    )
+    return NetworkVerdict(
+        &#x27;Sybil&#x27;, flagged,
+        f&#x27;created in {c.creation_window_hours}h, density {c.internal_density}, &#x27;
+        f&#x27;external links {c.external_connections}&#x27;,
+    )
+
+
+def detect_bot_network(c: AccountCohort) -&gt; NetworkVerdict:
+    # Bot network: behaviourally similar and time-synchronised
+    flagged = (
+        c.fingerprint_similarity &gt;= 0.8
+        and c.timing_synchrony &gt;= 0.7
+        and len(c.members) &gt;= 4
+    )
+    return NetworkVerdict(
+        &#x27;Bot network&#x27;, flagged,
+        f&#x27;fingerprint similarity {c.fingerprint_similarity}, &#x27;
+        f&#x27;timing synchrony {c.timing_synchrony}&#x27;,
+    )
+
+
+if __name__ == &#x27;__main__&#x27;:
+    sybil_cohort = AccountCohort(
+        members={f&#x27;syb_{i}&#x27; for i in range(6)},
+        creation_window_hours=0.5, internal_density=0.8,
+        external_connections=0, fingerprint_similarity=0.85, timing_synchrony=0.9,
+    )
+    legit_cohort = AccountCohort(
+        members={f&#x27;org_{i}&#x27; for i in range(6)},
+        creation_window_hours=720.0, internal_density=0.5,
+        external_connections=12, fingerprint_similarity=0.3, timing_synchrony=0.2,
+    )
+    for name, cohort in ((&#x27;Suspected Sybil/bot&#x27;, sybil_cohort), (&#x27;Legitimate org&#x27;, legit_cohort)):
+        print(f&#x27;\n{name}:&#x27;)
+        for verdict in (detect_sybil(cohort), detect_bot_network(cohort)):
+            flag = &#x27;FLAGGED&#x27; if verdict.flagged else &#x27;clear&#x27;
+            print(f&#x27;  {verdict.kind:&lt;12} {flag}: {verdict.detail}&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Monitoring Gateway</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">behavioural_monitoring_gateway.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Integrates the behavioural layer into the Chapter 12 seven-track gateway as the fourth detection layer, combining the inline per-request scores with the precomputed behavioural summaries (entity risk, rate-limit state, session threat, canary check) read on the request path. Implements the gateway integration from Section 13.11 Part 5.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard library only; the per-request ensemble and the behavioural summaries are injected as the precomputed inputs the hot path reads</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># behavioural_monitoring_gateway.py
+# Section 13.11: Behavioural Monitoring Gateway (Capstone Integration)
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Optional
+
+
+class Verdict(Enum):
+    ALLOW = &#x27;allow&#x27;
+    FLAG = &#x27;flag&#x27;
+    THROTTLE = &#x27;throttle&#x27;
+    CHALLENGE = &#x27;challenge&#x27;
+    BLOCK = &#x27;block&#x27;
+
+
+@dataclass
+class PerRequestScores:
+    # Inline Chapter 12 ensemble output
+    ensemble_risk: float    # in [0, 1]
+
+
+@dataclass
+class BehaviouralSummaries:
+    # All precomputed off the hot path, read inline (13.01 coupling)
+    entity_risk: float          # 13.10
+    rate_limit_stage: str       # 13.08: normal/throttle/challenge/block
+    session_threat: float       # 13.09 accumulator (normalised)
+    canary_hit: bool            # 13.06 inline canary check
+    graph_risk_adjustment: float  # 13.11 batch finding, written back
+
+
+@dataclass
+class BehaviouralGateway:
+    flag_threshold: float = 0.5
+    block_threshold: float = 0.85
+
+    def decide(self, scores: PerRequestScores, beh: BehaviouralSummaries) -&gt; Verdict:
+        # Inline canary hit is a near-certain injection success -&gt; block
+        if beh.canary_hit:
+            return Verdict.BLOCK
+        # Rate-limit stage maps directly to enforcement
+        if beh.rate_limit_stage == &#x27;block&#x27;:
+            return Verdict.BLOCK
+        if beh.rate_limit_stage == &#x27;challenge&#x27;:
+            return Verdict.CHALLENGE
+        if beh.rate_limit_stage == &#x27;throttle&#x27;:
+            return Verdict.THROTTLE
+
+        # Combine per-request risk with behavioural context
+        combined = (
+            0.4 * scores.ensemble_risk
+            + 0.3 * beh.entity_risk
+            + 0.2 * beh.session_threat
+            + 0.1 * beh.graph_risk_adjustment
+        )
+        if combined &gt;= self.block_threshold:
+            return Verdict.BLOCK
+        if combined &gt;= self.flag_threshold:
+            return Verdict.FLAG
+        return Verdict.ALLOW
+
+
+if __name__ == &#x27;__main__&#x27;:
+    gw = BehaviouralGateway()
+
+    # Same per-request score, very different behavioural context
+    req = PerRequestScores(ensemble_risk=0.3)
+
+    clean_ctx = BehaviouralSummaries(0.05, &#x27;normal&#x27;, 0.1, False, 0.0)
+    suspect_ctx = BehaviouralSummaries(0.8, &#x27;normal&#x27;, 0.7, False, 0.6)
+    canary_ctx = BehaviouralSummaries(0.05, &#x27;normal&#x27;, 0.1, True, 0.0)
+
+    print(&#x27;Clean entity, ensemble 0.3   -&gt;&#x27;, gw.decide(req, clean_ctx).value)
+    print(&#x27;Suspect entity, ensemble 0.3 -&gt;&#x27;, gw.decide(req, suspect_ctx).value)
+    print(&#x27;Canary hit, ensemble 0.3     -&gt;&#x27;, gw.decide(req, canary_ctx).value)
+    print(&#x27;The identical per-request score yields different verdicts because the&#x27;)
+    print(&#x27;behavioural context -- entity risk, session threat, graph, canary -- is read inline.&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Gateway Architecture</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">behavioural_gateway_architecture.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Specifies the inline-versus-batch placement of each behavioural detector relative to the request path per the state-latency coupling, validating that no large-state detector is placed inline. Implements the architecture from Section 13.11 Part 5.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard library only</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># behavioural_gateway_architecture.py
+# Section 13.11: Behavioural Gateway Architecture (Tier Placement)
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class DetectorPlacement:
+    detector: str
+    section: str
+    tier: str          # &#x27;inline&#x27;, &#x27;near_real_time&#x27;, &#x27;batch&#x27;
+    state_size: str    # &#x27;none&#x27;, &#x27;small&#x27;, &#x27;large&#x27;
+
+
+PLACEMENTS: List[DetectorPlacement] = [
+    DetectorPlacement(&#x27;Per-request ensemble&#x27;, &#x27;12.17&#x27;, &#x27;inline&#x27;, &#x27;none&#x27;),
+    DetectorPlacement(&#x27;Canary check&#x27;, &#x27;13.06&#x27;, &#x27;inline&#x27;, &#x27;small&#x27;),
+    DetectorPlacement(&#x27;Entity risk read&#x27;, &#x27;13.10&#x27;, &#x27;inline&#x27;, &#x27;none&#x27;),
+    DetectorPlacement(&#x27;Rate-limit state read&#x27;, &#x27;13.08&#x27;, &#x27;inline&#x27;, &#x27;none&#x27;),
+    DetectorPlacement(&#x27;Session scorer&#x27;, &#x27;13.09&#x27;, &#x27;near_real_time&#x27;, &#x27;small&#x27;),
+    DetectorPlacement(&#x27;Baseline/time-series&#x27;, &#x27;13.03/13.04&#x27;, &#x27;near_real_time&#x27;, &#x27;small&#x27;),
+    DetectorPlacement(&#x27;Output distribution monitor&#x27;, &#x27;13.06&#x27;, &#x27;near_real_time&#x27;, &#x27;small&#x27;),
+    DetectorPlacement(&#x27;Entity profiler&#x27;, &#x27;13.10&#x27;, &#x27;near_real_time&#x27;, &#x27;large&#x27;),
+    DetectorPlacement(&#x27;Drift monitor&#x27;, &#x27;13.05&#x27;, &#x27;batch&#x27;, &#x27;large&#x27;),
+    DetectorPlacement(&#x27;Graph detector&#x27;, &#x27;13.11&#x27;, &#x27;batch&#x27;, &#x27;large&#x27;),
+]
+
+
+def validate_placements(placements: List[DetectorPlacement]) -&gt; List[str]:
+    # Rule: a large-state detector must NOT be inline (13.01 coupling)
+    violations = []
+    for p in placements:
+        if p.tier == &#x27;inline&#x27; and p.state_size == &#x27;large&#x27;:
+            violations.append(f&#x27;{p.detector} ({p.section}) is inline with large state -- violates coupling&#x27;)
+    return violations
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Behavioural detector placement:&#x27;)
+    for tier in (&#x27;inline&#x27;, &#x27;near_real_time&#x27;, &#x27;batch&#x27;):
+        print(f&#x27;\n[{tier}]&#x27;)
+        for p in PLACEMENTS:
+            if p.tier == tier:
+                print(f&#x27;  {p.detector:&lt;28} {p.section:&lt;12} state={p.state_size}&#x27;)
+    violations = validate_placements(PLACEMENTS)
+    print(&#x27;\nPlacement violations:&#x27;, violations if violations else &#x27;none -- architecture is sound&#x27;)
+    print(&#x27;No large-state detector is inline; expensive analysis runs off the path&#x27;)
+    print(&#x27;and exposes cheap summaries the hot path reads.&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Monitoring Dashboard Configuration</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">behavioural_monitoring_dashboard.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Configures the three behavioural monitoring views -- entity-risk, drift, and coordinated-network -- assembling the signals from across Chapter 13 into an operable picture for the security team. Implements the dashboard from Section 13.11 Part 6.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard library only</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># behavioural_monitoring_dashboard.py
+# Section 13.11: Behavioural Monitoring Dashboard Configuration
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+
+@dataclass
+class DashboardView:
+    name: str
+    sources: List[str]
+    panels: List[str]
+
+
+def build_dashboard() -&gt; List[DashboardView]:
+    return [
+        DashboardView(
+            name=&#x27;Entity Risk&#x27;,
+            sources=[&#x27;13.07 rate&#x27;, &#x27;13.09 session threat&#x27;, &#x27;13.06 injection success&#x27;, &#x27;13.10 profile&#x27;],
+            panels=[
+                &#x27;risk score distribution across entities&#x27;,
+                &#x27;entities with sharply increased risk (fingerprint divergence)&#x27;,
+                &#x27;top entities by cross-session risk&#x27;,
+                &#x27;recent account-compromise alerts&#x27;,
+            ],
+        ),
+        DashboardView(
+            name=&#x27;Drift Health&#x27;,
+            sources=[&#x27;13.05 drift&#x27;],
+            panels=[
+                &#x27;population stability index per detector feature&#x27;,
+                &#x27;classifier score-distribution shift over time&#x27;,
+                &#x27;drift alerts with benign/adversarial routing&#x27;,
+                &#x27;retraining triggers and cooldown status&#x27;,
+            ],
+        ),
+        DashboardView(
+            name=&#x27;Coordinated Networks&#x27;,
+            sources=[&#x27;13.11 graph&#x27;],
+            panels=[
+                &#x27;flagged communities with density and coordination&#x27;,
+                &#x27;Sybil and bot-network candidates&#x27;,
+                &#x27;coordinated-campaign timeline&#x27;,
+                &#x27;structural and behavioural evidence per cluster&#x27;,
+            ],
+        ),
+    ]
+
+
+if __name__ == &#x27;__main__&#x27;:
+    for view in build_dashboard():
+        print(f&#x27;\n=== {view.name} view ===&#x27;)
+        print(f&#x27;  sources: {&quot;, &quot;.join(view.sources)}&#x27;)
+        for panel in view.panels:
+            print(f&#x27;  - {panel}&#x27;)
+    print(&#x27;\nThe three views turn the behavioural layer signals into an operable&#x27;)
+    print(&#x27;picture: entity risk, detector/model drift health, and coordinated networks.&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Trying to detect coordinated abuse at the single-entity level, where each account is clean</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The entity profile of 13.10 is a powerful per-entity detector, and once it is in place it is natural
+to assume it covers coordinated abuse too -- surely a coordinated network shows up as suspicious
+entities. Building a separate graph layer seems redundant when per-entity profiling is already
+detecting bad entities.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A coordinated network is designed so that each member account is individually clean: modest rate,
+ordinary endpoints, clean fingerprint. Every single-entity detector passes every member, because the
+attack is not a property of any account -- it is the structure of the relationships between accounts.
+Per-entity profiling sees a hundred clean entities and nothing wrong, and the campaign runs invisibly
+because no level below the graph can represent its signal.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Build the graph layer that analyses entities together as a relationship graph, where the coordinated
+network appears as a dense, synchronised, infrastructure-sharing cluster invisible at the entity
+level. entity_graph_builder.py and graph_anomaly_detector.py operate on the structure between
+entities that single-entity detection cannot see.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Drawing graph edges on a single weak shared attribute, drowning the graph in coincidental structure</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The simplest edge rule links any two entities that share an attribute -- same IP, same credential
+family. It is easy to implement and produces a richly connected graph that looks like it captures lots
+of relationships.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Legitimate traffic is full of incidental sharing: many entities share an IP behind a common NAT, share
+a credential family because they use a common SDK, are active at the same times because of a shared
+time zone. Edges drawn on a single weak shared attribute connect enormous numbers of unrelated
+legitimate entities, and the graph fills with coincidental structure that buries the real coordinated
+clusters in noise. The graph detector finds spurious communities and misses the real ones.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Draw edges that reflect meaningful relationships -- multiple corroborating shared attributes, or a
+shared attribute rare enough to be informative -- and down-weight or prune edges from large
+coincidental sharing groups. entity_graph_builder.py weights edges by group rarity and prunes below a
+corroboration threshold so an edge means a real link, not incidental sharing.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Flagging any dense cluster as coordinated abuse without checking for behavioural coordination</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Community detection finds dense clusters, and a dense cluster of accounts sharing infrastructure looks
+like a coordinated network. Flagging dense clusters directly is the straightforward use of the
+community-detection output.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A legitimate organisation&#x27;s accounts can form a dense cluster because they genuinely share
+infrastructure -- same corporate IP range, same credential provisioning, same SDK. Flagging density
+alone marks the legitimate organisation as a coordinated abuse network, generating false positives on
+exactly the legitimate multi-account customers a business most wants to keep, while a sophisticated
+network that keeps its structure sparser is missed.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Flag a cluster only when its structural density is accompanied by behavioural coordination -- 
+synchronised activity, similar coverage, shared abuse signals, identical behaviour -- which separates
+the coordinated abuse network from the legitimate organisation that merely shares infrastructure.
+graph_anomaly_detector.py requires both density and behavioural coordination above threshold.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Placing the graph detector or the full profile query inline on the request path</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The graph and the profile hold the richest detection signal, and it is tempting to query them directly
+when making a per-request verdict -- traverse the graph to check cluster membership, query the full
+profile -- so the inline decision has maximum context.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The graph is the largest behavioural state and a traversal is expensive; the full profile query is
+likewise costly. Placing either inline adds tens to hundreds of milliseconds to every request, blowing
+the gateway&#x27;s sub-50ms latency budget. The behavioural layer gets disabled for making the API slow,
+and its coverage is lost because the expensive analysis was placed on the wrong tier.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Run the graph detector and the profiler off the hot path -- the graph in batch, the profiler near-
+real-time -- and expose only cheap precomputed summaries (the entity risk score, a graph risk
+adjustment) that the request path reads. behavioural_gateway_architecture.py validates that no large-
+state detector is placed inline, and behavioural_monitoring_gateway.py reads precomputed summaries
+rather than recomputing state.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Integrating the behavioural detectors as a loose collection without a unified gateway and dashboard</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Each behavioural detector works on its own and produces a useful signal, so wiring them together into a
+unified gateway and a coherent dashboard can seem like optional polish once the individual detectors
+exist. The detectors are functional separately.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A loose collection of detectors produces a scatter of independent signals with no unified verdict and
+no operable picture. The gateway cannot combine the per-request score with the behavioural context into
+a single decision, the security team has no coherent view of entity risk, drift health, and
+coordinated networks, and the layer&#x27;s signals are not actionable as a system. The whole is less than
+the sum of its parts because the parts were never integrated.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Integrate the detectors into the behavioural monitoring gateway that combines the inline per-request
+score with the precomputed behavioural summaries into a unified verdict, and into a dashboard with the
+entity-risk, drift, and coordinated-network views that make the layer operable. behavioural_monitoring_gateway.py
+and behavioural_monitoring_dashboard.py provide the unified verdict and the operable picture.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Coordinated abuse has no single-entity signal: a network of individually-clean accounts runs a campaign
+whose only signal is the structure of the relationships between them, invisible to every detector below
+the graph. Section 13.11 builds the graph family and the chapter capstone. The entity-relationship graph
+takes the resolved entities of 13.10 as nodes and draws weighted edges from shared infrastructure,
+behavioural similarity, and synchronised timing -- pruning the coincidental sharing that pervades
+legitimate traffic so edges mean real links. Graph anomaly detection finds coordinated networks through
+community detection and structural-outlier methods, flagging dense clusters that also exhibit behavioural
+coordination, which separates a coordinated abuse network from a legitimate organisation that merely
+shares infrastructure. Sybil and bot networks are caught through structure -- mass-created isolated
+clusters and behaviourally-similar synchronised groups -- independent of individual account behaviour. The
+capstone integrates the whole behavioural layer into the Chapter 12 seven-track gateway as the fourth
+detection layer, governed by the state-latency coupling: the request hot path reads cheap precomputed
+summaries (entity risk, rate-limit state, session threat, canary check), the near-real-time tier runs the
+session, baseline, and profiling detectors, and the batch tier runs the graph detector and drift monitors,
+writing findings back. The result is the complete detection system -- request, session, entity, and
+relationship -- made operable by the entity-risk, drift, and coordinated-network dashboard views, and it is
+the behavioural monitoring gateway that Chapter 14 deploys to production.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Coordinated abuse has no single-entity signal: each account behaves acceptably alone and the attack is the structure between accounts, invisible to every detector below the graph</li><li>The entity-relationship graph takes resolved entities as nodes and draws weighted edges from shared infrastructure, behavioural similarity, and synchronised timing, pruning the coincidental sharing that pervades legitimate traffic so edges mean real links</li><li>Graph anomaly detection flags a cluster as coordinated abuse only when structural density is accompanied by behavioural coordination, separating an abuse network from a legitimate organisation that merely shares infrastructure</li><li>Sybil and bot networks are caught through graph structure -- mass-created isolated clusters and behaviourally-similar synchronised groups -- independent of the individual account behaviour designed to look clean</li><li>The capstone integrates the behavioural layer into the seven-track gateway by the state-latency coupling: cheap summaries inline, the session/baseline/profiler tier near-real-time, the graph and drift tier in batch writing findings back</li><li>The result is the complete detection system seeing request, session, entity, and relationship together, made operable by the entity-risk, drift, and coordinated-network dashboard views -- the behavioural monitoring gateway Chapter 14 deploys</li></ul>
+<h2 class="sh1">Preview Section 13 12</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 13.12: Chapter 13 Summary -- Behavioural Monitoring Architecture and Chapter 14 Preview</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 13.12 synthesises all eleven content sections into the behavioural analysis and monitoring
+architecture and closes the chapter. It reviews the behavioural detection taxonomy and its four signal
+families, the session modelling and feature pipeline, the statistical baselines and time-series anomaly
+detection, the drift detection and model behavioural monitoring, the rate-based detection and smart rate
+limiting, the multi-turn context analysis, and the user behaviour profiling and graph-based detection
+capstone. It presents the behavioural monitoring architecture diagram, the behavioural detector reference
+card, and the sustainability checklist of the requirements for behavioural detection that does not rot --
+the contamination guard, the drift monitor, the risk-score decay, the retraining trigger. It covers the
+common behavioural detection mistakes as a consolidated reference, provides the Chapter 13 knowledge
+assessment quiz and the behavioural monitoring security checklist, and previews Chapter 14, Production
+Deployment, which takes the behavioural monitoring gateway to production: architecture patterns, latency,
+failure modes, observability, and cost optimisation at scale.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 11 Section 11.13: production seven-track gateway -- the gateway this section integrates the behavioural layer into</li><li>Chapter 12 Section 12.17: production ML gateway -- the per-request gateway the behavioural layer sits above</li><li>Chapter 13 Section 13.01: behavioural detection taxonomy -- the four families integrated here and the state-latency coupling</li><li>Chapter 13 Section 13.07: rate-based detection -- the distributed-abuse linkage developed into full graph analysis</li><li>Chapter 13 Section 13.10: user behaviour profiling -- the resolved entities and links that are the graph nodes and edges</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 13.12: chapter summary -- synthesises the behavioural monitoring architecture this capstone completes</li><li>Chapter 14: production deployment -- deploys the behavioural monitoring gateway built here</li><li>Chapter 14 Section 14.06: observability -- operationalises the behavioural monitoring dashboard</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>graph-based-detection</li><li>entity-relationship-graph</li><li>coordinated-network</li><li>community-detection</li><li>structural-outliers</li><li>sybil-detection</li><li>bot-network</li><li>behavioural-monitoring-gateway</li><li>gateway-integration</li><li>state-latency-coupling</li><li>inline-vs-batch</li><li>behavioural-dashboard</li><li>capstone</li><li>owasp-llm04</li><li>owasp-llm10</li><li>chapter-13-graph-family</li></ul>
+</article>

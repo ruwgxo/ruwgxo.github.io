@@ -1,0 +1,892 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 11 · ~6 pages</div>
+<h1>Layer Normalization and Residual Connections</h1>
+<div class="tags"><span class="tag">layer-normalization</span><span class="tag">residual-connections</span><span class="tag">pre-norm-post-norm</span><span class="tag">gradient-flow</span><span class="tag">training-stability</span><span class="tag">normalization-attacks</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Layer Normalization and Residual Connections</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.11</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Layer normalization and residual connections are the architectural glue that makes 
+deep transformers trainable. Without these, transformer training is unstable - gradients 
+explode or vanish, activations saturate, and optimization fails. LayerNorm stabilizes 
+activations by normalizing across features, while residual connections provide gradient 
+highways that bypass deep layers.
+
+The combination enables training transformers with 12, 24, or even 96+ layers. Modern 
+transformers predominantly use pre-norm configuration (normalize before sublayer) which 
+is more stable than the original post-norm. Understanding these components is critical 
+for both implementation and debugging.
+
+For security engineers: Normalization statistics reveal information about training data 
+distribution. Adversaries can manipulate statistics to break normalization, causing 
+model failures. Residual connections create gradient bypass paths that can be exploited 
+for adversarial optimization. Understanding these mechanisms is essential for securing 
+transformer deployments.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand layer normalization: normalize across features per sample</li><li>Compare LayerNorm vs BatchNorm (why LayerNorm for transformers)</li><li>Grasp pre-norm vs post-norm configurations and tradeoffs</li><li>Learn residual connections as gradient highways</li><li>Understand how LayerNorm + residuals enable deep networks</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement layer normalization from scratch (NumPy)</li><li>Build residual connections properly (x + Sublayer(x))</li><li>Create pre-norm and post-norm transformer layers</li><li>Analyze gradient flow through residual connections</li><li>Visualize normalization statistics and effects</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Extract training data statistics from LayerNorm parameters</li><li>Manipulate normalization to cause model failures</li><li>Exploit residual connections for adversarial optimization</li><li>Detect normalization-based backdoors</li><li>Audit normalization statistics for distribution shifts</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.10: Feed-forward networks (what gets normalized)</li><li>Section 3.8: Multi-head attention (another sublayer)</li><li>Chapter 2: Backpropagation and gradient flow</li><li>Statistics: mean, variance, standard deviation</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy broadcasting and axis operations</li><li>Understanding gradient computation</li><li>Numerical stability techniques</li><li>Debugging deep network training</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 10</h3>
+<p class="prose">Section 3.10 covered feed-forward networks - one of two main sublayers in 
+transformer layers (attention being the other). Now we add the architectural 
+components that stabilize training: LayerNorm and residual connections.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.12 will assemble all components into complete transformer encoder 
+and decoder layers, showing how attention, FFN, LayerNorm, and residuals work 
+together to create the full transformer architecture.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Layer Normalization: Stabilizing Activations</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Layer normalization computes mean and variance across features (not batch) and 
+normalizes to zero mean, unit variance. Unlike batch normalization (used in CNNs), 
+LayerNorm normalizes each sample independently, making it ideal for variable-length 
+sequences and small batches. It stabilizes training by preventing activation explosion/
+saturation and enables learning with high learning rates.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Layer Normalization Formula</h3>
+<h4 class="sh3">Normalization Step</h4>
+<p class="prose">For input x ∈ ℝ^d (features for one position):
+
+μ = mean(x) = (1/d) Σ x_i
+σ² = var(x) = (1/d) Σ (x_i - μ)²
+
+x̂_i = (x_i - μ) / √(σ² + ε)
+
+Where ε (epsilon) prevents division by zero (typically 1e-5)</p>
+<h4 class="sh3">Learnable Parameters</h4>
+<p class="prose">LayerNorm has learnable scale and shift:
+
+y_i = γ_i × x̂_i + β_i
+
+Where:
+- γ (gamma): scale parameter (learned)
+- β (beta): shift parameter (learned)
+- Both have dimension d (one per feature)</p>
+<h4 class="sh3">Complete Formula</h4>
+<p class="prose">LayerNorm(x) = γ ⊙ ((x - μ) / √(σ² + ε)) + β
+
+⊙ denotes element-wise multiplication</p>
+<h3 class="sh3">Layer Norm Vs Batch Norm</h3>
+<h4 class="sh3">Batch Normalization</h4>
+<h4 class="sh3">Normalizes Over</h4>
+<p class="prose">Batch dimension (across samples)</p>
+<h4 class="sh3">Statistics</h4>
+<p class="prose">μ, σ² computed over batch for each feature</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">x̂ = (x - μ_batch) / √(σ²_batch + ε)</p>
+<h4 class="sh3">Issues For Transformers</h4>
+<ul class="blist"><li>Depends on batch size (unstable for small batches)</li><li>Different statistics for train vs test (need running stats)</li><li>Problematic for variable-length sequences</li><li>Batch statistics leak information across samples</li></ul>
+<h4 class="sh3">Layer Normalization</h4>
+<h4 class="sh3">Normalizes Over</h4>
+<p class="prose">Feature dimension (within each sample)</p>
+<h4 class="sh3">Statistics</h4>
+<p class="prose">μ, σ² computed per sample across features</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">x̂ = (x - μ_sample) / √(σ²_sample + ε)</p>
+<h4 class="sh3">Advantages For Transformers</h4>
+<ul class="blist"><li>Independent of batch size (works with batch=1)</li><li>Same statistics for train and test (no running stats needed)</li><li>Handles variable-length sequences naturally</li><li>No information leakage across samples</li></ul>
+<h4 class="sh3">Visualization</h4>
+<p class="prose">Batch matrix (batch=4, features=3):
+
+[[x₁₁, x₁₂, x₁₃],    Sample 1
+ [x₂₁, x₂₂, x₂₃],    Sample 2
+ [x₃₁, x₃₂, x₃₃],    Sample 3
+ [x₄₁, x₄₂, x₄₃]]    Sample 4
+
+BatchNorm: Normalize each column (across samples)
+  μ₁ over [x₁₁, x₂₁, x₃₁, x₄₁]
+
+LayerNorm: Normalize each row (across features)
+  μ₁ over [x₁₁, x₁₂, x₁₃]</p>
+<h3 class="sh3">Why Layer Norm Works</h3>
+<h4 class="sh3">Activation Stabilization</h4>
+<p class="prose">Without normalization:
+- Deep networks: activations can explode or vanish
+- Saturation: activations hit extremes (tanh → ±1, sigmoid → 0/1)
+- Training instability: requires tiny learning rates
+
+With LayerNorm:
+- Activations centered (mean=0) and scaled (std=1)
+- Prevents saturation
+- Enables higher learning rates → faster training</p>
+<h4 class="sh3">Gradient Flow</h4>
+<p class="prose">LayerNorm smooths loss landscape:
+- Normalizing inputs reduces curvature
+- Gradients more stable across layers
+- Less sensitive to parameter initialization
+- Faster, more stable optimization</p>
+<h4 class="sh3">Learned Scale Shift</h4>
+<p class="prose">γ and β allow model to learn optimal statistics:
+- If original statistics were good, learn γ ≈ 1, β ≈ 0
+- Model can undo normalization if needed
+- Flexibility to adapt per-layer</p>
+<h3 class="sh3">Where Layer Norm Applied</h3>
+<h4 class="sh3">In Transformer Layer</h4>
+<p class="prose">Two LayerNorm applications per layer:
+
+1. After multi-head attention:
+   LayerNorm(x + Attention(x))
+
+2. After feed-forward network:
+   LayerNorm(x + FFN(x))</p>
+<h4 class="sh3">Per Position</h4>
+<p class="prose">LayerNorm applied independently to each position
+→ Each token&#x27;s features normalized separately</p>
+<h4 class="sh3">Parameter Count</h4>
+<p class="prose">2 × d_model parameters per LayerNorm (γ and β)
+
+Example (BERT-base, d_model=768):
+2 × 768 = 1,536 parameters per LayerNorm
+
+Minimal compared to attention and FFN!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Layer Normalization</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class LayerNormalization:
+    &quot;&quot;&quot;
+    Layer normalization (Ba et al., 2016).
+    
+    LayerNorm(x) = γ ⊙ ((x - μ) / √(σ² + ε)) + β
+    
+    Normalizes across features (last dimension).
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, eps: float = 1e-5):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Feature dimension
+            eps: Small constant for numerical stability
+        &quot;&quot;&quot;
+        self.d_model = d_model
+        self.eps = eps
+        
+        # Learnable parameters
+        self.gamma = np.ones(d_model)   # Scale
+        self.beta = np.zeros(d_model)   # Shift
+    
+    def forward(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Apply layer normalization.
+        
+        Args:
+            x: Input (batch, seq_len, d_model) or (seq_len, d_model)
+        
+        Returns:
+            normalized: Same shape as input
+        &quot;&quot;&quot;
+        # Compute mean and variance along last dimension (features)
+        mean = np.mean(x, axis=-1, keepdims=True)
+        variance = np.var(x, axis=-1, keepdims=True)
+        
+        # Normalize
+        x_normalized = (x - mean) / np.sqrt(variance + self.eps)
+        
+        # Scale and shift
+        output = self.gamma * x_normalized + self.beta
+        
+        return output
+    
+    def __call__(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x)
+
+
+# Example usage
+d_model = 512
+seq_len = 10
+batch_size = 2
+
+layer_norm = LayerNormalization(d_model)
+
+# Random input
+x = np.random.randn(batch_size, seq_len, d_model) * 5 + 10  # Mean≈10, std≈5
+
+# Apply LayerNorm
+x_normalized = layer_norm(x)
+
+print(&quot;=== Layer Normalization ===\n&quot;)
+print(f&quot;Input shape: {x.shape}&quot;)
+print(f&quot;Output shape: {x_normalized.shape}&quot;)
+print()
+
+# Check statistics
+print(&quot;Input statistics (before LayerNorm):&quot;)
+print(f&quot;  Mean: {x.mean():.3f}&quot;)
+print(f&quot;  Std:  {x.std():.3f}&quot;)
+print()
+
+# Per-sample statistics (what LayerNorm normalizes)
+print(&quot;Per-sample statistics (across features):&quot;)
+for i in range(min(2, batch_size)):
+    for j in range(min(2, seq_len)):
+        sample_mean = x[i, j].mean()
+        sample_std = x[i, j].std()
+        norm_mean = x_normalized[i, j].mean()
+        norm_std = x_normalized[i, j].std()
+        print(f&quot;  Batch {i}, Pos {j}:&quot;)
+        print(f&quot;    Before: mean={sample_mean:6.2f}, std={sample_std:5.2f}&quot;)
+        print(f&quot;    After:  mean={norm_mean:6.3f}, std={norm_std:5.3f}&quot;)</code></pre>
+<h3 class="sh3">Compare Batch Vs Layer Norm</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def compare_normalization_methods():
+    &quot;&quot;&quot;Compare BatchNorm vs LayerNorm.&quot;&quot;&quot;
+    
+    print(&quot;\n=== BatchNorm vs LayerNorm Comparison ===\n&quot;)
+    
+    # Create sample data
+    batch_size = 4
+    features = 6
+    x = np.random.randn(batch_size, features) * 3 + 5
+    
+    print(f&quot;Input shape: {x.shape}&quot;)
+    print(f&quot;Input:\n{x}\n&quot;)
+    
+    # Batch Normalization (normalize across batch dimension)
+    print(&quot;Batch Normalization (normalize across batch):&quot;)
+    mean_batch = np.mean(x, axis=0, keepdims=True)  # Mean per feature
+    std_batch = np.std(x, axis=0, keepdims=True)
+    x_batch_norm = (x - mean_batch) / (std_batch + 1e-5)
+    
+    print(f&quot;  Mean per feature: {mean_batch[0, :3]}&quot;)
+    print(f&quot;  After normalization (first sample): {x_batch_norm[0, :3]}&quot;)
+    print(f&quot;  Check: mean of feature 0 across batch = {x_batch_norm[:, 0].mean():.3f}&quot;)
+    print()
+    
+    # Layer Normalization (normalize across feature dimension)
+    print(&quot;Layer Normalization (normalize across features):&quot;)
+    mean_layer = np.mean(x, axis=1, keepdims=True)  # Mean per sample
+    std_layer = np.std(x, axis=1, keepdims=True)
+    x_layer_norm = (x - mean_layer) / (std_layer + 1e-5)
+    
+    print(f&quot;  Mean per sample: {mean_layer[:2, 0]}&quot;)
+    print(f&quot;  After normalization (first sample): {x_layer_norm[0, :3]}&quot;)
+    print(f&quot;  Check: mean of sample 0 across features = {x_layer_norm[0].mean():.3f}&quot;)
+    print()
+    
+    print(&quot;Key difference:&quot;)
+    print(&quot;  BatchNorm: Features have mean=0, std=1 ACROSS batch&quot;)
+    print(&quot;  LayerNorm: Samples have mean=0, std=1 ACROSS features&quot;)
+
+compare_normalization_methods()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Statistics Leakage</h3>
+<p class="prose">LayerNorm statistics (γ, β) reveal training data distribution:
+- Learned γ and β encode typical feature magnitudes
+- Adversary can infer data characteristics from these
+- Example: Large β for dimension 42 → feature 42 often negative
+- Defense: Protect normalization parameters, monitor for anomalies</p>
+<h3 class="sh3">Normalization Manipulation Attacks</h3>
+<p class="prose">Adversary can craft inputs to break normalization:
+- Extreme outliers → skew mean and variance
+- Force σ² → 0 → division by ε (numerical issues)
+- Cause gradient explosion/vanishing through normalization
+- Defense: Clip inputs, validate statistics ranges</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Residual Connections: Gradient Highways</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Residual connections (skip connections, He et al., 2016) add the input directly to 
+the output of a sublayer: output = x + Sublayer(x). This creates gradient highways - 
+during backpropagation, gradients can flow directly through the residual path, 
+bypassing deep layers. This solves the vanishing gradient problem and enables 
+training very deep networks (100+ layers).</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Residual Connection Formula</h3>
+<h4 class="sh3">Without Residual</h4>
+<h4 class="sh3">Forward</h4>
+<p class="prose">y = F(x)</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Deep networks: F can cause gradient vanishing</p>
+<h4 class="sh3">With Residual</h4>
+<h4 class="sh3">Forward</h4>
+<p class="prose">y = x + F(x)</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Gradient flows directly through x (identity mapping)</p>
+<h4 class="sh3">Gradient Flow</h4>
+<p class="prose">Backpropagation:
+
+∂Loss/∂x = ∂Loss/∂y × ∂y/∂x
+         = ∂Loss/∂y × ∂(x + F(x))/∂x
+         = ∂Loss/∂y × (1 + ∂F(x)/∂x)
+
+Key insight:
+- Gradient has two paths: &quot;1&quot; (identity) + &quot;∂F(x)/∂x&quot; (residual)
+- Identity path always contributes 1 → gradient can&#x27;t vanish!
+- Even if ∂F(x)/∂x → 0, gradient still flows through &quot;1&quot;</p>
+<h3 class="sh3">Why Residuals Work</h3>
+<h4 class="sh3">Gradient Highway</h4>
+<p class="prose">Without residual: Gradient flows through ALL layers
+→ Multiply many ∂F/∂x terms
+→ Can vanish (if terms &lt; 1) or explode (if terms &gt; 1)
+
+With residual: Gradient has direct path
+→ Can bypass problematic layers
+→ Stable gradient flow even in deep networks</p>
+<h4 class="sh3">Easier Optimization</h4>
+<p class="prose">Learning residual F(x) is easier than learning full transformation
+
+Without residual: Learn F(x) = desired_output
+With residual: Learn F(x) = desired_output - x
+
+Often desired_output ≈ x (minor refinements)
+→ Learning F(x) ≈ 0 is easier than learning absolute mapping</p>
+<h4 class="sh3">Depth Without Penalty</h4>
+<p class="prose">Can add layers without hurting performance:
+- If layer harmful: Learn F(x) ≈ 0 → y = x (identity)
+- If layer helpful: Learn appropriate F(x)
+
+Result: Deep networks at least as good as shallow</p>
+<h3 class="sh3">Residuals In Transformers</h3>
+<h4 class="sh3">Application Points</h4>
+<h4 class="sh3">After Attention</h4>
+<p class="prose">x + MultiHeadAttention(x)</p>
+<h4 class="sh3">After Ffn</h4>
+<p class="prose">x + FeedForward(x)</p>
+<h4 class="sh3">Dimension Requirement</h4>
+<p class="prose">Residual connection requires matching dimensions:
+
+x: (seq_len, d_model)
+F(x): (seq_len, d_model)
+
+→ Sublayer output must have same shape as input
+→ Why attention and FFN both output d_model dimension</p>
+<h4 class="sh3">Full Transformer Layer</h4>
+<p class="prose"># Attention sublayer
+x1 = x + Attention(LayerNorm(x))  # Pre-norm
+
+# FFN sublayer  
+x2 = x1 + FFN(LayerNorm(x1))      # Pre-norm
+
+Output: x2
+
+Two residual connections per layer!</p>
+<h3 class="sh3">Gradient Flow Analysis</h3>
+<h4 class="sh3">Deep Network Without Residuals</h4>
+<h4 class="sh3">Layers</h4>
+<p class="prose">L layers</p>
+<h4 class="sh3">Gradient</h4>
+<p class="prose">∂Loss/∂x₀ = ∂Loss/∂xₗ × ∏ ∂F_i/∂x_{i-1}</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Product of L terms → vanishing if any &lt; 1</p>
+<h4 class="sh3">Deep Network With Residuals</h4>
+<h4 class="sh3">Gradient</h4>
+<p class="prose">∂Loss/∂x₀ = ∂Loss/∂xₗ × (1 + ∂F_L/∂x_{L-1}) × ... × (1 + ∂F_1/∂x_0)</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Expanded: Many paths through network
+Shortest path: L terms of &quot;1&quot; → gradient = 1
+→ Guaranteed gradient flow!</p>
+<h4 class="sh3">Example 12 Layers</h4>
+<h4 class="sh3">Without Residuals</h4>
+<p class="prose">Gradient ≈ 0.9¹² ≈ 0.28 (vanished!)</p>
+<h4 class="sh3">With Residuals</h4>
+<p class="prose">Shortest path = 1 (perfect flow)</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Residual Connection</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class ResidualConnection:
+    &quot;&quot;&quot;
+    Residual connection with dropout.
+    
+    output = x + Dropout(Sublayer(x))
+    &quot;&quot;&quot;
+    
+    def __init__(self, dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            dropout: Dropout rate for regularization
+        &quot;&quot;&quot;
+        self.dropout = dropout
+    
+    def forward(self, x: np.ndarray, sublayer_output: np.ndarray,
+               training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Apply residual connection.
+        
+        Args:
+            x: Input (batch, seq_len, d_model)
+            sublayer_output: Output from sublayer (same shape)
+            training: Whether in training mode (for dropout)
+        
+        Returns:
+            output: x + sublayer_output (with dropout)
+        &quot;&quot;&quot;
+        # Apply dropout to sublayer output (if training)
+        if training and self.dropout &gt; 0:
+            mask = np.random.binomial(1, 1 - self.dropout, 
+                                     sublayer_output.shape) / (1 - self.dropout)
+            sublayer_output = sublayer_output * mask
+        
+        # Add residual connection
+        return x + sublayer_output
+    
+    def __call__(self, x: np.ndarray, sublayer_output: np.ndarray,
+                training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x, sublayer_output, training)
+
+
+# Example usage
+d_model = 512
+seq_len = 10
+batch_size = 2
+
+residual = ResidualConnection(dropout=0.1)
+
+# Simulate input and sublayer output
+x = np.random.randn(batch_size, seq_len, d_model)
+sublayer_out = np.random.randn(batch_size, seq_len, d_model) * 0.1
+
+# Apply residual
+output = residual(x, sublayer_out, training=True)
+
+print(&quot;\n=== Residual Connection ===\n&quot;)
+print(f&quot;Input shape: {x.shape}&quot;)
+print(f&quot;Sublayer output shape: {sublayer_out.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print()
+print(&quot;Residual connection: output = input + sublayer_output&quot;)
+print(&quot;  → Creates gradient highway for backpropagation&quot;)</code></pre>
+<h3 class="sh3">Demonstrate Gradient Flow</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_gradient_flow():
+    &quot;&quot;&quot;Demonstrate gradient flow with/without residuals.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Gradient Flow Demonstration ===\n&quot;)
+    
+    num_layers = 12
+    
+    # Simulate gradient propagation
+    print(f&quot;Network with {num_layers} layers:\n&quot;)
+    
+    # Without residuals
+    print(&quot;Without residual connections:&quot;)
+    gradient_scale_per_layer = 0.9  # Typical: slightly &lt; 1
+    final_gradient = gradient_scale_per_layer ** num_layers
+    
+    print(f&quot;  Gradient scale per layer: {gradient_scale_per_layer}&quot;)
+    print(f&quot;  Final gradient after {num_layers} layers: {final_gradient:.6f}&quot;)
+    print(f&quot;  → Gradient vanished to {final_gradient*100:.2f}% of original!&quot;)
+    print()
+    
+    # With residuals
+    print(&quot;With residual connections:&quot;)
+    # Simplified: gradient has identity path (scale=1) + residual path
+    # Minimum gradient through identity = 1
+    print(f&quot;  Identity path gradient: 1.0 (always)&quot;)
+    print(f&quot;  → Gradient CANNOT vanish (has direct path)&quot;)
+    print()
+    
+    print(&quot;Comparison:&quot;)
+    print(f&quot;  Without residuals: {final_gradient:.6f} (vanished)&quot;)
+    print(f&quot;  With residuals:    1.0 (preserved)&quot;)
+    print(f&quot;  Improvement:       {1.0/final_gradient:.1f}x better gradient flow&quot;)
+
+demonstrate_gradient_flow()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Adversarial Gradient Optimization</h3>
+<p class="prose">Residual connections create efficient gradient paths:
+- Adversary can optimize attacks via clean gradients
+- Faster adversarial example generation
+- More effective gradient-based attacks
+- Defense: Gradient masking less effective with residuals</p>
+<h3 class="sh3">Bypass Path Exploitation</h3>
+<p class="prose">Residual connections allow bypassing layers:
+- Adversary can inject payload that bypasses detection layer
+- If detection layer = F(x), attack uses identity path
+- Model can&#x27;t force all data through detection
+- Defense: Multiple independent detection points</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Pre-Norm vs Post-Norm Configurations</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The ordering of LayerNorm and residual connections matters significantly. The original 
+transformer used post-norm (apply sublayer, then normalize). Modern transformers 
+predominantly use pre-norm (normalize, then apply sublayer). Pre-norm is more stable, 
+trains faster, and works better for very deep networks.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Post Norm Configuration</h3>
+<h4 class="sh3">Original Transformer</h4>
+<p class="prose">Post-norm (Vaswani et al., 2017):
+
+x1 = LayerNorm(x + Attention(x))
+x2 = LayerNorm(x1 + FFN(x1))</p>
+<h4 class="sh3">Order</h4>
+<p class="prose">1. Residual connection first
+2. LayerNorm second</p>
+<h4 class="sh3">Characteristics</h4>
+<h4 class="sh3">Gradient Flow</h4>
+<p class="prose">Less stable (normalization after residual)</p>
+<h4 class="sh3">Training Speed</h4>
+<p class="prose">Slower (requires warmup)</p>
+<h4 class="sh3">Final Performance</h4>
+<p class="prose">Can be slightly better with careful tuning</p>
+<h4 class="sh3">Depth Limitation</h4>
+<p class="prose">Harder to train very deep (24+ layers)</p>
+<h4 class="sh3">Issues</h4>
+<h4 class="sh3">Warm Up Required</h4>
+<p class="prose">Needs careful learning rate warmup
+→ Start with tiny LR, gradually increase
+→ Otherwise: training explodes early</p>
+<h4 class="sh3">Gradient Instability</h4>
+<p class="prose">Gradients can be large early in training
+→ Normalization happens AFTER residual addition
+→ Unstable optimization</p>
+<h3 class="sh3">Pre Norm Configuration</h3>
+<h4 class="sh3">Modern Transformers</h4>
+<p class="prose">Pre-norm (GPT-2, many modern models):
+
+x1 = x + Attention(LayerNorm(x))
+x2 = x1 + FFN(LayerNorm(x1))</p>
+<h4 class="sh3">Order</h4>
+<p class="prose">1. LayerNorm first
+2. Sublayer second
+3. Residual connection wraps normalized sublayer</p>
+<h4 class="sh3">Characteristics</h4>
+<h4 class="sh3">Gradient Flow</h4>
+<p class="prose">More stable (normalized before processing)</p>
+<h4 class="sh3">Training Speed</h4>
+<p class="prose">Faster (less/no warmup needed)</p>
+<h4 class="sh3">Final Performance</h4>
+<p class="prose">Slightly worse peak but more reliable</p>
+<h4 class="sh3">Depth Limitation</h4>
+<p class="prose">Scales to very deep networks (96+ layers)</p>
+<h4 class="sh3">Advantages</h4>
+<h4 class="sh3">Stable Training</h4>
+<p class="prose">Normalization before sublayer stabilizes inputs
+→ Less gradient explosion
+→ Can use higher learning rates</p>
+<h4 class="sh3">No Warmup</h4>
+<p class="prose">Often trains well without warmup
+→ Simpler training procedure
+→ Faster experimentation</p>
+<h4 class="sh3">Depth Scaling</h4>
+<p class="prose">Enables training very deep models
+→ 100+ layer transformers possible
+→ Post-norm struggles beyond 24 layers</p>
+<h3 class="sh3">Comparison Table</h3>
+<h4 class="sh3">Aspect</h4>
+<p class="prose">Aspect           | Post-Norm      | Pre-Norm
+-----------------|----------------|------------------
+Stability        | Less stable    | More stable
+Warmup needed    | Yes            | No/minimal
+Training speed   | Slower         | Faster
+Peak performance | Slightly better| Slightly worse
+Max depth        | ~24 layers     | 100+ layers
+Ease of use      | Harder         | Easier
+Modern usage     | Rare           | Dominant</p>
+<h3 class="sh3">Why Pre Norm Is Better</h3>
+<h4 class="sh3">Gradient Variance</h4>
+<p class="prose">Post-norm: Gradients vary widely early in training
+→ Requires careful tuning
+
+Pre-norm: Normalized inputs → more consistent gradients
+→ Easier optimization</p>
+<h4 class="sh3">Residual Strength</h4>
+<p class="prose">Post-norm: Residual strength can dominate early
+→ Normalization has to fight large residuals
+
+Pre-norm: Residuals added to normalized outputs
+→ Better balance between residual and sublayer</p>
+<h4 class="sh3">Empirical Success</h4>
+<p class="prose">Most successful recent models use pre-norm:
+- GPT-2, GPT-3: Pre-norm
+- Many BERT variants: Pre-norm
+- T5: Pre-norm
+
+→ Proven at scale</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Transformer Sublayer Prenorm</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class TransformerSublayer:
+    &quot;&quot;&quot;
+    Transformer sublayer with LayerNorm and residual (pre-norm).
+    
+    output = x + Sublayer(LayerNorm(x))
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.layer_norm = LayerNormalization(d_model)
+        self.dropout = dropout
+    
+    def forward(self, x: np.ndarray, sublayer_fn, 
+               training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Apply sublayer with pre-norm and residual.
+        
+        Args:
+            x: Input (batch, seq_len, d_model)
+            sublayer_fn: Function to apply (attention or FFN)
+            training: Whether in training mode
+        
+        Returns:
+            output: x + sublayer(LayerNorm(x))
+        &quot;&quot;&quot;
+        # Pre-norm: Normalize BEFORE sublayer
+        normalized = self.layer_norm(x)
+        
+        # Apply sublayer
+        sublayer_output = sublayer_fn(normalized)
+        
+        # Dropout (if training)
+        if training and self.dropout &gt; 0:
+            mask = np.random.binomial(1, 1 - self.dropout,
+                                     sublayer_output.shape) / (1 - self.dropout)
+            sublayer_output = sublayer_output * mask
+        
+        # Residual connection
+        return x + sublayer_output
+    
+    def __call__(self, x: np.ndarray, sublayer_fn,
+                training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x, sublayer_fn, training)
+
+
+# Example usage
+print(&quot;\n=== Pre-Norm Transformer Sublayer ===\n&quot;)
+
+d_model = 512
+sublayer = TransformerSublayer(d_model, dropout=0.1)
+
+# Simulate input
+x = np.random.randn(2, 10, d_model)
+
+# Simulate sublayer function (e.g., attention or FFN)
+def mock_sublayer(x):
+    return np.random.randn(*x.shape) * 0.1
+
+# Apply sublayer
+output = sublayer(x, mock_sublayer, training=True)
+
+print(f&quot;Input shape: {x.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print()
+print(&quot;Order of operations (pre-norm):&quot;)
+print(&quot;  1. LayerNorm(x)&quot;)
+print(&quot;  2. Sublayer(normalized)&quot;)
+print(&quot;  3. x + sublayer_output&quot;)</code></pre>
+<h3 class="sh3">Compare Prenorm Postnorm</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def compare_prenorm_postnorm():
+    &quot;&quot;&quot;Compare pre-norm vs post-norm configurations.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Pre-Norm vs Post-Norm ===\n&quot;)
+    
+    d_model = 512
+    layer_norm = LayerNormalization(d_model)
+    
+    # Sample input
+    x = np.random.randn(1, 10, d_model) * 5  # Unnormalized
+    
+    # Mock sublayer
+    def sublayer(inp):
+        return np.random.randn(*inp.shape) * 0.5
+    
+    # Post-norm: x + Sublayer(x), then normalize
+    print(&quot;Post-Norm (original transformer):&quot;)
+    sublayer_out_post = sublayer(x)
+    residual_post = x + sublayer_out_post
+    output_post = layer_norm(residual_post)
+    
+    print(f&quot;  1. Sublayer(x)&quot;)
+    print(f&quot;  2. x + sublayer_output (residual)&quot;)
+    print(f&quot;  3. LayerNorm(residual)&quot;)
+    print(f&quot;  Output mean: {output_post.mean():.6f}&quot;)
+    print(f&quot;  Output std:  {output_post.std():.6f}&quot;)
+    print()
+    
+    # Pre-norm: LayerNorm(x), then x + Sublayer(normalized)
+    print(&quot;Pre-Norm (modern transformers):&quot;)
+    normalized = layer_norm(x)
+    sublayer_out_pre = sublayer(normalized)
+    output_pre = x + sublayer_out_pre
+    
+    print(f&quot;  1. LayerNorm(x)&quot;)
+    print(f&quot;  2. Sublayer(normalized)&quot;)
+    print(f&quot;  3. x + sublayer_output (residual)&quot;)
+    print(f&quot;  Output mean: {output_pre.mean():.6f}&quot;)
+    print(f&quot;  Output std:  {output_pre.std():.6f}&quot;)
+    print()
+    
+    print(&quot;Key difference:&quot;)
+    print(&quot;  Post-norm: Final output is normalized → consistent stats&quot;)
+    print(&quot;  Pre-norm: Final output NOT normalized → depends on residual&quot;)
+    print(&quot;  → Pre-norm more stable during training&quot;)
+
+compare_prenorm_postnorm()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Configuration Fingerprinting</h3>
+<p class="prose">Pre-norm vs post-norm creates different statistical patterns:
+- Output statistics differ (post-norm always normalized)
+- Adversary can fingerprint model architecture
+- Infer training procedure from behavior
+- Defense: May want to hide configuration details</p>
+<h3 class="sh3">Stability Exploitation</h3>
+<p class="prose">Less stable configurations (post-norm) more vulnerable:
+- Adversary can cause training instability
+- Exploit gradient explosion in post-norm
+- Force model divergence during fine-tuning
+- Defense: Use stable pre-norm configuration</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">LayerNorm normalizes across features per sample (not across batch)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Stable for small batches and variable-length sequences</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Residual connections create gradient highways: y = x + F(x)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Enable deep networks by preventing gradient vanishing</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Pre-norm (normalize first) more stable than post-norm</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Faster training, no warmup, scales to very deep networks</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">LayerNorm + residuals enable training deep transformers (24+ layers)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Without these, transformer training is unstable and fails</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Learnable γ and β allow model to adapt normalization per layer</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Flexibility to undo normalization if original statistics better</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement layer normalization from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Normalize across features, learnable scale and shift</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement residual connections properly</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">output = x + Sublayer(x), dimensions must match</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Build pre-norm transformer sublayer</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">x + Sublayer(LayerNorm(x)), normalize before processing</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Compare gradient flow with/without residuals</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Show residuals prevent gradient vanishing</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Understand pre-norm vs post-norm tradeoffs</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Pre-norm more stable, post-norm slightly better peak performance</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Normalization statistics reveal training data distribution</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">γ and β parameters leak information about data</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Adversaries can manipulate normalization via outliers</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Extreme inputs skew mean/variance, break normalization</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Residual connections create efficient gradient paths for attacks</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Faster adversarial optimization via clean gradients</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Bypass paths in residuals enable layer evasion</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Attacks can use identity path to skip detection layers</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Less stable configurations (post-norm) more vulnerable</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary can exploit gradient instability</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Normalizing across batch dimension (BatchNorm) instead of features</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use axis=-1 (features) for LayerNorm, not axis=0 (batch)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting learnable γ and β parameters</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">LayerNorm has 2×d_model learnable parameters (scale and shift)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Dimension mismatch in residual connections</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Sublayer output must have SAME shape as input for x + F(x)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using post-norm without learning rate warmup</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Post-norm needs warmup; or use pre-norm instead</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting epsilon (ε) in variance normalization</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always add small ε (1e-5) to prevent division by zero</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 10</h3>
+<ul class="blist"><li>Feed-forward networks (what gets normalized and residual-connected)</li><li>Sublayer outputs that need stabilization</li></ul>
+<h3 class="sh3">From Section 3 8</h3>
+<ul class="blist"><li>Multi-head attention (other sublayer needing LayerNorm + residual)</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.12: Complete transformer encoder/decoder layers</li><li>Assembling attention + FFN + LayerNorm + residuals</li><li>Full transformer architecture</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Complete transformer encoder layer</li><li>Complete transformer decoder layer</li><li>Encoder-decoder attention (cross-attention)</li><li>Stacking multiple layers</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Build complete transformer encoder</li><li>Build complete transformer decoder</li><li>Implement encoder-decoder transformer</li><li>Train transformer from scratch</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Layer normalization and residual connections are the unsung heroes of transformers. 
+Without these, deep transformer training is unstable - gradients explode or vanish, 
+activations saturate, and optimization fails. LayerNorm stabilizes by normalizing 
+activations to zero mean and unit variance across features. Residual connections 
+create gradient highways that prevent vanishing gradients in deep networks.
+
+The combination is powerful: LayerNorm prevents activation explosion/saturation, 
+residuals enable gradient flow, together they allow training 12, 24, 96+ layer 
+transformers. Modern transformers use pre-norm configuration (normalize before 
+sublayer) which is more stable than the original post-norm, trains faster without 
+warmup, and scales to very deep networks.
+
+The mechanics are elegant: LayerNorm computes statistics per sample (unlike BatchNorm 
+which uses batch statistics), making it perfect for variable-length sequences and 
+small batches. Residual connections add input directly to output (y = x + F(x)), 
+creating an identity path that guarantees gradient flow even if F&#x27;s gradient vanishes.
+
+From a security perspective: LayerNorm parameters (γ, β) leak training data 
+distribution information. Adversaries can manipulate normalization via extreme inputs. 
+Residual connections create efficient gradient paths that accelerate adversarial 
+attacks. Less stable configurations (post-norm) are more vulnerable to training 
+instability attacks. Understanding these mechanisms is critical for securing 
+transformer deployments.
+
+Next: Section 3.12 assembles all components into complete transformer encoder and 
+decoder layers, showing how attention, FFN, LayerNorm, and residuals work together 
+to create the full transformer architecture that powers modern LLMs.</p>
+</article>

@@ -1,0 +1,1490 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 9 · Section 2 · ~6 pages</div>
+<h1>Section 9.2: Extraction Taxonomy</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Four extraction goals -- functionality, fidelity, decision-boundary, and prompt
+-- define what adversaries are stealing, how many queries they need, and which
+detection primitive will catch them; the taxonomy is the filing system for
+every attack and defence section that follows.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Without a taxonomy, extraction looks like a single undifferentiated threat:
+an adversary queries the model too many times. That framing produces
+undifferentiated defences -- rate limits that do not distinguish between
+a distillation campaign and a boundary-mapping campaign, and detection
+signals that fire on volume alone rather than on the structural properties
+of the query distribution.
+
+The four extraction goals are meaningfully different in what the adversary
+wants, how many queries are required, what query patterns they produce,
+and which detection primitive covers them. A functionality extractor needs
+a model that generalises across the full input distribution -- thousands to
+millions of queries, distributed across the input space. A fidelity extractor
+needs exact match on a specific input set -- potentially hundreds of queries,
+concentrated on a narrow region. A decision-boundary extractor needs the
+geometry of the classification surface -- queries that deliberately straddle
+classification boundaries. A prompt extractor needs the system prompt -- a
+small number of carefully constructed inference queries that elicit system
+configuration disclosure.
+
+The taxonomy built here is the scaffold for attack sections 9.3 through 9.9
+and for the detection primitive design in Section 9.10. Every attack lives
+in one of four goal quadrants. Every detection primitive covers one or more
+quadrants. The mental model built in Section 9.2 is what makes Section 9.10
+legible and Section 9.11 defensible.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 9.2 of 13. Follows the threat model (Section 9.1). Precedes all four
+attack sections (9.3 through 9.5 on extraction, 9.6 through 9.7 on privacy
+attacks sharing the inference surface). The taxonomy matrix built here is
+referenced throughout Chapters 9 and 10.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 9.1: inference-time threat model and adversary access ladder (foundation for budget analysis in this section)</li><li>Chapter 3: LLM architecture and output distribution properties (prerequisite for prompt extraction mechanics)</li><li>Chapter 2: decision boundaries and classification surfaces (prerequisite for decision-boundary extraction)</li><li>Chapter 5 Section 5.4: OWASP LLM10 framework overview (taxonomy maps to LLM10 sub-risks)</li><li>Chapter 6 Section 6.2: single-prompt system prompt extraction (contrasted with prompt extraction at scale in this section)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why the Taxonomy Matters Before the Attacks</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Every chapter in Part 2 has opened with a framing section before the attack
+sections because the framing determines the detection architecture. Chapter 6
+opened with the injection threat model before building the classifier. Chapter
+8 opened with the poisoning taxonomy before building the auditing pipeline.
+Section 9.2 does the same for extraction.
+
+The risk of skipping the taxonomy is concrete. A defender who treats
+extraction as a single threat class -- adversary queries model excessively --
+will deploy a single-dimensional defence: a volume threshold that fires when
+any user exceeds N queries per hour. That defence has two failure modes.
+First, it blocks legitimate high-volume users (researchers, batch evaluation
+pipelines, automated testing) at the same rate it blocks adversaries.
+Second, a patient adversary who stays below N queries per hour can complete
+a full functionality extraction in weeks without ever triggering the threshold.
+
+A taxonomy-aware defender deploys different detection signals for different
+goals. A functionality extractor&#x27;&#x27;s queries will spread across the input
+distribution; a boundary extractor&#x27;&#x27;s queries will cluster near decision
+surfaces; a prompt extractor&#x27;&#x27;s queries will target system configuration
+disclosure patterns. Each signal fires for the right adversary and not for
+the benign high-volume user whose queries are well-distributed across
+legitimate use cases.
+
+The four-goal taxonomy is not a theoretical nicety. It is the reason Section
+9.10 builds five distinct detection primitives rather than one. Each primitive
+was designed for a specific quadrant of the taxonomy matrix.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Functionality Extraction: Building a Deployable Clone</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Functionality extraction is the dominant extraction goal in commercial threat
+models. The adversary&#x27;&#x27;s objective is a surrogate model that behaves like the
+victim across the full input distribution -- not just on specific inputs, not
+just near decision boundaries, but on the distribution of real-world queries
+that the product would receive. A successful functionality extraction produces
+a deployable model: the adversary can stand up their own inference endpoint
+serving the victim&#x27;&#x27;s capability at their own infrastructure cost.
+
+The adversary motivation is economic. Training a capable model from scratch
+is expensive: data collection, compute, engineering time. A commercial model
+that represents months of training effort can be functionally extracted in
+days of querying if the extraction campaign is well-designed. The attacker
+pays query fees against the victim&#x27;&#x27;s API and training cost for the surrogate;
+the total cost is far below the victim&#x27;&#x27;s training cost if the surrogate
+achieves sufficient fidelity.
+
+The canonical technique is knowledge distillation (Section 9.4): the adversary
+uses the victim API as a teacher, queries it on a large input set, and trains
+a student model on the victim&#x27;&#x27;s outputs. The student learns to mimic the
+teacher without access to the teacher&#x27;&#x27;s weights or training data. The
+resulting surrogate can be deployed, fine-tuned, and distributed without
+the adversary bearing the original training cost.
+
+Query budget for functionality extraction scales with the input distribution
+complexity. A narrow-domain classifier (medical imaging, sentiment analysis)
+may extract in tens of thousands of queries. A general-purpose LLM requires
+a much larger query set to achieve broad functionality coverage. Active
+distillation (Section 9.4) reduces the budget by selecting queries that
+maximally reduce the student&#x27;&#x27;s uncertainty, but the fundamental requirement
+is coverage: the surrogate must see enough of the input space to generalise.
+
+Detection signal: functionality extraction queries are broadly distributed
+across the input space. The query distribution of a legitimate user clusters
+around their use case. The query distribution of a functionality extractor
+spans diverse topics, domains, and input structures -- attempting to cover
+the victim model&#x27;&#x27;s full capability surface. Query diversity is the primary
+detection signal.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Fidelity Extraction: Replicating Specific Behaviour</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Fidelity extraction is targeted where functionality extraction is broad.
+The adversary does not need a general-purpose clone -- they need exact
+behavioural match on a specific set of inputs that they care about. The
+goal is not distributional coverage but replication fidelity on a
+well-defined target input set.
+
+The threat model for fidelity extraction differs from functionality
+extraction in two important ways. First, the adversary knows which inputs
+they care about before beginning the campaign. A financial institution
+might extract a competitor&#x27;&#x27;s credit-scoring model behaviour on a specific
+portfolio of applicant profiles. A security researcher might extract a
+malware classifier&#x27;&#x27;s behaviour on a specific family of samples. The
+target input set is defined by the adversary&#x27;&#x27;s use case, not by the
+victim model&#x27;&#x27;s full capability.
+
+Second, fidelity extraction can succeed with far fewer queries than
+functionality extraction because the adversary does not need to cover the
+full input distribution. If the target set contains 10,000 inputs, the
+adversary needs approximately 10,000 to 50,000 queries to achieve high
+fidelity on that set -- far fewer than the queries required for broad
+distributional coverage.
+
+The surrogate from fidelity extraction is not a general-purpose clone.
+It may behave arbitrarily outside the target input set. For the
+adversary&#x27;&#x27;s purpose, this is not a limitation -- they only need the
+model to behave correctly on the inputs they care about.
+
+Detection signal: fidelity extraction queries are concentrated in a
+narrow region of the input space -- the target set. Unlike functionality
+extraction (broad distribution) or boundary extraction (decision surface
+clustering), fidelity extraction produces query concentration on a
+semantically coherent input cluster. The user concentration analyser
+in Section 9.10 catches this: a user whose queries all fall in a narrow
+semantic neighbourhood is exhibiting fidelity extraction rather than
+legitimate varied usage.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Decision-Boundary Extraction: Mapping the Classification Surface</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Decision-boundary extraction has a different goal from the other three:
+the adversary wants the geometry of the victim model&#x27;&#x27;s classification
+surface rather than a deployable clone or a stolen prompt. The objective
+is to understand where the model transitions between classes -- to map
+the boundary precisely enough to generate inputs that sit on or near it.
+
+Why is the decision boundary itself valuable? Two reasons. First, a
+precise boundary map enables adversarial example generation (Chapter 10):
+the adversary can construct inputs that the model misclassifies with high
+confidence, which is the prerequisite for evasion attacks against
+classifiers used in security-critical contexts (malware detection, fraud
+scoring, content moderation). Second, a boundary map reveals the model&#x27;&#x27;s
+internal logic: what features drive the classification boundary, where the
+model&#x27;&#x27;s confidence is lowest, and which inputs are closest to being
+misclassified without any perturbation.
+
+The technique is black-box decision boundary mapping (Section 9.3): the
+adversary submits input pairs that straddle the classification boundary,
+using the model&#x27;&#x27;s responses to triangulate the boundary&#x27;&#x27;s position in
+input space. Active learning drives query selection: each query is chosen
+to maximally reduce uncertainty about the boundary&#x27;&#x27;s position, making
+boundary extraction significantly more budget-efficient than random
+sampling.
+
+Query budget for boundary extraction is lower than for functionality
+extraction when the input space is high-dimensional but the boundary
+is locally linear. For neural networks with complex, non-linear boundaries,
+the budget scales with the boundary&#x27;&#x27;s complexity rather than the
+distribution&#x27;&#x27;s coverage.
+
+Detection signal: boundary extraction queries cluster near the decision
+surface. Pairs of inputs with opposite class labels and small input
+distance are the signature of boundary probing. The OOD detector and
+boundary query detector in Section 9.10 target this signal specifically:
+benign users do not systematically submit near-boundary input pairs.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Prompt Extraction: Stealing the Operational Configuration</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Prompt extraction is the lowest-budget and most immediately actionable of
+the four extraction goals. The adversary does not need to replicate model
+weights or map decision boundaries -- they need to reconstruct the system
+prompt or hidden instructions that configure the model&#x27;&#x27;s behaviour for a
+specific deployment.
+
+The value of a system prompt extends beyond its literal text. A system
+prompt encodes commercial IP (the product&#x27;&#x27;s unique interaction design,
+persona, and behavioural constraints), security configuration (what the
+model is and is not permitted to do, which tools it can access, which
+content categories it filters), and operational parameters (output format
+requirements, escalation rules, compliance constraints). Extracting the
+system prompt gives the adversary a blueprint for replicating the
+product&#x27;&#x27;s behaviour, a roadmap for finding security configuration gaps,
+and proprietary design decisions that represent engineering investment.
+
+Chapter 6 Section 6.2 covered single-prompt system prompt extraction as
+an injection technique: a single carefully crafted query attempts to elicit
+the system prompt directly. Prompt extraction at scale (Section 9.5) is
+different in mechanism and in defence requirements. The scaled version
+uses many queries -- some direct, some indirect -- to aggregate partial
+leakages into a full reconstruction. No single query needs to succeed
+completely; the aggregation of many small leakages reconstructs the full
+prompt over many requests.
+
+Query budget for prompt extraction is orders of magnitude lower than for
+functionality or boundary extraction. A short system prompt (a few hundred
+tokens) may reconstruct in 50 to 200 queries using aggregation techniques.
+A long, complex system prompt requires more, but the budget remains far
+below the query counts required for the other extraction goals.
+
+Detection signal: prompt extraction queries target system configuration
+disclosure. Direct queries explicitly ask the model to reveal its
+instructions. Indirect queries probe the model&#x27;&#x27;s behavioural constraints
+through carefully constructed inputs whose outputs reveal prompt content
+probabilistically. The query pattern monitor in Section 9.11 includes a
+prompt reconstruction track that identifies both direct and indirect
+prompt extraction patterns.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Budget-Fidelity Tradeoffs and Targeted vs Untargeted Extraction</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Every extraction goal has a budget-fidelity tradeoff curve: as query count
+increases, extraction fidelity increases, up to an asymptotic ceiling
+determined by the adversary&#x27;&#x27;s access level and the goal&#x27;&#x27;s information
+requirements. Understanding these curves is what makes defensive rate
+limiting principled rather than arbitrary.
+
+For functionality extraction, the curve rises steeply at first (the first
+few thousand queries capture the bulk of the model&#x27;&#x27;s common-case behaviour)
+then flattens as the adversary covers increasingly rare input regions. The
+asymptote is the victim model&#x27;&#x27;s full capability -- achievable in theory
+given infinite queries, but practically approached to 80 to 90 percent
+fidelity in far fewer queries than the full training budget requires.
+
+For fidelity extraction on a fixed target set, the curve rises quickly
+and plateaus at near-100 percent fidelity once the target set is covered.
+The plateau is lower in query count than functionality extraction because
+the adversary is not trying to cover the full distribution.
+
+For decision-boundary extraction, the curve&#x27;&#x27;s shape depends on boundary
+complexity. Locally linear boundaries near a target region approach high
+fidelity in hundreds of queries. Complex non-linear boundaries in high-
+dimensional spaces require more, but active learning (choosing boundary-
+straddling queries) provides the steepest possible ascent for the budget.
+
+For prompt extraction, the curve is steep and short: the first few dozen
+queries capture most of the prompt structure, and the curve plateaus once
+the aggregation has covered the prompt&#x27;&#x27;s full content. A small query
+budget produces high-fidelity prompt reconstruction.
+
+The targeted versus untargeted distinction cuts across all four goals.
+Untargeted extraction replicates the victim&#x27;&#x27;s behaviour across the full
+input distribution -- only functionality extraction is inherently untargeted
+(though it can be targeted to a domain). Fidelity, boundary, and prompt
+extraction are all targeted by definition: the adversary specifies the
+input set, boundary region, or prompt content they care about before
+beginning. Targeted extraction is more budget-efficient and more dangerous
+for specific use cases; untargeted extraction produces more generally
+useful surrogates.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">7</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Choosing the Right Defence for the Right Goal</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The taxonomy is not just an analytical tool -- it is the design input for
+the detection and defence architecture. Each extraction goal requires
+a different combination of detection primitives, and a defender who
+applies the taxonomy correctly can prioritise investment based on the
+threat model most relevant to their deployment.
+
+Functionality extraction is best addressed by query diversity monitoring
+(catching adversaries who cover the input space too broadly) combined
+with adaptive rate limiting (imposing budget constraints that make full
+distributional coverage expensive). Output watermarking provides post-hoc
+ownership evidence when functionality extraction succeeds despite prevention.
+
+Fidelity extraction is best addressed by user concentration analysis
+(catching queries concentrated in a narrow semantic region) and query
+cluster detection. The rate limiter contributes but fidelity extraction
+often stays below volume thresholds because the target set is small.
+
+Decision-boundary extraction is best addressed by the boundary query
+detector (catching near-boundary input pairs) and OOD detection (boundary-
+probing queries often fall outside the model&#x27;&#x27;s legitimate input distribution).
+Output perturbation (Section 9.12) degrades the information content of
+boundary-probing queries, forcing higher budget for the same boundary fidelity.
+
+Prompt extraction is best addressed by the prompt reconstruction pattern
+detector in the query monitor and by output-side perturbation that reduces
+the per-query leakage of system configuration. A single direct prompt
+extraction query may be caught by the Chapter 6 injection classifier;
+scaled aggregation prompt extraction requires the query pattern monitor
+to track the cumulative pattern.
+
+The goal-to-detection-signal mapping is the design document for Section
+9.10&#x27;&#x27;s detection primitive library. Each primitive exists because a specific
+goal required it. Sections 9.11 and 9.12 wire these primitives into
+production controls that cover all four quadrants of the taxonomy matrix.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Extraction Taxonomy Matrix: Four Goals by Three Access Levels</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Primary reference matrix for Chapter 9. Maps extraction goals against adversary
+access levels with objective, canonical technique, query budget order-of-
+magnitude, and primary detection signal for each cell.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Extraction Goal</li><li>Adversary Objective</li><li>Black-Box Technique</li><li>Grey-Box Technique</li><li>Approx Query Budget (Black-Box)</li><li>Primary Detection Signal</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Functionality</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Deployable surrogate clone matching victim across full input distribution</p>
+<h3 class="sh3">Black Box Technique</h3>
+<p class="prose">Hard-label distillation on diverse input set (Section 9.4)</p>
+<h3 class="sh3">Grey Box Technique</h3>
+<p class="prose">Soft-label distillation with active query selection (Section 9.4)</p>
+<h3 class="sh3">Budget Black Box</h3>
+<p class="prose">10K-1M+ depending on model complexity and required fidelity</p>
+<h3 class="sh3">Detection Signal</h3>
+<p class="prose">High query diversity across input space; broad topic and domain spread</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Fidelity</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Exact behavioural match on a specific target input set</p>
+<h3 class="sh3">Black Box Technique</h3>
+<p class="prose">Targeted hard-label distillation on the target set (Section 9.4)</p>
+<h3 class="sh3">Grey Box Technique</h3>
+<p class="prose">Targeted soft-label distillation on the target set (Section 9.4)</p>
+<h3 class="sh3">Budget Black Box</h3>
+<p class="prose">1x to 5x the target set size; typically 1K-50K</p>
+<h3 class="sh3">Detection Signal</h3>
+<p class="prose">Query concentration in a narrow semantic region; low input diversity per user</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Decision-Boundary</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Geometry of the classification surface for adversarial example generation</p>
+<h3 class="sh3">Black Box Technique</h3>
+<p class="prose">Boundary pair probing; active learning toward classification boundary (Section 9.3)</p>
+<h3 class="sh3">Grey Box Technique</h3>
+<p class="prose">Confidence-guided boundary triangulation (Section 9.3)</p>
+<h3 class="sh3">Budget Black Box</h3>
+<p class="prose">100-100K depending on boundary complexity and dimensionality</p>
+<h3 class="sh3">Detection Signal</h3>
+<p class="prose">Near-boundary input pairs; opposite-label inputs with small distance; OOD query clustering</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Prompt</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">System prompt and operational configuration reconstruction</p>
+<h3 class="sh3">Black Box Technique</h3>
+<p class="prose">Direct elicitation queries and indirect aggregation (Section 9.5)</p>
+<h3 class="sh3">Grey Box Technique</h3>
+<p class="prose">Same as black-box; soft labels do not add information for text prompt reconstruction</p>
+<h3 class="sh3">Budget Black Box</h3>
+<p class="prose">50-500 queries for typical system prompts</p>
+<h3 class="sh3">Detection Signal</h3>
+<p class="prose">System configuration disclosure query patterns; instruction elicitation phrasing; aggregation across many partial leakages</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Budget-Fidelity Tradeoff Summary</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Approximate budget ranges and fidelity ceiling for each extraction goal across
+access levels. Values are order-of-magnitude estimates derived from published
+extraction research. Specific model-dependent benchmarks are in Section 9.3 and 9.4.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Extraction Goal</li><li>Low Budget (100-1K queries) Fidelity</li><li>Medium Budget (1K-100K queries) Fidelity</li><li>High Budget (100K+ queries) Fidelity</li><li>Grey-Box Budget Reduction Factor</li><li>Active Learning Budget Reduction Factor</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Functionality</p>
+<h3 class="sh3">Low Budget</h3>
+<p class="prose">Partial; common-case behaviour only; fails on rare inputs</p>
+<h3 class="sh3">Medium Budget</h3>
+<p class="prose">70-85% fidelity on held-out test set for narrow-domain models</p>
+<h3 class="sh3">High Budget</h3>
+<p class="prose">90%+ fidelity achievable for narrow-domain; 70-80% for general LLMs</p>
+<h3 class="sh3">Grey Box Reduction</h3>
+<p class="prose">5-50x</p>
+<h3 class="sh3">Active Learning Reduction</h3>
+<p class="prose">2-10x additional reduction on top of access level gain</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Fidelity</p>
+<h3 class="sh3">Low Budget</h3>
+<p class="prose">Near-100% fidelity if target set size is under 100</p>
+<h3 class="sh3">Medium Budget</h3>
+<p class="prose">Near-100% fidelity for target sets up to 10K inputs</p>
+<h3 class="sh3">High Budget</h3>
+<p class="prose">Near-100% fidelity for target sets up to 100K inputs</p>
+<h3 class="sh3">Grey Box Reduction</h3>
+<p class="prose">3-20x</p>
+<h3 class="sh3">Active Learning Reduction</h3>
+<p class="prose">2-5x for target set coverage</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Decision-Boundary</p>
+<h3 class="sh3">Low Budget</h3>
+<p class="prose">Local boundary approximation near a specific input; not globally useful</p>
+<h3 class="sh3">Medium Budget</h3>
+<p class="prose">Regional boundary map; sufficient for targeted adversarial example generation</p>
+<h3 class="sh3">High Budget</h3>
+<p class="prose">Global boundary geometry for lower-dimensional models</p>
+<h3 class="sh3">Grey Box Reduction</h3>
+<p class="prose">5-50x (confidence scores greatly accelerate boundary triangulation)</p>
+<h3 class="sh3">Active Learning Reduction</h3>
+<p class="prose">5-20x (active learning is the defining technique for boundary extraction)</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Prompt</p>
+<h3 class="sh3">Low Budget</h3>
+<p class="prose">Near-complete reconstruction for short prompts (under 200 tokens)</p>
+<h3 class="sh3">Medium Budget</h3>
+<p class="prose">Full reconstruction for complex multi-paragraph system prompts</p>
+<h3 class="sh3">High Budget</h3>
+<p class="prose">Full reconstruction plus adversarial variants probing configuration gaps</p>
+<h3 class="sh3">Grey Box Reduction</h3>
+<p class="prose">1x (soft labels do not add information for text prompt reconstruction)</p>
+<h3 class="sh3">Active Learning Reduction</h3>
+<p class="prose">2-5x (targeted aggregation queries are more efficient than random)</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Goal-to-Detection-Signal Mapping</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Maps each extraction goal to the detection primitives that cover it.
+Primitives are defined in Section 9.10; production implementation in Sections 9.11 and 9.12.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Extraction Goal</li><li>Primary Detection Primitive</li><li>Secondary Detection Primitive</li><li>Output-Side Defence</li><li>Section References</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Functionality</p>
+<h3 class="sh3">Primary</h3>
+<p class="prose">Query diversity monitor (input space coverage rate per user)</p>
+<h3 class="sh3">Secondary</h3>
+<p class="prose">Adaptive rate limiter (budget enforcement against sustained campaigns)</p>
+<h3 class="sh3">Output Side</h3>
+<p class="prose">Output watermarking (post-hoc ownership evidence in surrogate)</p>
+<h3 class="sh3">Sections</h3>
+<p class="prose">9.10, 9.11, 9.12</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Fidelity</p>
+<h3 class="sh3">Primary</h3>
+<p class="prose">User concentration analyser (semantic cluster concentration per user)</p>
+<h3 class="sh3">Secondary</h3>
+<p class="prose">Query pattern monitor (low input diversity signal)</p>
+<h3 class="sh3">Output Side</h3>
+<p class="prose">Output perturbation (reduces fidelity of surrogate on target set)</p>
+<h3 class="sh3">Sections</h3>
+<p class="prose">9.10, 9.11, 9.12</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Decision-Boundary</p>
+<h3 class="sh3">Primary</h3>
+<p class="prose">Boundary query detector (near-boundary input pair identification)</p>
+<h3 class="sh3">Secondary</h3>
+<p class="prose">OOD detector (boundary-probing queries often fall outside training distribution)</p>
+<h3 class="sh3">Output Side</h3>
+<p class="prose">Output perturbation (degrades boundary information per query)</p>
+<h3 class="sh3">Sections</h3>
+<p class="prose">9.10, 9.11, 9.12</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Prompt</p>
+<h3 class="sh3">Primary</h3>
+<p class="prose">Prompt reconstruction pattern detector (direct and indirect elicitation signals)</p>
+<h3 class="sh3">Secondary</h3>
+<p class="prose">Query monitor cumulative pattern (aggregation across many partial-leakage queries)</p>
+<h3 class="sh3">Output Side</h3>
+<p class="prose">Output perturbation (reduces per-query system configuration leakage)</p>
+<h3 class="sh3">Sections</h3>
+<p class="prose">9.5, 9.10, 9.11, 9.12</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ATLAS Sub-Technique Cross-Reference by Extraction Goal</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Maps each extraction goal to the ATLAS sub-technique it falls under and its OWASP LLM10 sub-risk.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Extraction Goal</li><li>ATLAS Sub-Technique</li><li>ATLAS Name</li><li>OWASP LLM10 Sub-Risk</li><li>Targeted or Untargeted</li><li>Primary Chapter 9 Section</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Functionality</p>
+<h3 class="sh3">Atlas Technique</h3>
+<p class="prose">AML.T0040 + AML.T0044</p>
+<h3 class="sh3">Atlas Name</h3>
+<p class="prose">ML Model Inference API Access + Full ML Model Access</p>
+<h3 class="sh3">Owasp Sub Risk</h3>
+<p class="prose">LLM10.1 (intentional copying of model functionality)</p>
+<h3 class="sh3">Targeted</h3>
+<p class="prose">Untargeted (full distribution) or domain-targeted</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">9.4 (distillation attacks)</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Fidelity</p>
+<h3 class="sh3">Atlas Technique</h3>
+<p class="prose">AML.T0040 + AML.T0044</p>
+<h3 class="sh3">Atlas Name</h3>
+<p class="prose">ML Model Inference API Access + Full ML Model Access</p>
+<h3 class="sh3">Owasp Sub Risk</h3>
+<p class="prose">LLM10.1 (targeted behaviour replication)</p>
+<h3 class="sh3">Targeted</h3>
+<p class="prose">Targeted (specific input set)</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">9.4 (distillation attacks, targeted variant)</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Decision-Boundary</p>
+<h3 class="sh3">Atlas Technique</h3>
+<p class="prose">AML.T0040</p>
+<h3 class="sh3">Atlas Name</h3>
+<p class="prose">ML Model Inference API Access</p>
+<h3 class="sh3">Owasp Sub Risk</h3>
+<p class="prose">LLM10.1 (classification surface reconstruction)</p>
+<h3 class="sh3">Targeted</h3>
+<p class="prose">Targeted (specific boundary region) or global</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">9.3 (query-based extraction fundamentals)</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Prompt</p>
+<h3 class="sh3">Atlas Technique</h3>
+<p class="prose">AML.T0040 + AML.T0024</p>
+<h3 class="sh3">Atlas Name</h3>
+<p class="prose">ML Model Inference API Access + Exfiltration via ML Inference API</p>
+<h3 class="sh3">Owasp Sub Risk</h3>
+<p class="prose">LLM10.2 (system prompt and configuration extraction)</p>
+<h3 class="sh3">Targeted</h3>
+<p class="prose">Targeted (specific prompt content)</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">9.5 (prompt extraction at scale)</p>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">extraction_taxonomy.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the full four-goal by three-access-level extraction taxonomy as
+structured data. Provides a lookup function that returns the full taxonomy
+entry for a given goal and access level combination, and a render function
+that prints the complete matrix. Used as the reference data structure
+imported by later deliverables in this section.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Taxonomy is fully data-driven via ExtractionGoal and TaxonomyCell dataclasses.
+No hardcoded per-goal or per-access-level conditionals.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># extraction_taxonomy.py
+# Chapter 9 Section 9.2 -- Extraction Taxonomy Matrix
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class TaxonomyCell:
+    goal: str
+    access_level: str
+    adversary_objective: str
+    canonical_technique: str
+    approx_query_budget: str
+    primary_detection_signal: str
+    atlas_techniques: List[str]
+    owasp_sub_risk: str
+    section_references: List[str]
+
+
+@dataclass
+class ExtractionGoal:
+    name: str
+    description: str
+    targeted: str  # &#x27;targeted&#x27;, &#x27;untargeted&#x27;, or &#x27;both&#x27;
+    cells: Dict[str, TaxonomyCell]  # keyed by access_level
+
+
+EXTRACTION_TAXONOMY: Dict[str, ExtractionGoal] = {
+    &#x27;functionality&#x27;: ExtractionGoal(
+        name=&#x27;functionality&#x27;,
+        description=&#x27;Deployable surrogate clone matching victim across full input distribution&#x27;,
+        targeted=&#x27;untargeted&#x27;,
+        cells={
+            &#x27;black_box&#x27;: TaxonomyCell(
+                goal=&#x27;functionality&#x27;,
+                access_level=&#x27;black_box&#x27;,
+                adversary_objective=&#x27;Deployable surrogate matching victim across full input distribution&#x27;,
+                canonical_technique=&#x27;Hard-label distillation on diverse input set&#x27;,
+                approx_query_budget=&#x27;10K-1M+ depending on model complexity&#x27;,
+                primary_detection_signal=&#x27;High query diversity across input space; broad topic and domain spread&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.4&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+            ),
+            &#x27;grey_box&#x27;: TaxonomyCell(
+                goal=&#x27;functionality&#x27;,
+                access_level=&#x27;grey_box&#x27;,
+                adversary_objective=&#x27;Deployable surrogate matching victim across full input distribution&#x27;,
+                canonical_technique=&#x27;Soft-label distillation with active query selection&#x27;,
+                approx_query_budget=&#x27;200-200K (5-50x reduction vs black-box)&#x27;,
+                primary_detection_signal=&#x27;High query diversity; soft-label API access exploitation pattern&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.4&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+            ),
+            &#x27;white_box&#x27;: TaxonomyCell(
+                goal=&#x27;functionality&#x27;,
+                access_level=&#x27;white_box&#x27;,
+                adversary_objective=&#x27;Deployable surrogate or direct weight copy&#x27;,
+                canonical_technique=&#x27;Direct weight copy or gradient-based distillation&#x27;,
+                approx_query_budget=&#x27;Zero for direct copy; minimal for gradient-based&#x27;,
+                primary_detection_signal=&#x27;Weight access event; watermark detection in surrogate post-deployment&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.4&#x27;, &#x27;9.12&#x27;],
+            ),
+        },
+    ),
+    &#x27;fidelity&#x27;: ExtractionGoal(
+        name=&#x27;fidelity&#x27;,
+        description=&#x27;Exact behavioural match on a specific target input set&#x27;,
+        targeted=&#x27;targeted&#x27;,
+        cells={
+            &#x27;black_box&#x27;: TaxonomyCell(
+                goal=&#x27;fidelity&#x27;,
+                access_level=&#x27;black_box&#x27;,
+                adversary_objective=&#x27;Exact match on adversary-defined target input set&#x27;,
+                canonical_technique=&#x27;Targeted hard-label distillation on target set&#x27;,
+                approx_query_budget=&#x27;1x-5x target set size; typically 1K-50K&#x27;,
+                primary_detection_signal=&#x27;Query concentration in narrow semantic region; low per-user input diversity&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.4&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;],
+            ),
+            &#x27;grey_box&#x27;: TaxonomyCell(
+                goal=&#x27;fidelity&#x27;,
+                access_level=&#x27;grey_box&#x27;,
+                adversary_objective=&#x27;Exact match on adversary-defined target input set&#x27;,
+                canonical_technique=&#x27;Targeted soft-label distillation on target set&#x27;,
+                approx_query_budget=&#x27;0.05x-0.3x of black-box equivalent&#x27;,
+                primary_detection_signal=&#x27;Query concentration in narrow semantic region; grey-box API exploitation&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.4&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;],
+            ),
+            &#x27;white_box&#x27;: TaxonomyCell(
+                goal=&#x27;fidelity&#x27;,
+                access_level=&#x27;white_box&#x27;,
+                adversary_objective=&#x27;Exact match via direct weight access or gradient computation&#x27;,
+                canonical_technique=&#x27;Gradient-based fine-tuning on target set using victim weights&#x27;,
+                approx_query_budget=&#x27;Zero query cost; requires weight access&#x27;,
+                primary_detection_signal=&#x27;Weight access event; watermark in derivative model&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.7&#x27;, &#x27;9.12&#x27;],
+            ),
+        },
+    ),
+    &#x27;decision_boundary&#x27;: ExtractionGoal(
+        name=&#x27;decision_boundary&#x27;,
+        description=&#x27;Geometry of the classification surface for adversarial example generation&#x27;,
+        targeted=&#x27;both&#x27;,
+        cells={
+            &#x27;black_box&#x27;: TaxonomyCell(
+                goal=&#x27;decision_boundary&#x27;,
+                access_level=&#x27;black_box&#x27;,
+                adversary_objective=&#x27;Map classification boundary for adversarial example generation&#x27;,
+                canonical_technique=&#x27;Boundary pair probing; active learning toward classification boundary&#x27;,
+                approx_query_budget=&#x27;100-100K depending on boundary complexity&#x27;,
+                primary_detection_signal=&#x27;Near-boundary input pairs; opposite-label inputs with small input distance&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.3&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;],
+            ),
+            &#x27;grey_box&#x27;: TaxonomyCell(
+                goal=&#x27;decision_boundary&#x27;,
+                access_level=&#x27;grey_box&#x27;,
+                adversary_objective=&#x27;Map classification boundary using confidence scores for triangulation&#x27;,
+                canonical_technique=&#x27;Confidence-guided boundary triangulation&#x27;,
+                approx_query_budget=&#x27;2-20x reduction vs black-box; confidence greatly accelerates triangulation&#x27;,
+                primary_detection_signal=&#x27;Low-confidence query clustering; systematic confidence probing pattern&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.3&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;],
+            ),
+            &#x27;white_box&#x27;: TaxonomyCell(
+                goal=&#x27;decision_boundary&#x27;,
+                access_level=&#x27;white_box&#x27;,
+                adversary_objective=&#x27;Exact boundary geometry via gradient computation&#x27;,
+                canonical_technique=&#x27;Gradient-based boundary mapping (FGSM, PGD -- see Chapter 10)&#x27;,
+                approx_query_budget=&#x27;Zero query cost; gradient access eliminates probing requirement&#x27;,
+                primary_detection_signal=&#x27;Not detectable at query time; post-hoc via adversarial example analysis&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;],
+                owasp_sub_risk=&#x27;LLM10.1&#x27;,
+                section_references=[&#x27;9.3&#x27;, &#x27;9.7&#x27;],
+            ),
+        },
+    ),
+    &#x27;prompt&#x27;: ExtractionGoal(
+        name=&#x27;prompt&#x27;,
+        description=&#x27;System prompt and operational configuration reconstruction via inference queries&#x27;,
+        targeted=&#x27;targeted&#x27;,
+        cells={
+            &#x27;black_box&#x27;: TaxonomyCell(
+                goal=&#x27;prompt&#x27;,
+                access_level=&#x27;black_box&#x27;,
+                adversary_objective=&#x27;Reconstruct system prompt and operational configuration&#x27;,
+                canonical_technique=&#x27;Direct elicitation queries and indirect aggregation&#x27;,
+                approx_query_budget=&#x27;50-500 for typical system prompts&#x27;,
+                primary_detection_signal=&#x27;Instruction elicitation phrasing; configuration disclosure query patterns&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0024&#x27;],
+                owasp_sub_risk=&#x27;LLM10.2&#x27;,
+                section_references=[&#x27;9.5&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+            ),
+            &#x27;grey_box&#x27;: TaxonomyCell(
+                goal=&#x27;prompt&#x27;,
+                access_level=&#x27;grey_box&#x27;,
+                adversary_objective=&#x27;Reconstruct system prompt; soft labels do not add information for text&#x27;,
+                canonical_technique=&#x27;Same as black-box; grey-box access provides no advantage for prompt extraction&#x27;,
+                approx_query_budget=&#x27;50-500 (no reduction from grey-box; text prompt not in output distribution)&#x27;,
+                primary_detection_signal=&#x27;Same as black-box prompt extraction signals&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0024&#x27;],
+                owasp_sub_risk=&#x27;LLM10.2&#x27;,
+                section_references=[&#x27;9.5&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+            ),
+            &#x27;white_box&#x27;: TaxonomyCell(
+                goal=&#x27;prompt&#x27;,
+                access_level=&#x27;white_box&#x27;,
+                adversary_objective=&#x27;Prompt extraction via weight analysis or direct configuration access&#x27;,
+                canonical_technique=&#x27;KV-cache analysis or direct system prompt access if configuration is accessible&#x27;,
+                approx_query_budget=&#x27;Zero if configuration is accessible; otherwise same as black-box&#x27;,
+                primary_detection_signal=&#x27;Configuration access event; not detectable via query monitoring&#x27;,
+                atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;, &#x27;AML.T0024&#x27;],
+                owasp_sub_risk=&#x27;LLM10.2&#x27;,
+                section_references=[&#x27;9.5&#x27;, &#x27;9.12&#x27;],
+            ),
+        },
+    ),
+}
+
+
+def lookup(goal: str, access_level: str) -&gt; Optional[TaxonomyCell]:
+    &#x27;&#x27;&#x27;
+    Return the taxonomy cell for a given extraction goal and access level.
+    Returns None if the combination is not in the taxonomy.
+    &#x27;&#x27;&#x27;
+    extraction_goal = EXTRACTION_TAXONOMY.get(goal)
+    if extraction_goal is None:
+        return None
+    return extraction_goal.cells.get(access_level)
+
+
+def render_taxonomy_summary() -&gt; None:
+    print(&#x27;EXTRACTION TAXONOMY -- Chapter 9 Section 9.2&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for goal_name, goal in EXTRACTION_TAXONOMY.items():
+        print(f&#x27;\nGoal: {goal_name.upper()} ({goal.targeted})&#x27;)
+        print(f&#x27;  {goal.description}&#x27;)
+        for level, cell in goal.cells.items():
+            print(f&#x27;  [{level}]&#x27;)
+            print(f&#x27;    Technique: {cell.canonical_technique}&#x27;)
+            print(f&#x27;    Budget:    {cell.approx_query_budget}&#x27;)
+            print(f&#x27;    Signal:    {cell.primary_detection_signal}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_taxonomy_summary()</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">budget_fidelity_model.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Models the budget-fidelity tradeoff curve for each extraction goal using a
+logarithmic growth function parameterised by goal and access level. Provides
+a project_fidelity() function that estimates achievable fidelity for a given
+query budget, and a queries_for_fidelity() function that estimates the query
+budget required to reach a target fidelity level.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. Requires only stdlib math.
+Curve parameters are data-driven per goal and access level. No hardcoded
+per-goal arithmetic -- BudgetFidelityParams drives all calculations.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># budget_fidelity_model.py
+# Chapter 9 Section 9.2 -- Budget-Fidelity Tradeoff Model
+# Single quotes throughout per book convention.
+
+import math
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class BudgetFidelityParams:
+    goal: str
+    access_level: str
+    # Logistic growth model: fidelity = ceiling / (1 + exp(-k * (q - q_half)))
+    # ceiling: maximum achievable fidelity (0.0 to 1.0)
+    # k: growth rate (steepness of the curve)
+    # q_half: query count at which fidelity reaches ceiling/2
+    ceiling: float
+    k: float
+    q_half: float
+    note: str
+
+
+# Parameters derived from published extraction research (approximate).
+# Tramer et al. 2016, Papernot et al. 2017, Carlini et al. 2021.
+BUDGET_FIDELITY_PARAMS: Dict[Tuple[str, str], BudgetFidelityParams] = {
+    (&#x27;functionality&#x27;, &#x27;black_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;functionality&#x27;, access_level=&#x27;black_box&#x27;,
+        ceiling=0.92, k=0.00003, q_half=80000,
+        note=&#x27;Narrow-domain classifier. LLM ceiling is lower (~0.75) at similar budget.&#x27;,
+    ),
+    (&#x27;functionality&#x27;, &#x27;grey_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;functionality&#x27;, access_level=&#x27;grey_box&#x27;,
+        ceiling=0.94, k=0.00015, q_half=20000,
+        note=&#x27;Soft-label output provides ~5x effective budget increase.&#x27;,
+    ),
+    (&#x27;fidelity&#x27;, &#x27;black_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;fidelity&#x27;, access_level=&#x27;black_box&#x27;,
+        ceiling=0.99, k=0.001, q_half=3000,
+        note=&#x27;Target set of 1000 inputs; fidelity on target set, not full distribution.&#x27;,
+    ),
+    (&#x27;fidelity&#x27;, &#x27;grey_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;fidelity&#x27;, access_level=&#x27;grey_box&#x27;,
+        ceiling=0.99, k=0.005, q_half=600,
+        note=&#x27;Soft-label provides ~5x budget reduction for target set coverage.&#x27;,
+    ),
+    (&#x27;decision_boundary&#x27;, &#x27;black_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;decision_boundary&#x27;, access_level=&#x27;black_box&#x27;,
+        ceiling=0.88, k=0.0002, q_half=15000,
+        note=&#x27;Regional boundary map; ceiling limited by curse of dimensionality.&#x27;,
+    ),
+    (&#x27;decision_boundary&#x27;, &#x27;grey_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;decision_boundary&#x27;, access_level=&#x27;grey_box&#x27;,
+        ceiling=0.95, k=0.001, q_half=3000,
+        note=&#x27;Confidence scores greatly accelerate boundary triangulation.&#x27;,
+    ),
+    (&#x27;prompt&#x27;, &#x27;black_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;prompt&#x27;, access_level=&#x27;black_box&#x27;,
+        ceiling=0.97, k=0.05, q_half=100,
+        note=&#x27;Short-to-medium system prompt (100-500 tokens). Ceiling near-perfect.&#x27;,
+    ),
+    (&#x27;prompt&#x27;, &#x27;grey_box&#x27;): BudgetFidelityParams(
+        goal=&#x27;prompt&#x27;, access_level=&#x27;grey_box&#x27;,
+        ceiling=0.97, k=0.05, q_half=100,
+        note=&#x27;Grey-box provides no advantage for text prompt reconstruction.&#x27;,
+    ),
+}
+
+
+def project_fidelity(goal: str, access_level: str, query_budget: int) -&gt; Optional[float]:
+    &#x27;&#x27;&#x27;
+    Estimate achievable fidelity for a given query budget, extraction goal,
+    and adversary access level. Returns None if the combination is not modelled.
+    &#x27;&#x27;&#x27;
+    params = BUDGET_FIDELITY_PARAMS.get((goal, access_level))
+    if params is None:
+        return None
+    exponent = -params.k * (query_budget - params.q_half)
+    fidelity = params.ceiling / (1.0 + math.exp(exponent))
+    return round(min(fidelity, params.ceiling), 4)
+
+
+def queries_for_fidelity(goal: str, access_level: str, target_fidelity: float) -&gt; Optional[int]:
+    &#x27;&#x27;&#x27;
+    Estimate the query budget required to reach a target fidelity level.
+    Returns None if the target is above the ceiling or the combination is not modelled.
+    &#x27;&#x27;&#x27;
+    params = BUDGET_FIDELITY_PARAMS.get((goal, access_level))
+    if params is None:
+        return None
+    if target_fidelity &gt;= params.ceiling:
+        return None  # above ceiling; not achievable
+    ratio = params.ceiling / target_fidelity - 1.0
+    queries = params.q_half - math.log(ratio) / params.k
+    return max(1, int(math.ceil(queries)))
+
+
+def render_tradeoff_table(query_counts: Optional[List[int]] = None) -&gt; None:
+    if query_counts is None:
+        query_counts = [100, 1000, 10000, 100000, 500000]
+    print(&#x27;BUDGET-FIDELITY TRADEOFF TABLE -- Chapter 9 Section 9.2&#x27;)
+    print(f&#x27;{&quot;Goal + Access&quot;:&lt;30} &#x27; + &#x27; &#x27;.join(f&#x27;{q:&gt;8}q&#x27; for q in query_counts))
+    print(&#x27;-&#x27; * (30 + 10 * len(query_counts)))
+    for (goal, level), params in BUDGET_FIDELITY_PARAMS.items():
+        label = f&#x27;{goal}/{level}&#x27;
+        row = f&#x27;{label:&lt;30} &#x27;
+        for q in query_counts:
+            fidelity = project_fidelity(goal, level, q)
+            if fidelity is not None:
+                row += f&#x27;{fidelity:&gt;8.1%} &#x27;
+            else:
+                row += f&#x27;{&quot;N/A&quot;:&gt;8} &#x27;
+        print(row)
+        print(f&#x27;  {&quot;Note:&quot;:&lt;28} {params.note}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_tradeoff_table()
+    print()
+    # Example: estimate budget required for 80% fidelity functionality extraction
+    budget = queries_for_fidelity(&#x27;functionality&#x27;, &#x27;black_box&#x27;, 0.80)
+    print(f&#x27;Queries for 80% functionality fidelity (black-box): {budget:,}&#x27;)
+    budget_grey = queries_for_fidelity(&#x27;functionality&#x27;, &#x27;grey_box&#x27;, 0.80)
+    print(f&#x27;Queries for 80% functionality fidelity (grey-box):  {budget_grey:,}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">goal_detection_signal_mapper.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the goal-to-detection-signal mapping as structured data. Provides a
+get_detection_coverage() function that takes a list of deployed detection
+primitives and returns a per-goal coverage report showing which extraction
+goals are fully, partially, or not covered.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Coverage evaluation is data-driven via DetectionCoverage dataclass and
+GOAL_DETECTION_MAP. No hardcoded per-goal coverage conditionals.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># goal_detection_signal_mapper.py
+# Chapter 9 Section 9.2 -- Goal-to-Detection-Signal Mapping
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Set
+
+
+@dataclass
+class GoalDetectionEntry:
+    goal: str
+    primary_primitive: str
+    secondary_primitive: str
+    output_side_defence: str
+    required_primitives: List[str]
+    section_references: List[str]
+
+
+GOAL_DETECTION_MAP: Dict[str, GoalDetectionEntry] = {
+    &#x27;functionality&#x27;: GoalDetectionEntry(
+        goal=&#x27;functionality&#x27;,
+        primary_primitive=&#x27;query_diversity_monitor&#x27;,
+        secondary_primitive=&#x27;adaptive_rate_limiter&#x27;,
+        output_side_defence=&#x27;output_watermarker&#x27;,
+        required_primitives=[&#x27;query_diversity_monitor&#x27;, &#x27;adaptive_rate_limiter&#x27;],
+        section_references=[&#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+    ),
+    &#x27;fidelity&#x27;: GoalDetectionEntry(
+        goal=&#x27;fidelity&#x27;,
+        primary_primitive=&#x27;user_concentration_analyser&#x27;,
+        secondary_primitive=&#x27;query_pattern_monitor&#x27;,
+        output_side_defence=&#x27;output_perturbator&#x27;,
+        required_primitives=[&#x27;user_concentration_analyser&#x27;, &#x27;query_pattern_monitor&#x27;],
+        section_references=[&#x27;9.10&#x27;, &#x27;9.11&#x27;],
+    ),
+    &#x27;decision_boundary&#x27;: GoalDetectionEntry(
+        goal=&#x27;decision_boundary&#x27;,
+        primary_primitive=&#x27;boundary_query_detector&#x27;,
+        secondary_primitive=&#x27;ood_detector&#x27;,
+        output_side_defence=&#x27;output_perturbator&#x27;,
+        required_primitives=[&#x27;boundary_query_detector&#x27;, &#x27;ood_detector&#x27;],
+        section_references=[&#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+    ),
+    &#x27;prompt&#x27;: GoalDetectionEntry(
+        goal=&#x27;prompt&#x27;,
+        primary_primitive=&#x27;prompt_reconstruction_pattern_detector&#x27;,
+        secondary_primitive=&#x27;query_monitor_cumulative_pattern&#x27;,
+        output_side_defence=&#x27;output_perturbator&#x27;,
+        required_primitives=[&#x27;prompt_reconstruction_pattern_detector&#x27;, &#x27;query_monitor_cumulative_pattern&#x27;],
+        section_references=[&#x27;9.5&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+    ),
+}
+
+
+def get_detection_coverage(deployed_primitives: List[str]) -&gt; Dict[str, str]:
+    &#x27;&#x27;&#x27;
+    Given a list of deployed detection primitive names, return per-goal coverage status.
+    Status: &#x27;full&#x27;, &#x27;partial&#x27;, or &#x27;none&#x27;.
+    &#x27;&#x27;&#x27;
+    deployed_set: Set[str] = set(deployed_primitives)
+    coverage: Dict[str, str] = {}
+    for goal, entry in GOAL_DETECTION_MAP.items():
+        matched = [p for p in entry.required_primitives if p in deployed_set]
+        if len(matched) == len(entry.required_primitives):
+            coverage[goal] = &#x27;full&#x27;
+        elif len(matched) &gt; 0:
+            coverage[goal] = &#x27;partial&#x27;
+        else:
+            coverage[goal] = &#x27;none&#x27;
+    return coverage
+
+
+def render_signal_map() -&gt; None:
+    print(&#x27;GOAL-TO-DETECTION-SIGNAL MAP -- Chapter 9 Section 9.2&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for goal, entry in GOAL_DETECTION_MAP.items():
+        print(f&#x27;\nGoal: {goal.upper()}&#x27;)
+        print(f&#x27;  Primary:    {entry.primary_primitive}&#x27;)
+        print(f&#x27;  Secondary:  {entry.secondary_primitive}&#x27;)
+        print(f&#x27;  Output:     {entry.output_side_defence}&#x27;)
+        print(f&#x27;  Sections:   {&quot;, &quot;.join(entry.section_references)}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_signal_map()
+    print()
+    example_deployed = [&#x27;query_diversity_monitor&#x27;, &#x27;adaptive_rate_limiter&#x27;, &#x27;ood_detector&#x27;]
+    coverage = get_detection_coverage(example_deployed)
+    print(&#x27;Coverage with example deployed primitives:&#x27;)
+    for goal, status in coverage.items():
+        print(f&#x27;  {goal}: {status}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">atlas_goal_crossref.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Provides a cross-reference between extraction goals and ATLAS sub-techniques.
+Implements a get_techniques_for_goal() function and an inverse
+get_goals_for_technique() function, enabling bidirectional navigation between
+the Chapter 9 extraction taxonomy and the ATLAS framework.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Bidirectional index is built dynamically from GOAL_ATLAS_MAP -- no
+hardcoded per-technique goal lists.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># atlas_goal_crossref.py
+# Chapter 9 Section 9.2 -- ATLAS Sub-Technique Cross-Reference by Extraction Goal
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Set
+
+
+@dataclass
+class GoalAtlasEntry:
+    goal: str
+    atlas_techniques: List[str]
+    owasp_sub_risk: str
+    targeted: str
+    primary_section: str
+    detection_section: str
+
+
+GOAL_ATLAS_MAP: Dict[str, GoalAtlasEntry] = {
+    &#x27;functionality&#x27;: GoalAtlasEntry(
+        goal=&#x27;functionality&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+        owasp_sub_risk=&#x27;LLM10.1&#x27;,
+        targeted=&#x27;untargeted&#x27;,
+        primary_section=&#x27;9.4&#x27;,
+        detection_section=&#x27;9.11&#x27;,
+    ),
+    &#x27;fidelity&#x27;: GoalAtlasEntry(
+        goal=&#x27;fidelity&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+        owasp_sub_risk=&#x27;LLM10.1&#x27;,
+        targeted=&#x27;targeted&#x27;,
+        primary_section=&#x27;9.4&#x27;,
+        detection_section=&#x27;9.11&#x27;,
+    ),
+    &#x27;decision_boundary&#x27;: GoalAtlasEntry(
+        goal=&#x27;decision_boundary&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;],
+        owasp_sub_risk=&#x27;LLM10.1&#x27;,
+        targeted=&#x27;both&#x27;,
+        primary_section=&#x27;9.3&#x27;,
+        detection_section=&#x27;9.11&#x27;,
+    ),
+    &#x27;prompt&#x27;: GoalAtlasEntry(
+        goal=&#x27;prompt&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0024&#x27;],
+        owasp_sub_risk=&#x27;LLM10.2&#x27;,
+        targeted=&#x27;targeted&#x27;,
+        primary_section=&#x27;9.5&#x27;,
+        detection_section=&#x27;9.11&#x27;,
+    ),
+}
+
+
+def _build_technique_index(goal_map: Dict[str, GoalAtlasEntry]) -&gt; Dict[str, List[str]]:
+    &#x27;&#x27;&#x27;Build inverse index from ATLAS technique to list of extraction goals.&#x27;&#x27;&#x27;
+    index: Dict[str, List[str]] = {}
+    for goal, entry in goal_map.items():
+        for technique in entry.atlas_techniques:
+            index.setdefault(technique, []).append(goal)
+    return index
+
+
+_TECHNIQUE_INDEX: Dict[str, List[str]] = _build_technique_index(GOAL_ATLAS_MAP)
+
+
+def get_techniques_for_goal(goal: str) -&gt; List[str]:
+    &#x27;&#x27;&#x27;Return the ATLAS sub-techniques associated with a given extraction goal.&#x27;&#x27;&#x27;
+    entry = GOAL_ATLAS_MAP.get(goal)
+    return entry.atlas_techniques if entry else []
+
+
+def get_goals_for_technique(technique: str) -&gt; List[str]:
+    &#x27;&#x27;&#x27;Return the extraction goals associated with a given ATLAS sub-technique.&#x27;&#x27;&#x27;
+    return _TECHNIQUE_INDEX.get(technique, [])
+
+
+def render_crossref() -&gt; None:
+    print(&#x27;ATLAS GOAL CROSS-REFERENCE -- Chapter 9 Section 9.2&#x27;)
+    print(&#x27;=&#x27; * 60)
+    print(&#x27;\nGoal -&gt; Techniques:&#x27;)
+    for goal, entry in GOAL_ATLAS_MAP.items():
+        print(f&#x27;  {goal:&lt;20} {&quot;, &quot;.join(entry.atlas_techniques):&lt;30} ({entry.owasp_sub_risk})&#x27;)
+    print(&#x27;\nTechnique -&gt; Goals:&#x27;)
+    for technique, goals in sorted(_TECHNIQUE_INDEX.items()):
+        print(f&#x27;  {technique:&lt;15} {&quot;, &quot;.join(goals)}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_crossref()
+    print()
+    print(f&#x27;Techniques for functionality: {get_techniques_for_goal(&quot;functionality&quot;)}&#x27;)
+    print(f&#x27;Goals for AML.T0024:          {get_goals_for_technique(&quot;AML.T0024&quot;)}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">defender_decision_tree.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Implements a defender decision tree that classifies an observed query pattern
+into the most likely extraction goal. Takes observable signals from the query
+monitor and returns the ranked extraction goal hypotheses with confidence
+scores and recommended detection primitives. Intended as the classification
+layer that sits above the raw query monitor output in Section 9.11.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Signal scoring is fully data-driven via GoalSignalProfile dataclass list.
+No hardcoded per-goal if/else blocks. Confidence is normalised signal
+overlap fraction across the profile.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># defender_decision_tree.py
+# Chapter 9 Section 9.2 -- Defender Decision Tree
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Set, Tuple
+
+
+@dataclass
+class GoalSignalProfile:
+    goal: str
+    positive_signals: List[str]   # signals that increase confidence in this goal
+    negative_signals: List[str]   # signals that decrease confidence in this goal
+    recommended_primitives: List[str]
+    escalation_action: str
+
+
+GOAL_SIGNAL_PROFILES: List[GoalSignalProfile] = [
+    GoalSignalProfile(
+        goal=&#x27;functionality&#x27;,
+        positive_signals=[
+            &#x27;high_query_diversity&#x27;,
+            &#x27;broad_topic_spread&#x27;,
+            &#x27;multi_domain_queries&#x27;,
+            &#x27;sustained_high_volume&#x27;,
+            &#x27;systematic_input_coverage&#x27;,
+        ],
+        negative_signals=[
+            &#x27;narrow_semantic_cluster&#x27;,
+            &#x27;prompt_elicitation_phrasing&#x27;,
+            &#x27;near_boundary_pairs&#x27;,
+        ],
+        recommended_primitives=[&#x27;query_diversity_monitor&#x27;, &#x27;adaptive_rate_limiter&#x27;, &#x27;output_watermarker&#x27;],
+        escalation_action=&#x27;rate_limit_user_and_alert_tier2&#x27;,
+    ),
+    GoalSignalProfile(
+        goal=&#x27;fidelity&#x27;,
+        positive_signals=[
+            &#x27;narrow_semantic_cluster&#x27;,
+            &#x27;low_per_user_input_diversity&#x27;,
+            &#x27;repeated_similar_inputs&#x27;,
+            &#x27;target_domain_concentration&#x27;,
+        ],
+        negative_signals=[
+            &#x27;high_query_diversity&#x27;,
+            &#x27;prompt_elicitation_phrasing&#x27;,
+            &#x27;near_boundary_pairs&#x27;,
+        ],
+        recommended_primitives=[&#x27;user_concentration_analyser&#x27;, &#x27;query_pattern_monitor&#x27;, &#x27;output_perturbator&#x27;],
+        escalation_action=&#x27;rate_limit_user_and_alert_tier2&#x27;,
+    ),
+    GoalSignalProfile(
+        goal=&#x27;decision_boundary&#x27;,
+        positive_signals=[
+            &#x27;near_boundary_pairs&#x27;,
+            &#x27;opposite_label_close_inputs&#x27;,
+            &#x27;ood_query_clustering&#x27;,
+            &#x27;low_confidence_query_concentration&#x27;,
+            &#x27;systematic_input_perturbation&#x27;,
+        ],
+        negative_signals=[
+            &#x27;high_query_diversity&#x27;,
+            &#x27;narrow_semantic_cluster&#x27;,
+            &#x27;prompt_elicitation_phrasing&#x27;,
+        ],
+        recommended_primitives=[&#x27;boundary_query_detector&#x27;, &#x27;ood_detector&#x27;, &#x27;output_perturbator&#x27;],
+        escalation_action=&#x27;block_and_alert_tier1&#x27;,
+    ),
+    GoalSignalProfile(
+        goal=&#x27;prompt&#x27;,
+        positive_signals=[
+            &#x27;prompt_elicitation_phrasing&#x27;,
+            &#x27;instruction_disclosure_queries&#x27;,
+            &#x27;configuration_probing_pattern&#x27;,
+            &#x27;system_context_inference_queries&#x27;,
+        ],
+        negative_signals=[
+            &#x27;high_query_diversity&#x27;,
+            &#x27;near_boundary_pairs&#x27;,
+            &#x27;low_per_user_input_diversity&#x27;,
+        ],
+        recommended_primitives=[&#x27;prompt_reconstruction_pattern_detector&#x27;, &#x27;query_monitor_cumulative_pattern&#x27;, &#x27;output_perturbator&#x27;],
+        escalation_action=&#x27;block_and_alert_tier1&#x27;,
+    ),
+]
+
+
+@dataclass
+class GoalHypothesis:
+    goal: str
+    confidence: float  # 0.0 to 1.0
+    matched_signals: List[str]
+    contradicted_signals: List[str]
+    recommended_primitives: List[str]
+    escalation_action: str
+
+
+def classify_query_pattern(observed_signals: List[str]) -&gt; List[GoalHypothesis]:
+    &#x27;&#x27;&#x27;
+    Classify an observed query pattern into ranked extraction goal hypotheses.
+    Returns goals sorted by confidence (descending).
+    Confidence = (positive_matches - negative_matches) / total_profile_signals,
+    clamped to [0.0, 1.0].
+    &#x27;&#x27;&#x27;
+    observed_set: Set[str] = set(observed_signals)
+    hypotheses: List[GoalHypothesis] = []
+
+    for profile in GOAL_SIGNAL_PROFILES:
+        matched = [s for s in profile.positive_signals if s in observed_set]
+        contradicted = [s for s in profile.negative_signals if s in observed_set]
+        total_signals = len(profile.positive_signals) + len(profile.negative_signals)
+        raw_score = len(matched) - len(contradicted)
+        confidence = max(0.0, raw_score / total_signals) if total_signals &gt; 0 else 0.0
+        hypotheses.append(GoalHypothesis(
+            goal=profile.goal,
+            confidence=round(confidence, 4),
+            matched_signals=matched,
+            contradicted_signals=contradicted,
+            recommended_primitives=profile.recommended_primitives,
+            escalation_action=profile.escalation_action,
+        ))
+
+    hypotheses.sort(key=lambda h: h.confidence, reverse=True)
+    return hypotheses
+
+
+def render_classification(observed_signals: List[str]) -&gt; None:
+    print(&#x27;DEFENDER DECISION TREE -- Chapter 9 Section 9.2&#x27;)
+    print(f&#x27;Observed signals: {observed_signals}&#x27;)
+    print(&#x27;=&#x27; * 60)
+    hypotheses = classify_query_pattern(observed_signals)
+    for i, h in enumerate(hypotheses, 1):
+        print(f&#x27;\n{i}. Goal: {h.goal.upper()} (confidence: {h.confidence:.1%})&#x27;)
+        print(f&#x27;   Matched:      {h.matched_signals}&#x27;)
+        print(f&#x27;   Contradicted: {h.contradicted_signals}&#x27;)
+        print(f&#x27;   Primitives:   {h.recommended_primitives}&#x27;)
+        print(f&#x27;   Escalation:   {h.escalation_action}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # Example: signals consistent with decision-boundary extraction
+    example_signals = [
+        &#x27;near_boundary_pairs&#x27;,
+        &#x27;opposite_label_close_inputs&#x27;,
+        &#x27;ood_query_clustering&#x27;,
+        &#x27;systematic_input_perturbation&#x27;,
+    ]
+    render_classification(example_signals)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating all extraction attempts as the same threat and deploying a single undifferentiated volume threshold</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Extraction is perceived as a query-volume problem: the adversary queries
+too much. A volume threshold feels like a complete defence because it targets
+the one property all extraction attacks share. Teams skip the taxonomy because
+it requires more design effort than a single rate limit.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The threshold blocks legitimate high-volume users (batch evaluation, automated
+testing, research pipelines) while missing patient adversaries who stay below
+the volume ceiling. A prompt extractor needs 50 to 500 queries -- well below
+any reasonable volume threshold. A boundary extractor issues individually
+benign queries at a low rate. Neither is caught by volume alone.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Deploy detection primitives aligned to each extraction goal: diversity
+monitoring for functionality, concentration analysis for fidelity, boundary
+pair detection for decision-boundary, and prompt elicitation pattern
+detection for prompt. Volume thresholds are one input to the adaptive rate
+limiter, not the complete defence.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Conflating prompt extraction with single-prompt injection (the Chapter 6 threat model)</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Both attacks involve system prompts. Chapter 6 Section 6.2 covered single-
+prompt injection where a single carefully crafted query attempts to elicit
+the system prompt. Readers carry that frame into Chapter 9 and assume the
+Chapter 6 classifier handles prompt extraction.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The Chapter 6 injection classifier catches obvious direct elicitation attempts
+but has no visibility into aggregation-based prompt extraction: the adversary
+issues many indirect queries, each individually benign, that together
+reconstruct the system prompt. The classifier scores each query independently
+and finds nothing actionable.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Prompt extraction at scale requires cumulative query pattern monitoring
+(Section 9.11) rather than single-request classification. The Chapter 6
+classifier remains in the ensemble for single-prompt injection; Section 9.11
+adds a prompt reconstruction track that accumulates indirect leakage signals
+across many requests.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Assuming decision-boundary extraction only matters for image classifiers</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The canonical boundary extraction literature (Tramer et al. 2016, Section 9.3)
+focuses on image classifiers and tabular ML models. The visual intuition of
+a decision boundary applies more naturally to classification than to text
+generation. Readers assume LLMs are not vulnerable to boundary extraction.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">LLMs used as classifiers -- content moderation, spam detection, safety
+filtering, intent classification -- have decision boundaries that are
+exploitable via the same probing techniques. An adversary who maps the
+safety filter&#x27;&#x27;s boundary can construct inputs that consistently evade it.
+This is the Chapter 10 connection: boundary extraction is the precursor
+to adversarial example generation against any classifier, including LLM-based
+ones.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Apply boundary extraction threat modelling to any model that makes binary
+or categorical decisions, regardless of architecture. For LLMs used as
+text generators, boundary extraction is less applicable; for LLMs used as
+classifiers (the increasingly common deployment pattern), it is directly
+relevant.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Using query budget estimates from black-box scenarios to design defences against grey-box APIs</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Budget-fidelity curves from the literature are typically reported for
+black-box access because it is the harder extraction scenario and produces
+more conservative (defender-friendly) estimates. Teams use these estimates
+to set rate limits without checking whether their API actually returns
+soft labels or probability distributions.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The rate limit is set based on a 100,000-query extraction scenario when the
+API returns soft labels and the actual attack requires 2,000 to 20,000
+queries. The adversary completes the extraction campaign well within the
+rate limit budget before the defender&#x27;&#x27;s threshold fires.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Audit the API&#x27;&#x27;s output fields before setting rate limits. If the API returns
+probability distributions, apply grey-box budget estimates (5 to 50x lower
+than black-box) to the rate limit design. Consider removing probability
+distributions from the API response if the product does not require them.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Mapping extraction goals to ATLAS techniques and stopping there without connecting to detection controls</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">ATLAS mapping is a compliance and reporting requirement in many security
+programmes. Teams complete the taxonomy exercise, record the ATLAS technique
+IDs, and move on. The mapping is treated as documentation rather than as
+the input to detection control design.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The organisation has a well-documented threat taxonomy with no corresponding
+detection primitives. An extraction campaign maps cleanly to AML.T0040 in
+the threat register, but the query monitor that would detect it was never
+built because the taxonomy exercise ended before the control design began.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Use the taxonomy matrix as the design document for detection controls.
+Every cell in the four-goal by three-access-level matrix that is in scope
+for the deployment should map to at least one deployed detection primitive.
+The goal-to-detection-signal map (Table 3 and Deliverable 3) is the
+bridge between taxonomy and implementation.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Four extraction goals define the Chapter 9 attack landscape. Functionality
+extraction builds a deployable clone matching the victim across the full input
+distribution -- the dominant commercial threat because it produces a working
+product replacement. Fidelity extraction targets exact behavioural match on a
+specific input set -- targeted, budget-efficient, and sufficient for the
+adversary&#x27;&#x27;s use case. Decision-boundary extraction maps the classification
+surface for adversarial example generation -- the precursor to Chapter 10
+evasion attacks. Prompt extraction reconstructs the system prompt and
+operational configuration at very low query budget -- cheap, immediately
+actionable, and leaking both IP and security configuration. The four goals
+differ in query budget, query pattern, required adversary access level,
+and optimal detection primitive. Undifferentiated volume thresholds cover
+none of them adequately. The taxonomy matrix and defender decision tree
+in this section are the design inputs for the detection primitive library
+in Section 9.10 and the production controls in Sections 9.11 and 9.12.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Functionality extraction is the dominant commercial threat; it produces a deployable clone via distillation</li><li>Prompt extraction is the lowest-budget and most immediately actionable goal; 50-500 queries reconstruct a typical system prompt</li><li>Decision-boundary extraction is the precursor to adversarial example generation; it connects extraction (Chapter 9) to evasion (Chapter 10)</li><li>Grey-box APIs give adversaries a 5-50x query budget discount for functionality and boundary extraction; output design is a security decision</li><li>Each extraction goal requires a different detection primitive; volume thresholds alone cover none adequately</li><li>The defender decision tree classifies observed query patterns to the most likely goal, enabling targeted primitive deployment</li></ul>
+<h2 class="sh1">Preview Section 03</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 9.3: Query-Based Extraction Fundamentals -- Black-Box Decision Boundary Mapping</p>
+<h3 class="sh2">Preview</h3>
+<p class="prose">Section 9.2 named the four extraction goals and placed them in a taxonomy
+matrix. Section 9.3 builds the first attack implementation: black-box decision
+boundary mapping, the foundational primitive that underpins decision-boundary
+extraction and informs the distillation attacks in Section 9.4. The section
+establishes the canonical Tramer et al. 2016 result -- a linear model extracted
+in O(d) queries -- and builds the active learning loop that makes boundary
+mapping budget-efficient. The detection insight from Section 9.3 is the one
+that drives the boundary query detector in Section 9.10: extraction queries
+cluster near decision boundaries while benign queries cluster in high-density
+input regions. Understanding why that clustering occurs mechanistically is what
+makes the detector design defensible rather than heuristic.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 2: decision boundaries and classification surfaces</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Prerequisite for understanding decision-boundary extraction mechanics in Section 9.3</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 3: LLM output distribution properties</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Prerequisite for soft-label distillation and prompt extraction mechanics</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 5 Section 5.4: OWASP LLM10 framework</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Taxonomy maps to LLM10.1 and LLM10.2 sub-risks; Tables 1 and 4 provide the mapping</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 6 Section 6.2: single-prompt system prompt extraction</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Contrasted with scaled aggregation prompt extraction in prose part 5 and common mistake 2</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.1: adversary access ladder and query budget framing</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Access level column in the taxonomy matrix; budget-fidelity curve parameterisation</p>
+<h3 class="sh2">Forward References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.3: Query-Based Extraction Fundamentals</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Implements decision-boundary extraction (one cell of the taxonomy matrix)</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.4: Distillation Attacks</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Implements functionality and fidelity extraction (two goal rows of the matrix)</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.5: Prompt Extraction at Scale</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Implements prompt extraction (fourth goal row of the matrix)</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.10: Detection Primitives</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Builds the five primitives called out in Table 3 and Deliverable 3</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.11: Production Query Monitor and Rate Limiter</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Production implementation of input-side primitives from Table 3</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.12: Output Watermarking and Perturbation</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Production implementation of output-side primitives from Table 3</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 10: Adversarial Machine Learning</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Decision-boundary extraction is the precursor to Chapter 10 evasion attacks</p>
+</article>

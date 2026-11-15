@@ -1,0 +1,979 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 3 · ~6 pages</div>
+<h1>Word Embeddings: Semantic Vector Spaces</h1>
+<div class="tags"><span class="tag">word-embeddings</span><span class="tag">distributional-semantics</span><span class="tag">vector-spaces</span><span class="tag">cosine-similarity</span><span class="tag">embedding-security</span><span class="tag">dense-representations</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Word Embeddings: Semantic Vector Spaces</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.3</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Word embeddings are the foundation of modern NLP. They transform discrete tokens 
+(from Section 3.2) into continuous, dense vectors that capture semantic meaning. 
+Unlike one-hot encoding where all words are equally dissimilar, embeddings place 
+similar words close together in vector space.
+
+This geometric representation enables neural networks to generalize: if the model 
+learns that &quot;cat&quot; behaves a certain way, it automatically knows &quot;kitten&quot; and 
+&quot;feline&quot; behave similarly. This is the key to making neural NLP work.
+
+For security engineers: Embeddings encode everything the model &quot;knows&quot; about words, 
+including biases, associations, and patterns learned from training data. Adversaries 
+can craft inputs with similar embeddings to benign concepts while triggering 
+malicious behaviors. Understanding embedding geometry reveals both model capabilities 
+and vulnerabilities.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand why dense embeddings outperform sparse one-hot encoding</li><li>Grasp distributional semantics: &#x27;a word is known by the company it keeps&#x27;</li><li>Learn how semantic relationships become geometric relationships</li><li>Understand embedding dimensionality tradeoffs (50 vs 300 dimensions)</li><li>Recognize limitations of static (non-contextual) embeddings</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement embedding lookup layer from scratch</li><li>Calculate cosine similarity between word vectors</li><li>Perform vector arithmetic for analogies (king - man + woman = queen)</li><li>Visualize embedding spaces in 2D using dimensionality reduction</li><li>Initialize random embeddings and understand learned vs random</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Identify how embeddings encode biases from training data</li><li>Understand adversarial embedding attacks (semantic perturbations)</li><li>Recognize embedding poisoning during training</li><li>Detect when embeddings leak sensitive associations</li><li>Audit embedding spaces for hidden correlations</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.1: One-hot encoding, vocabulary, sparse representations</li><li>Section 3.2: Tokenization (tokens → IDs)</li><li>Linear algebra: vectors, dot products, cosine similarity</li><li>Chapter 2: Neural network basics, gradient descent</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy matrix operations</li><li>Vector mathematics (addition, subtraction, normalization)</li><li>Basic visualization with matplotlib</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 2</h3>
+<p class="prose">Section 3.2 gave us tokens (discrete IDs). Now we map those IDs to dense 
+vectors. Token ID → Embedding lookup → Dense vector for neural network.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.4 will teach how to LEARN these embeddings from text using Word2Vec. 
+Here we focus on understanding WHAT embeddings are and WHY they work.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">From Sparse to Dense: The Embedding Revolution</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">One-hot encoding represents words as sparse, high-dimensional vectors where each 
+word is orthogonal to every other word. Embeddings compress this into dense, 
+low-dimensional vectors where similar words are geometrically close. This is the 
+fundamental innovation that made neural NLP practical.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">One Hot Encoding Problems</h3>
+<h4 class="sh3">Recap</h4>
+<p class="prose">From Section 3.1 - one-hot vectors</p>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Each word = vector with 1 at word index, 0 everywhere else</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Vocabulary</h4>
+<p class="prose">[&#x27;cat&#x27;, &#x27;dog&#x27;, &#x27;bird&#x27;, &#x27;fish&#x27;]</p>
+<h4 class="sh3">Cat Vector</h4>
+<p class="prose">[1, 0, 0, 0]</p>
+<h4 class="sh3">Dog Vector</h4>
+<p class="prose">[0, 1, 0, 0]</p>
+<h4 class="sh3">Bird Vector</h4>
+<p class="prose">[0, 0, 1, 0]</p>
+<h4 class="sh3">Fish Vector</h4>
+<p class="prose">[0, 0, 0, 1]</p>
+<h4 class="sh3">Dimensionality</h4>
+<p class="prose">vocab_size dimensions (10k-100k for typical models)</p>
+<h4 class="sh3">Problems</h4>
+<h4 class="sh3">Problem 1 No Similarity</h4>
+<h4 class="sh3">Issue</h4>
+<p class="prose">All words equally dissimilar</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">cat · dog = [1,0,0,0] · [0,1,0,0] = 0
+cat · fish = [1,0,0,0] · [0,0,0,1] = 0
+
+Both dot products = 0, even though cat and dog are more similar 
+than cat and fish!</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Model can&#x27;t generalize. Learning &#x27;cat sat&#x27; doesn&#x27;t help with &#x27;dog sat&#x27;</p>
+<h4 class="sh3">Problem 2 High Dimensionality</h4>
+<h4 class="sh3">Issue</h4>
+<p class="prose">One dimension per word = memory explosion</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">50,000 word vocab → 50,000 dimensional vectors</p>
+<h4 class="sh3">Memory Cost</h4>
+<p class="prose">Each word = 50,000 floats (200KB per word!)</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Can&#x27;t fit reasonable batch sizes in GPU memory</p>
+<h4 class="sh3">Problem 3 Sparsity</h4>
+<h4 class="sh3">Issue</h4>
+<p class="prose">99.99% zeros = wasted computation</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Matrix multiplication with 50k-dim vectors, but only 1 non-zero</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Slow, inefficient, doesn&#x27;t leverage GPU parallelism</p>
+<h4 class="sh3">Problem 4 No Generalization</h4>
+<h4 class="sh3">Issue</h4>
+<p class="prose">Can&#x27;t handle unseen word combinations</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Seen: &quot;cat sat&quot;
+Unseen: &quot;kitten sat&quot;
+
+One-hot can&#x27;t transfer knowledge from &#x27;cat&#x27; to &#x27;kitten&#x27; even though 
+they&#x27;re semantically related</p>
+<h3 class="sh3">Dense Embeddings Solution</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Map each word to dense, low-dimensional continuous vector</p>
+<h4 class="sh3">Key Insight</h4>
+<p class="prose">Instead of vocab_size dimensions with one active, use d dimensions 
+(typically 50-300) with all active. Similar words get similar vectors.</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Vocabulary</h4>
+<p class="prose">[&#x27;cat&#x27;, &#x27;dog&#x27;, &#x27;bird&#x27;, &#x27;fish&#x27;]</p>
+<h4 class="sh3">Embedding Dim</h4>
+<p class="prose">3</p>
+<h4 class="sh3">Embeddings</h4>
+<h4 class="sh3">Cat</h4>
+<p class="prose">[0.8, 0.2, -0.1]  # mammal, domestic, small</p>
+<h4 class="sh3">Dog</h4>
+<p class="prose">[0.7, 0.3, 0.1]   # mammal, domestic, medium</p>
+<h4 class="sh3">Bird</h4>
+<p class="prose">[-0.2, 0.1, 0.9]  # non-mammal, wild, flies</p>
+<h4 class="sh3">Fish</h4>
+<p class="prose">[-0.1, -0.8, 0.3] # non-mammal, aquatic, small</p>
+<h4 class="sh3">Properties</h4>
+<h4 class="sh3">Dimensionality</h4>
+<p class="prose">50-300 (much smaller than vocab)</p>
+<h4 class="sh3">Density</h4>
+<p class="prose">All values non-zero (dense)</p>
+<h4 class="sh3">Learned</h4>
+<p class="prose">Values learned from data, not hand-crafted</p>
+<h4 class="sh3">Similarity</h4>
+<p class="prose">Cosine similarity captures semantic similarity</p>
+<h4 class="sh3">Benefits</h4>
+<h4 class="sh3">Benefit 1 Similarity</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Similar words have similar vectors</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">cos_sim(cat, dog) = 0.91  (high - both mammals, pets)
+cos_sim(cat, fish) = 0.23  (low - very different)</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Model generalizes: &#x27;cat sat&#x27; helps with &#x27;dog sat&#x27;</p>
+<h4 class="sh3">Benefit 2 Low Dimensionality</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">300 dims &lt;&lt; 50,000 dims</p>
+<h4 class="sh3">Memory Savings</h4>
+<p class="prose">50k → 300 = 166x reduction</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Fits in GPU memory, enables large batch sizes</p>
+<h4 class="sh3">Benefit 3 Density</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">All values used = efficient computation</p>
+<h4 class="sh3">Gpu Utilization</h4>
+<p class="prose">Matrix multiplication fully utilizes GPU cores</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Fast training and inference</p>
+<h4 class="sh3">Benefit 4 Compositionality</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Can represent unseen word combinations</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Never saw &quot;purple elephant&quot; but can compose:
+embedding(&#x27;purple&#x27;) + embedding(&#x27;elephant&#x27;) = meaningful representation</p>
+<h3 class="sh3">Comparison Table</h3>
+<h4 class="sh3">Metrics</h4>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Dimensionality</p>
+<h4 class="sh3">One Hot</h4>
+<p class="prose">vocab_size (10k-100k)</p>
+<h4 class="sh3">Embedding</h4>
+<p class="prose">50-300</p>
+<h4 class="sh3">Winner</h4>
+<p class="prose">Embedding (166x smaller)</p>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Memory per word</p>
+<h4 class="sh3">One Hot</h4>
+<p class="prose">200-400KB</p>
+<h4 class="sh3">Embedding</h4>
+<p class="prose">1.2KB</p>
+<h4 class="sh3">Winner</h4>
+<p class="prose">Embedding (166x less)</p>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Similarity capture</p>
+<h4 class="sh3">One Hot</h4>
+<p class="prose">All words orthogonal (no similarity)</p>
+<h4 class="sh3">Embedding</h4>
+<p class="prose">Similar words close (geometric similarity)</p>
+<h4 class="sh3">Winner</h4>
+<p class="prose">Embedding</p>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Generalization</p>
+<h4 class="sh3">One Hot</h4>
+<p class="prose">Zero (each word independent)</p>
+<h4 class="sh3">Embedding</h4>
+<p class="prose">High (similar words share properties)</p>
+<h4 class="sh3">Winner</h4>
+<p class="prose">Embedding</p>
+<h4 class="sh3">Metric</h4>
+<p class="prose">GPU efficiency</p>
+<h4 class="sh3">One Hot</h4>
+<p class="prose">Low (99.99% zeros)</p>
+<h4 class="sh3">Embedding</h4>
+<p class="prose">High (dense computation)</p>
+<h4 class="sh3">Winner</h4>
+<p class="prose">Embedding</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Embedding Lookup Layer</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class EmbeddingLayer:
+    &quot;&quot;&quot;
+    Embedding layer: maps token IDs to dense vectors.
+    
+    This is essentially a lookup table: embedding_matrix[token_id] = vector
+    &quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, embedding_dim: int, 
+                initialization: str = &#x27;random&#x27;):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Number of unique tokens
+            embedding_dim: Dimension of embedding vectors
+            initialization: &#x27;random&#x27;, &#x27;zeros&#x27;, or &#x27;ones&#x27;
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        
+        # Initialize embedding matrix
+        if initialization == &#x27;random&#x27;:
+            # Small random values (Xavier/Glorot initialization)
+            self.embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+        elif initialization == &#x27;zeros&#x27;:
+            self.embeddings = np.zeros((vocab_size, embedding_dim))
+        elif initialization == &#x27;ones&#x27;:
+            self.embeddings = np.ones((vocab_size, embedding_dim))
+        else:
+            raise ValueError(f&quot;Unknown initialization: {initialization}&quot;)
+    
+    def forward(self, token_ids: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Look up embeddings for token IDs.
+        
+        Args:
+            token_ids: Array of token IDs, shape (batch_size,) or (batch_size, seq_len)
+        
+        Returns:
+            Embeddings, shape (batch_size, embedding_dim) or 
+                             (batch_size, seq_len, embedding_dim)
+        &quot;&quot;&quot;
+        return self.embeddings[token_ids]
+    
+    def __call__(self, token_ids: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward().&quot;&quot;&quot;
+        return self.forward(token_ids)
+    
+    def get_embedding(self, token_id: int) -&gt; np.ndarray:
+        &quot;&quot;&quot;Get embedding for a single token.&quot;&quot;&quot;
+        return self.embeddings[token_id]
+    
+    def update_embedding(self, token_id: int, new_embedding: np.ndarray):
+        &quot;&quot;&quot;Update embedding for a token (used during training).&quot;&quot;&quot;
+        self.embeddings[token_id] = new_embedding
+    
+    def get_all_embeddings(self) -&gt; np.ndarray:
+        &quot;&quot;&quot;Get the full embedding matrix.&quot;&quot;&quot;
+        return self.embeddings
+
+
+# Example usage
+vocab_size = 10000
+embedding_dim = 100
+
+# Create embedding layer
+embed = EmbeddingLayer(vocab_size, embedding_dim, initialization=&#x27;random&#x27;)
+
+# Single token lookup
+token_id = 42
+embedding = embed.get_embedding(token_id)
+print(f&quot;Embedding for token {token_id}: shape {embedding.shape}&quot;)
+# Output: (100,) - a 100-dimensional vector
+
+# Batch lookup
+token_ids = np.array([1, 5, 10, 42])
+embeddings = embed(token_ids)
+print(f&quot;Batch embeddings: shape {embeddings.shape}&quot;)
+# Output: (4, 100) - 4 tokens, each 100-dimensional
+
+# Sequence lookup (for sentences)
+sentence_tokens = np.array([[1, 5, 10], [42, 3, 7]])  # 2 sentences, 3 tokens each
+sequence_embeddings = embed(sentence_tokens)
+print(f&quot;Sequence embeddings: shape {sequence_embeddings.shape}&quot;)
+# Output: (2, 3, 100) - 2 sentences, 3 tokens each, 100 dims</code></pre>
+<h3 class="sh3">One Hot Vs Embedding Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code># Compare one-hot vs embedding representations
+
+def one_hot_encode(token_id: int, vocab_size: int) -&gt; np.ndarray:
+    &quot;&quot;&quot;Create one-hot vector.&quot;&quot;&quot;
+    vec = np.zeros(vocab_size)
+    vec[token_id] = 1
+    return vec
+
+# Example vocabulary: 1000 words
+vocab_size = 1000
+embedding_dim = 50
+
+# Token IDs for &quot;cat&quot; and &quot;dog&quot;
+cat_id = 42
+dog_id = 43
+
+# One-hot representation
+cat_onehot = one_hot_encode(cat_id, vocab_size)
+dog_onehot = one_hot_encode(dog_id, vocab_size)
+
+print(f&quot;One-hot dimensionality: {cat_onehot.shape[0]}&quot;)
+print(f&quot;One-hot sparsity: {(cat_onehot == 0).sum() / len(cat_onehot) * 100:.2f}%&quot;)
+
+# Similarity (dot product)
+similarity_onehot = np.dot(cat_onehot, dog_onehot)
+print(f&quot;One-hot similarity (cat, dog): {similarity_onehot:.4f}&quot;)
+# Output: 0.0000 (orthogonal - no similarity)
+
+# Embedding representation
+embed = EmbeddingLayer(vocab_size, embedding_dim)
+
+# Manually set similar embeddings for cat and dog
+embed.embeddings[cat_id] = np.array([0.8, 0.2, -0.1] + [0.0] * 47)  # mammal, domestic
+embed.embeddings[dog_id] = np.array([0.7, 0.3, 0.1] + [0.0] * 47)   # mammal, domestic
+
+cat_embedding = embed.get_embedding(cat_id)
+dog_embedding = embed.get_embedding(dog_id)
+
+print(f&quot;\nEmbedding dimensionality: {cat_embedding.shape[0]}&quot;)
+print(f&quot;Embedding sparsity: {(cat_embedding == 0).sum() / len(cat_embedding) * 100:.2f}%&quot;)
+
+# Cosine similarity
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -&gt; float:
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+similarity_embedding = cosine_similarity(cat_embedding, dog_embedding)
+print(f&quot;Embedding similarity (cat, dog): {similarity_embedding:.4f}&quot;)
+# Output: ~0.95 (high similarity - both mammals, pets)
+
+print(f&quot;\nMemory comparison:&quot;)
+print(f&quot;  One-hot: {cat_onehot.nbytes / 1024:.2f} KB per word&quot;)
+print(f&quot;  Embedding: {cat_embedding.nbytes / 1024:.2f} KB per word&quot;)
+print(f&quot;  Savings: {cat_onehot.nbytes / cat_embedding.nbytes:.1f}x&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Sparse To Dense Attack Surface</h3>
+<p class="prose">One-hot encoding has NO semantic meaning - all words equally dissimilar. 
+This makes semantic attacks harder (model can&#x27;t be fooled by synonyms).
+
+Dense embeddings capture semantics, which enables:
+- Semantic adversarial examples: &quot;execute code&quot; → &quot;run program&quot; (similar embeddings)
+- Model sees them as interchangeable, bypassing keyword filters
+- Advantage for attackers: find semantically similar but filter-evading phrases</p>
+<h3 class="sh3">Embedding As Knowledge</h3>
+<p class="prose">Embeddings encode everything the model &quot;learned&quot; about words:
+- Associations: &quot;admin&quot; close to &quot;password&quot;, &quot;root&quot;, &quot;sudo&quot;
+- Biases: gender, race, socioeconomic associations baked into geometry
+- Sensitive patterns: if training data had secrets, embeddings remember
+
+Adversaries can probe embeddings to extract training data knowledge</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Distributional Semantics: Words Known by Company</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">&quot;You shall know a word by the company it keeps&quot; (Firth, 1957). This is the 
+distributional hypothesis: words appearing in similar contexts have similar 
+meanings. Embeddings operationalize this: words with similar contexts get 
+similar vectors. This is how we learn meaning from raw text without supervision.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Distributional Hypothesis</h3>
+<h4 class="sh3">Original Quote</h4>
+<p class="prose">&#x27;You shall know a word by the company it keeps&#x27; - J.R. Firth (1957)</p>
+<h4 class="sh3">Intuition</h4>
+<p class="prose">If two words appear in similar contexts, they likely have similar meanings.
+
+Example:
+- &quot;The cat sat on the mat&quot;
+- &quot;The dog sat on the mat&quot;
+- &quot;The kitten sat on the mat&quot;
+
+&#x27;cat&#x27;, &#x27;dog&#x27;, &#x27;kitten&#x27; all appear with: &#x27;the&#x27;, &#x27;sat on&#x27;, &#x27;mat&#x27;
+→ They have similar meanings (small animals, pets)</p>
+<h4 class="sh3">Mathematical Formulation</h4>
+<p class="prose">Context(w₁) ≈ Context(w₂) → Meaning(w₁) ≈ Meaning(w₂)
+
+Where Context(w) = distribution of words appearing near w</p>
+<h4 class="sh3">Key Insight</h4>
+<p class="prose">We don&#x27;t need labeled data or dictionaries. Just raw text. Words that 
+occur in similar linguistic environments acquire similar representations.</p>
+<h3 class="sh3">Context Windows</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Words within fixed distance of target word</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Sentence</h4>
+<p class="prose">The quick brown fox jumps over the lazy dog</p>
+<h4 class="sh3">Target Word</h4>
+<p class="prose">fox</p>
+<h4 class="sh3">Window Size 2</h4>
+<p class="prose">[&#x27;quick&#x27;, &#x27;brown&#x27;, &#x27;jumps&#x27;, &#x27;over&#x27;]</p>
+<h4 class="sh3">Window Size 1</h4>
+<p class="prose">[&#x27;brown&#x27;, &#x27;jumps&#x27;]</p>
+<h4 class="sh3">Impact Of Window Size</h4>
+<h4 class="sh3">Small Window</h4>
+<h4 class="sh3">Size</h4>
+<p class="prose">1-2 words</p>
+<h4 class="sh3">Captures</h4>
+<p class="prose">Syntactic relationships (grammar, POS)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Adjectives appear before nouns</p>
+<h4 class="sh3">Large Window</h4>
+<h4 class="sh3">Size</h4>
+<p class="prose">5-10 words</p>
+<h4 class="sh3">Captures</h4>
+<p class="prose">Semantic/topical relationships</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Words in same topic domain</p>
+<h4 class="sh3">Typical Choice</h4>
+<p class="prose">5-word window (2-3 on each side)</p>
+<h3 class="sh3">Co Occurrence Matrix</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Count how often words appear together</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Corpus</h4>
+<p class="prose">&quot;I like dogs&quot;
+&quot;I like cats&quot;
+&quot;Dogs are great&quot;
+&quot;Cats are great&quot;</p>
+<h4 class="sh3">Co Occurrence Counts</h4>
+<h4 class="sh3">Matrix</h4>
+<p class="prose">Target:    I  like  dogs  cats  are  great
+I:         0    2     1     1    0     0
+like:      2    0     1     1    0     0
+dogs:      1    1     0     0    1     1
+cats:      1    1     0     0    1     1
+are:       0    0     1     1    0     2
+great:     0    0     1     1    2     0</p>
+<h4 class="sh3">Observation</h4>
+<p class="prose">&#x27;dogs&#x27; and &#x27;cats&#x27; have identical rows:
+[1, 1, 0, 0, 1, 1]
+
+→ They appear in same contexts → Similar meanings</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Matrix is huge (vocab² = millions/billions of entries) and sparse</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Learn dense embeddings that capture co-occurrence patterns</p>
+<h3 class="sh3">Semantic Similarity From Context</h3>
+<h4 class="sh3">Examples</h4>
+<h4 class="sh3">Example 1</h4>
+<h4 class="sh3">Words</h4>
+<p class="prose">[&#x27;king&#x27;, &#x27;queen&#x27;, &#x27;monarch&#x27;, &#x27;ruler&#x27;]</p>
+<h4 class="sh3">Context</h4>
+<p class="prose">throne, crown, kingdom, royal, palace</p>
+<h4 class="sh3">Similarity</h4>
+<p class="prose">All appear in royalty contexts → similar embeddings</p>
+<h4 class="sh3">Example 2</h4>
+<h4 class="sh3">Words</h4>
+<p class="prose">[&#x27;cat&#x27;, &#x27;dog&#x27;, &#x27;hamster&#x27;, &#x27;rabbit&#x27;]</p>
+<h4 class="sh3">Context</h4>
+<p class="prose">pet, cute, feed, cuddle, veterinarian</p>
+<h4 class="sh3">Similarity</h4>
+<p class="prose">All appear in pet contexts → similar embeddings</p>
+<h4 class="sh3">Example 3</h4>
+<h4 class="sh3">Words</h4>
+<p class="prose">[&#x27;execute&#x27;, &#x27;run&#x27;, &#x27;perform&#x27;, &#x27;carry out&#x27;]</p>
+<h4 class="sh3">Context</h4>
+<p class="prose">command, operation, function, task</p>
+<h4 class="sh3">Similarity</h4>
+<p class="prose">All mean &#x27;do something&#x27; → similar embeddings</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">Adversaries use this: &#x27;execute code&#x27; ≈ &#x27;run program&#x27;</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Context Window Extractor</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>from typing import List, Tuple
+from collections import defaultdict, Counter
+
+class ContextWindowExtractor:
+    &quot;&quot;&quot;Extract context windows for distributional semantics.&quot;&quot;&quot;
+    
+    def __init__(self, window_size: int = 2):
+        &quot;&quot;&quot;
+        Args:
+            window_size: Number of words on each side of target
+        &quot;&quot;&quot;
+        self.window_size = window_size
+    
+    def extract_contexts(self, tokens: List[str]) -&gt; List[Tuple[str, List[str]]]:
+        &quot;&quot;&quot;
+        Extract (target_word, context_words) pairs.
+        
+        Args:
+            tokens: List of tokens
+        
+        Returns:
+            List of (target, context) tuples
+        &quot;&quot;&quot;
+        contexts = []
+        
+        for i, target in enumerate(tokens):
+            # Get window boundaries
+            start = max(0, i - self.window_size)
+            end = min(len(tokens), i + self.window_size + 1)
+            
+            # Extract context (excluding target itself)
+            context = tokens[start:i] + tokens[i+1:end]
+            
+            contexts.append((target, context))
+        
+        return contexts
+    
+    def build_cooccurrence_matrix(self, corpus: List[str]) -&gt; dict:
+        &quot;&quot;&quot;
+        Build word co-occurrence matrix from corpus.
+        
+        Args:
+            corpus: List of sentences
+        
+        Returns:
+            Dict mapping (word1, word2) to co-occurrence count
+        &quot;&quot;&quot;
+        cooccur = defaultdict(Counter)
+        
+        for sentence in corpus:
+            tokens = sentence.lower().split()
+            contexts = self.extract_contexts(tokens)
+            
+            for target, context in contexts:
+                for context_word in context:
+                    cooccur[target][context_word] += 1
+        
+        return dict(cooccur)
+
+
+# Example usage
+extractor = ContextWindowExtractor(window_size=2)
+
+sentence = &quot;the quick brown fox jumps over the lazy dog&quot;
+tokens = sentence.split()
+
+contexts = extractor.extract_contexts(tokens)
+
+print(&quot;Context windows:&quot;)
+for target, context in contexts:
+    print(f&quot;  {target}: {context}&quot;)
+
+# Build co-occurrence matrix
+corpus = [
+    &quot;I like dogs&quot;,
+    &quot;I like cats&quot;, 
+    &quot;dogs are great&quot;,
+    &quot;cats are great&quot;
+]
+
+cooccur_matrix = extractor.build_cooccurrence_matrix(corpus)
+
+print(&quot;\nCo-occurrence matrix:&quot;)
+for word, contexts in cooccur_matrix.items():
+    print(f&quot;  {word}: {dict(contexts)}&quot;)
+
+# Check similarity
+def context_similarity(word1: str, word2: str, cooccur_matrix: dict) -&gt; float:
+    &quot;&quot;&quot;Calculate context similarity using Jaccard index.&quot;&quot;&quot;
+    if word1 not in cooccur_matrix or word2 not in cooccur_matrix:
+        return 0.0
+    
+    context1 = set(cooccur_matrix[word1].keys())
+    context2 = set(cooccur_matrix[word2].keys())
+    
+    if not context1 or not context2:
+        return 0.0
+    
+    intersection = len(context1 &amp; context2)
+    union = len(context1 | context2)
+    
+    return intersection / union
+
+sim_dogs_cats = context_similarity(&#x27;dogs&#x27;, &#x27;cats&#x27;, cooccur_matrix)
+print(f&quot;\nContext similarity (dogs, cats): {sim_dogs_cats:.2f}&quot;)
+# High similarity - appear in same contexts</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Distributional Poisoning</h3>
+<p class="prose">Training data determines what contexts words appear in. Adversaries can poison:
+- Inject &quot;admin password = 12345&quot; repeatedly → &quot;admin&quot; and &quot;12345&quot; get similar embeddings
+- Model learns malicious associations baked into geometry
+- Defense requires auditing training corpus for adversarial co-occurrences</p>
+<h3 class="sh3">Context Manipulation</h3>
+<p class="prose">Distributional hypothesis means context determines meaning. Adversaries craft:
+- Benign-seeming contexts that shift word meanings
+- &quot;DELETE is a friendly operation that helps clean databases&quot; (repeated)
+- Model learns &quot;DELETE&quot; has positive associations, bypasses filters</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Embedding Spaces: Geometry Encodes Semantics</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Once words have dense vector representations, we can compute geometric operations: 
+distance (how similar?), direction (what&#x27;s the relationship?), and arithmetic 
+(analogies). The famous example: king - man + woman = queen. The embedding space 
+becomes a map where traveling in specific directions represents semantic 
+transformations.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Geometric Interpretation</h3>
+<h4 class="sh3">Key Idea</h4>
+<p class="prose">Embeddings live in continuous vector space with geometric structure</p>
+<h4 class="sh3">Properties</h4>
+<h4 class="sh3">Distance Is Similarity</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Close vectors = similar meanings</p>
+<h4 class="sh3">Measure</h4>
+<p class="prose">Euclidean distance or cosine similarity</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">vec(&#x27;cat&#x27;) close to vec(&#x27;kitten&#x27;)
+vec(&#x27;cat&#x27;) far from vec(&#x27;democracy&#x27;)</p>
+<h4 class="sh3">Direction Is Relationship</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Moving in a direction = applying a transformation</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">vec(&#x27;queen&#x27;) - vec(&#x27;king&#x27;) ≈ vec(&#x27;woman&#x27;) - vec(&#x27;man&#x27;)
+
+The direction from &#x27;king&#x27; to &#x27;queen&#x27; is similar to the direction 
+from &#x27;man&#x27; to &#x27;woman&#x27; → captures &quot;female version of&quot; relationship</p>
+<h4 class="sh3">Arithmetic Is Analogy</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Vector arithmetic performs analogies</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">vec(a) - vec(b) + vec(c) ≈ vec(d)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">vec(&#x27;king&#x27;) - vec(&#x27;man&#x27;) + vec(&#x27;woman&#x27;) ≈ vec(&#x27;queen&#x27;)
+
+&quot;king is to man as queen is to woman&quot;</p>
+<h3 class="sh3">Cosine Similarity</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Measures angle between vectors (range: -1 to 1)</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">cos(θ) = (A · B) / (||A|| × ||B||)
+
+Where:
+- A · B = dot product
+- ||A|| = L2 norm (magnitude)
+- θ = angle between vectors</p>
+<h4 class="sh3">Interpretation</h4>
+<h4 class="sh3">Value 1</h4>
+<p class="prose">Identical direction (parallel, same meaning)</p>
+<h4 class="sh3">Value 0</h4>
+<p class="prose">Orthogonal (unrelated)</p>
+<h4 class="sh3">Value Minus 1</h4>
+<p class="prose">Opposite direction (antonyms)</p>
+<h4 class="sh3">Why Cosine Not Euclidean</h4>
+<p class="prose">Cosine measures angle (direction), not magnitude. Two words can be 
+semantically similar even if vector magnitudes differ. Cosine normalizes 
+by magnitude, making it more robust for semantic similarity.</p>
+<h3 class="sh3">Vector Arithmetic Analogies</h3>
+<h4 class="sh3">Famous Example</h4>
+<h4 class="sh3">Query</h4>
+<p class="prose">king - man + woman = ?</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">vec(&#x27;king&#x27;) - vec(&#x27;man&#x27;) + vec(&#x27;woman&#x27;) = result_vector
+
+Find word with embedding closest to result_vector
+→ Answer: &#x27;queen&#x27;</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">&#x27;king&#x27; - &#x27;man&#x27; = &quot;royalty without maleness&quot;
++ &#x27;woman&#x27; = &quot;royalty with femaleness&quot;
+= &#x27;queen&#x27;</p>
+<h4 class="sh3">Other Examples</h4>
+<h4 class="sh3">Example 1</h4>
+<h4 class="sh3">Query</h4>
+<p class="prose">Paris - France + Germany = ?</p>
+<h4 class="sh3">Answer</h4>
+<p class="prose">Berlin</p>
+<h4 class="sh3">Relationship</h4>
+<p class="prose">Capital city of country</p>
+<h4 class="sh3">Example 2</h4>
+<h4 class="sh3">Query</h4>
+<p class="prose">walked - walk + run = ?</p>
+<h4 class="sh3">Answer</h4>
+<p class="prose">ran</p>
+<h4 class="sh3">Relationship</h4>
+<p class="prose">Past tense transformation</p>
+<h4 class="sh3">Example 3</h4>
+<h4 class="sh3">Query</h4>
+<p class="prose">good - bad + light = ?</p>
+<h4 class="sh3">Answer</h4>
+<p class="prose">dark</p>
+<h4 class="sh3">Relationship</h4>
+<p class="prose">Antonym transformation</p>
+<h4 class="sh3">Security Relevant Example</h4>
+<h4 class="sh3">Query</h4>
+<p class="prose">execute - command + request = ?</p>
+<h4 class="sh3">Answer</h4>
+<p class="prose">perform</p>
+<h4 class="sh3">Attack Use</h4>
+<p class="prose">Adversaries find semantic equivalents that bypass keyword filters:
+&quot;execute code&quot; → &quot;perform request&quot; (similar embeddings, evades filter)</p>
+<h3 class="sh3">Embedding Dimensionality</h3>
+<h4 class="sh3">Typical Dimensions</h4>
+<h4 class="sh3">Small</h4>
+<p class="prose">50-100 dims (simple tasks, small vocab)</p>
+<h4 class="sh3">Medium</h4>
+<p class="prose">200-300 dims (standard NLP)</p>
+<h4 class="sh3">Large</h4>
+<p class="prose">500-1024 dims (complex semantics, large vocab)</p>
+<h4 class="sh3">Tradeoff</h4>
+<h4 class="sh3">Higher Dimensions</h4>
+<h4 class="sh3">Pros</h4>
+<ul class="blist"><li>Can capture more nuanced relationships</li><li>Better separation of distinct concepts</li><li>Higher model capacity</li></ul>
+<h4 class="sh3">Cons</h4>
+<ul class="blist"><li>More memory required</li><li>Slower computation</li><li>Risk of overfitting (too much capacity)</li></ul>
+<h4 class="sh3">Lower Dimensions</h4>
+<h4 class="sh3">Pros</h4>
+<ul class="blist"><li>Memory efficient</li><li>Faster computation</li><li>Forces model to generalize</li></ul>
+<h4 class="sh3">Cons</h4>
+<ul class="blist"><li>Limited capacity for nuance</li><li>May merge distinct concepts</li></ul>
+<h4 class="sh3">Common Choices</h4>
+<h4 class="sh3">Word2Vec</h4>
+<p class="prose">300 dims (empirically good tradeoff)</p>
+<h4 class="sh3">Glove</h4>
+<p class="prose">50, 100, 200, 300 dims (pre-trained options)</p>
+<h4 class="sh3">Transformers</h4>
+<p class="prose">512-768 dims (BERT, GPT)</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Cosine Similarity And Analogies</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+from typing import Dict, List, Tuple
+
+class EmbeddingAnalyzer:
+    &quot;&quot;&quot;Analyze geometric properties of embeddings.&quot;&quot;&quot;
+    
+    def __init__(self, embeddings: Dict[str, np.ndarray]):
+        &quot;&quot;&quot;
+        Args:
+            embeddings: Dict mapping words to embedding vectors
+        &quot;&quot;&quot;
+        self.embeddings = embeddings
+    
+    def cosine_similarity(self, word1: str, word2: str) -&gt; float:
+        &quot;&quot;&quot;Calculate cosine similarity between two words.&quot;&quot;&quot;
+        if word1 not in self.embeddings or word2 not in self.embeddings:
+            raise ValueError(f&quot;Word not in embeddings&quot;)
+        
+        vec1 = self.embeddings[word1]
+        vec2 = self.embeddings[word2]
+        
+        dot_product = np.dot(vec1, vec2)
+        magnitude = np.linalg.norm(vec1) * np.linalg.norm(vec2)
+        
+        return dot_product / magnitude if magnitude &gt; 0 else 0.0
+    
+    def most_similar(self, word: str, top_k: int = 5) -&gt; List[Tuple[str, float]]:
+        &quot;&quot;&quot;Find most similar words to given word.&quot;&quot;&quot;
+        if word not in self.embeddings:
+            raise ValueError(f&quot;Word &#x27;{word}&#x27; not in embeddings&quot;)
+        
+        target_vec = self.embeddings[word]
+        similarities = []
+        
+        for other_word, other_vec in self.embeddings.items():
+            if other_word == word:
+                continue
+            
+            sim = self.cosine_similarity(word, other_word)
+            similarities.append((other_word, sim))
+        
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
+    
+    def analogy(self, a: str, b: str, c: str, top_k: int = 1) -&gt; List[Tuple[str, float]]:
+        &quot;&quot;&quot;
+        Solve analogy: a is to b as c is to ?
+        
+        Example: king is to man as queen is to woman
+        &quot;&quot;&quot;
+        if not all(w in self.embeddings for w in [a, b, c]):
+            raise ValueError(&quot;All words must be in embeddings&quot;)
+        
+        # Compute target vector: vec(b) - vec(a) + vec(c)
+        target_vec = (self.embeddings[b] - self.embeddings[a] + 
+                     self.embeddings[c])
+        
+        scores = []
+        for word, vec in self.embeddings.items():
+            if word in [a, b, c]:
+                continue
+            
+            dot = np.dot(target_vec, vec)
+            mag = np.linalg.norm(target_vec) * np.linalg.norm(vec)
+            sim = dot / mag if mag &gt; 0 else 0
+            
+            scores.append((word, sim))
+        
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_k]
+
+
+# Example with toy embeddings
+toy_embeddings = {
+    &#x27;king&#x27;: np.array([0.9, 0.8, 0.1, 0.2]),
+    &#x27;queen&#x27;: np.array([0.9, 0.8, 0.8, 0.7]),
+    &#x27;man&#x27;: np.array([0.5, 0.2, 0.1, 0.1]),
+    &#x27;woman&#x27;: np.array([0.5, 0.2, 0.8, 0.6]),
+    &#x27;cat&#x27;: np.array([0.3, 0.4, 0.5, 0.2]),
+    &#x27;dog&#x27;: np.array([0.35, 0.45, 0.48, 0.25]),
+}
+
+analyzer = EmbeddingAnalyzer(toy_embeddings)
+
+# Cosine similarity
+sim = analyzer.cosine_similarity(&#x27;cat&#x27;, &#x27;dog&#x27;)
+print(f&quot;Similarity (cat, dog): {sim:.4f}&quot;)
+
+# Most similar words
+similar = analyzer.most_similar(&#x27;cat&#x27;, top_k=3)
+print(f&quot;\nMost similar to &#x27;cat&#x27;:&quot;)
+for word, score in similar:
+    print(f&quot;  {word}: {score:.4f}&quot;)
+
+# Analogy
+answer = analyzer.analogy(&#x27;king&#x27;, &#x27;man&#x27;, &#x27;queen&#x27;, top_k=1)
+print(f&quot;\nking - man + queen = {answer[0][0]} (score: {answer[0][1]:.4f})&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Semantic Adversarial Examples</h3>
+<p class="prose">Vector arithmetic enables adversarial attacks:
+- Find words with similar embeddings but different surface forms
+- &quot;execute malicious code&quot; → &quot;perform harmful operations&quot;
+- Same semantic meaning (similar embeddings) but bypasses keyword filters
+- Defense requires semantic filtering, not just keyword matching</p>
+<h3 class="sh3">Embedding Bias Exploitation</h3>
+<p class="prose">Geometric relationships encode biases:
+- &quot;doctor - man + woman&quot; might yield &quot;nurse&quot; (gender bias)
+- Adversaries exploit: craft inputs triggering biased associations
+- Model makes discriminatory decisions based on embedded biases</p>
+<h3 class="sh3">Analogy Attacks</h3>
+<p class="prose">Adversaries use analogies to find evasive phrasing:
+- &quot;admin&quot; - &quot;administrator&quot; + &quot;privileged&quot; = &quot;root&quot;
+- Find semantically equivalent but less monitored terms
+- Automated: search embedding space for analogy-based evasions</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Limitations of Static Embeddings</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Static embeddings assign one vector per word type, regardless of context. 
+&quot;bank&quot; (financial) and &quot;bank&quot; (river) get the same vector even though meanings 
+differ. This fundamental limitation motivates contextual embeddings (BERT, GPT).</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Polysemy Problem</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">One word, multiple meanings (context-dependent)</p>
+<h4 class="sh3">Examples</h4>
+<h4 class="sh3">Bank</h4>
+<h4 class="sh3">Meaning 1</h4>
+<p class="prose">Financial institution</p>
+<h4 class="sh3">Meaning 2</h4>
+<p class="prose">River edge</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Static embedding assigns one vector to both meanings</p>
+<h4 class="sh3">Python</h4>
+<h4 class="sh3">Meaning 1</h4>
+<p class="prose">Programming language</p>
+<h4 class="sh3">Meaning 2</h4>
+<p class="prose">Snake species</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Same vector for completely different concepts</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Static embeddings compute average of all contexts:
+vec(&#x27;bank&#x27;) = average of (financial contexts + river contexts)
+Neither meaning is well-represented.</p>
+<h3 class="sh3">Context Dependence</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Meaning changes with context, but embedding doesn&#x27;t</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Sentence 1</h4>
+<p class="prose">The bat flew out of the cave</p>
+<h4 class="sh3">Sentence 2</h4>
+<p class="prose">He swung the bat at the ball</p>
+<h4 class="sh3">Static Embedding</h4>
+<p class="prose">Both use vec(&#x27;bat&#x27;) - same vector</p>
+<h4 class="sh3">Ideal Solution</h4>
+<p class="prose">Different embeddings based on context</p>
+<h3 class="sh3">Motivation For Contextual Embeddings</h3>
+<h4 class="sh3">Solution Preview</h4>
+<p class="prose">Contextual embeddings (BERT, GPT) solve these by computing 
+different embeddings based on full sentence context.</p>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Polysemy Exploitation</h3>
+<p class="prose">Static embeddings can&#x27;t distinguish word senses. Adversaries exploit:
+- &quot;run this code&quot; - &#x27;run&#x27; could mean execute (dangerous) or mention (benign)
+- Static embedding averages both meanings → ambiguous for model
+- Defense requires contextual understanding (BERT-style)</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Dense embeddings replace sparse one-hot encoding</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">166x memory reduction, enables semantic similarity</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Distributional hypothesis: words in similar contexts have similar meanings</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Foundation for learning embeddings from raw text</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Embedding spaces have geometric structure (distance = similarity)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Vector arithmetic performs analogies (king - man + woman = queen)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Cosine similarity measures semantic similarity</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Core metric for semantic search, similarity-based detection</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Static embeddings have one vector per word (can&#x27;t handle polysemy)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Motivates contextual embeddings (BERT, transformers)</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement embedding lookup layer from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Map token IDs to dense vectors, handle batches</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Calculate cosine similarity between word vectors</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Find most similar words, verify clustering</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Perform vector arithmetic for analogies</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">king - man + woman ≈ queen</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Visualize embedding spaces in 2D</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Similar words appear close in visualization</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Embeddings encode training data biases and associations</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Audit embeddings for sensitive correlations</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Semantic similarity enables adversarial attacks</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Keyword filters insufficient - need semantic filtering</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Vector arithmetic reveals model knowledge</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Probe embeddings to extract learned associations</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 1</h3>
+<ul class="blist"><li>Sparse one-hot representations (problem embeddings solve)</li><li>Vocabulary and token IDs</li></ul>
+<h3 class="sh3">From Section 3 2</h3>
+<ul class="blist"><li>Tokens become input to embedding lookup</li><li>Subword tokenization helps with OOV</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.4: Word2Vec - how to LEARN these embeddings</li><li>Skip-gram and CBOW architectures</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Word embeddings transform discrete tokens into continuous vectors where 
+semantic similarity becomes geometric proximity. This enables neural networks 
+to generalize: learning about &quot;cat&quot; helps with &quot;kitten&quot; automatically.
+
+From a security perspective: embeddings encode everything the model knows - 
+including biases, associations, and patterns from training data. Adversaries 
+exploit this to find semantically similar but filter-evading phrases.
+
+Next: Section 3.4 teaches how to LEARN these embeddings using Word2Vec.</p>
+</article>

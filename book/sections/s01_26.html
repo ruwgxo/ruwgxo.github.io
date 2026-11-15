@@ -1,0 +1,546 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 26 · ~5 pages</div>
+<h1>Model Deployment Basics</h1>
+<div class="tags"><span class="tag">deployment</span><span class="tag">production</span><span class="tag">mlops</span><span class="tag">inference</span><span class="tag">model-serving</span><span class="tag">monitoring</span><span class="tag">versioning</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Training a model is only half the battle. Deployment - getting models into production 
+where they make real decisions - is equally critical. Many ML projects fail not because 
+of poor models, but because of deployment challenges. A 95% accurate model that never 
+makes it to production has zero impact.
+
+Deployment involves infrastructure, monitoring, versioning, and operational concerns that 
+extend far beyond model training. You need to serve predictions quickly, handle failures 
+gracefully, monitor performance, and update models safely. This section covers the 
+fundamentals of taking ML models from development to production.
+
+This section covers:
+- Training vs inference (different requirements)
+- Model serialization and versioning
+- Inference architectures (batch vs real-time)
+- Performance optimization (latency, throughput)
+- Monitoring and observability
+- Model updates and rollback strategies
+
+For security ML:
+1. Real-time detection requires low-latency inference
+2. High availability critical (cannot miss threats)
+3. Model drift detection (attacks evolve)
+4. Safe updates (don&#x27;t break production)</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Production reality:
+- 87% of ML projects never make it to production (VentureBeat)
+- Deployment and operations dominate total cost
+- Model quality matters less than operational excellence
+
+Security context:
+- Detection systems must be always-on (99.9%+ uptime)
+- Millisecond latency requirements (real-time blocking)
+- Attackers exploit deployment vulnerabilities
+- Models must update frequently (new threats daily)
+
+Career relevance:
+- MLOps skills highly valued
+- Deployment experience differentiates candidates
+- Understanding production constraints guides research
+- Bridge between data science and engineering</p>
+<h2 class="sh1">Training Vs Inference</h2>
+<h3 class="sh2">Key Differences</h3>
+<p class="prose">Training: Optimize model parameters (offline)
+Inference: Use trained model to make predictions (online)
+
+Different requirements, different constraints</p>
+<h3 class="sh2">Comparison Table</h3>
+<p class="prose">Aspect           | Training              | Inference
+-----------------|-----------------------|------------------------
+Hardware         | GPUs (parallel)       | CPUs often sufficient
+Latency          | Minutes to hours OK   | Milliseconds required
+Throughput       | Batch processing      | May need real-time
+Cost             | High (GPU hours)      | Ongoing (per request)
+Frequency        | Daily/weekly          | Millions per second
+Errors           | Can retry             | Must handle gracefully
+Environment      | Development           | Production
+Monitoring       | Accuracy metrics      | Latency, uptime, drift</p>
+<h3 class="sh2">Training Phase</h3>
+<p class="prose">Characteristics:
+- Run offline (scheduled, not user-facing)
+- Can use powerful hardware (multiple GPUs)
+- Iterations can take hours/days
+- Failures can be debugged and retried
+- Experiments and hyperparameter tuning
+
+Infrastructure:
+- Training cluster (e.g., AWS p3 instances)
+- Distributed training framework (Horovod, PyTorch DDP)
+- Experiment tracking (MLflow, Weights &amp; Biases)</p>
+<h3 class="sh2">Inference Phase</h3>
+<p class="prose">Characteristics:
+- Run online (user-facing, real-time)
+- Must be fast (low latency)
+- Must be reliable (high availability)
+- Must scale (handle load spikes)
+- Cost per prediction matters
+
+Infrastructure:
+- Inference servers (TensorFlow Serving, TorchServe)
+- Load balancers
+- Caching layers
+- Monitoring and alerting</p>
+<h2 class="sh1">Serialization Versioning</h2>
+<h3 class="sh2">Model Serialization</h3>
+<p class="prose">Save trained model to disk for later use
+
+Common formats:
+- Pickle (Python): Simple but Python-only
+- ONNX: Cross-framework (PyTorch → TensorFlow)
+- SavedModel (TensorFlow): Production format
+- TorchScript (PyTorch): Optimized for deployment
+- joblib (scikit-learn): Better than pickle for large arrays</p>
+<h3 class="sh2">Example Serialization</h3>
+<pre class="code"><code># Scikit-learn
+import joblib
+joblib.dump(model, &#x27;model.pkl&#x27;)
+model = joblib.load(&#x27;model.pkl&#x27;)
+
+# PyTorch
+torch.save(model.state_dict(), &#x27;model.pth&#x27;)
+model.load_state_dict(torch.load(&#x27;model.pth&#x27;))
+
+# TensorFlow
+model.save(&#x27;saved_model/&#x27;)
+model = tf.keras.models.load_model(&#x27;saved_model/&#x27;)</code></pre>
+<h3 class="sh2">What To Save</h3>
+<p class="prose">Model artifacts:
+1. Model weights/parameters
+2. Model architecture (if needed)
+3. Preprocessing pipeline (scalers, encoders)
+4. Metadata (hyperparameters, training date)
+5. Evaluation metrics (accuracy, precision, recall)
+
+Example structure:
+model_v1.2.3/
+  ├── weights.pkl
+  ├── preprocessor.pkl
+  ├── metadata.json
+  └── metrics.json</p>
+<h3 class="sh2">Versioning Strategy</h3>
+<p class="prose">Semantic versioning: MAJOR.MINOR.PATCH
+
+MAJOR: Breaking changes (new features, different output)
+MINOR: Backward-compatible improvements (better accuracy)
+PATCH: Bug fixes (no model changes)
+
+Example:
+v1.0.0: Initial model (logistic regression)
+v1.1.0: Improved model (random forest, better accuracy)
+v1.1.1: Bug fix in preprocessing
+v2.0.0: New model architecture (neural network, different API)</p>
+<h3 class="sh2">Model Registry</h3>
+<p class="prose">Central repository for models
+
+Features:
+- Version control
+- Metadata tracking
+- Lifecycle management (staging, production, archived)
+- Access control
+- Lineage tracking
+
+Tools: MLflow Model Registry, AWS SageMaker Model Registry</p>
+<h2 class="sh1">Inference Architectures</h2>
+<h3 class="sh2">Batch Inference</h3>
+<p class="prose">Process large batches of data periodically
+
+Use cases:
+- Daily email spam scoring
+- Nightly malware scanning of repository
+- Weekly customer churn predictions
+
+Characteristics:
+- High throughput (thousands/second)
+- Latency tolerant (minutes to hours OK)
+- Scheduled jobs (cron, Airflow)
+- Cost-efficient (batch processing)
+
+Example:
+Every night at 2 AM:
+- Load 1M emails
+- Score with spam model
+- Update database</p>
+<h3 class="sh2">Real Time Inference</h3>
+<p class="prose">Process single requests with low latency
+
+Use cases:
+- Network intrusion blocking (milliseconds)
+- Credit card fraud detection (sub-second)
+- Malware detection on upload (seconds)
+
+Characteristics:
+- Low latency (&lt;100ms typical)
+- High availability (99.9%+)
+- Scales with traffic
+- More expensive (always-on servers)
+
+Example:
+User uploads file:
+- Send to malware detection API
+- Model scores in 50ms
+- Block or allow immediately</p>
+<h3 class="sh2">Streaming Inference</h3>
+<p class="prose">Process continuous streams of data
+
+Use cases:
+- Network traffic analysis (continuous)
+- IoT sensor monitoring (real-time)
+- Log anomaly detection (streaming)
+
+Characteristics:
+- Process data as it arrives
+- Windowing (aggregate over time windows)
+- Stateful processing
+
+Tools: Apache Kafka, Apache Flink, AWS Kinesis</p>
+<h3 class="sh2">Architecture Comparison</h3>
+<p class="prose">Batch:
+- Latency: Hours
+- Throughput: Very high
+- Cost: Low
+- Complexity: Low
+
+Real-time:
+- Latency: Milliseconds
+- Throughput: Medium
+- Cost: High
+- Complexity: Medium
+
+Streaming:
+- Latency: Seconds
+- Throughput: High
+- Cost: Medium
+- Complexity: High</p>
+<h2 class="sh1">Performance Optimization</h2>
+<h3 class="sh2">Latency Optimization</h3>
+<p class="prose">Reduce time per prediction
+
+Techniques:
+1. Model simplification (fewer parameters)
+2. Quantization (float32 → int8)
+3. Pruning (remove unnecessary weights)
+4. Model distillation (teacher-student)
+5. Hardware acceleration (GPUs, TPUs)
+6. Caching (repeated requests)</p>
+<h3 class="sh2">Quantization</h3>
+<p class="prose">Reduce precision: float32 (4 bytes) → int8 (1 byte)
+
+Benefits:
+- 4x smaller model size
+- 2-4x faster inference
+- Minimal accuracy loss (&lt;1%)
+
+Example:
+Weight: 0.123456789 (float32)
+Quantized: 123 (int8, scaled)
+
+Tools: TensorFlow Lite, PyTorch quantization</p>
+<h3 class="sh2">Model Distillation</h3>
+<p class="prose">Train small &quot;student&quot; model to mimic large &quot;teacher&quot;
+
+Process:
+1. Train large model (teacher)
+2. Use teacher to generate soft labels
+3. Train small model (student) on soft labels
+4. Deploy small model (faster, cheaper)
+
+Example:
+Teacher: BERT (110M parameters)
+Student: DistilBERT (66M parameters, 40% faster)
+Accuracy loss: ~3%</p>
+<h3 class="sh2">Caching</h3>
+<p class="prose">Store results of expensive computations
+
+Strategies:
+- Cache predictions (if inputs repeat)
+- Cache embeddings (for retrieval)
+- Cache preprocessing (feature extraction)
+
+Example:
+URL reputation check:
+- Cache: google.com → benign (30 days)
+- Skip model inference for cached URLs
+- 90% cache hit rate → 10x faster</p>
+<h3 class="sh2">Batching</h3>
+<p class="prose">Group multiple requests together
+
+Benefits:
+- Amortize overhead (model loading, etc.)
+- Better GPU utilization
+- Higher throughput
+
+Trade-off: Increases latency (wait for batch)
+
+Dynamic batching:
+- Wait max 10ms for batch
+- Or batch size reaches 32
+- Whichever comes first</p>
+<h2 class="sh1">Monitoring</h2>
+<h3 class="sh2">What To Monitor</h3>
+<p class="prose">1. System metrics (latency, throughput, errors)
+2. Model metrics (accuracy, precision, recall)
+3. Data metrics (feature drift, label drift)
+4. Business metrics (conversions, revenue)</p>
+<h3 class="sh2">System Metrics</h3>
+<p class="prose">Latency:
+- p50: 50th percentile (median)
+- p95: 95th percentile (catch outliers)
+- p99: 99th percentile (worst case)
+
+Target: p95 &lt; 100ms for real-time systems
+
+Throughput:
+- Requests per second (RPS)
+- Predictions per second
+
+Target: Handle peak load + 50% buffer
+
+Errors:
+- Error rate (%)
+- Error types (timeout, crash, invalid input)
+
+Target: Error rate &lt; 0.1%
+
+Availability:
+- Uptime percentage
+
+Target: 99.9% (8.76 hours downtime/year)</p>
+<h3 class="sh2">Model Metrics</h3>
+<p class="prose">Online metrics (production):
+- Precision@K: How many top K predictions correct?
+- Click-through rate: For recommendation systems
+- Conversion rate: For ranking systems
+
+Challenge: May not have immediate ground truth
+
+Solution: Log predictions for later evaluation</p>
+<h3 class="sh2">Data Drift</h3>
+<p class="prose">Input distributions change over time
+
+Example:
+- Network traffic patterns evolve
+- Attack types change
+- User behavior shifts
+
+Detection:
+- Compare feature distributions (training vs production)
+- Statistical tests (KS test, chi-square)
+- Track feature statistics over time
+
+Response:
+- Retrain model on recent data
+- Update features
+- Investigate root cause</p>
+<h3 class="sh2">Model Drift</h3>
+<p class="prose">Model performance degrades over time
+
+Causes:
+- Data drift (inputs change)
+- Concept drift (input-output relationship changes)
+- Adversarial drift (attackers adapt)
+
+Detection:
+- Monitor online metrics (if labels available)
+- A/B test against new model
+- Periodic offline evaluation
+
+Response:
+- Retrain periodically (weekly, monthly)
+- Trigger retraining when metrics degrade
+- Update to new model version</p>
+<h3 class="sh2">Alerting</h3>
+<p class="prose">Set thresholds and alert when exceeded
+
+Examples:
+- Latency p95 &gt; 200ms → Page on-call engineer
+- Error rate &gt; 1% → Alert team
+- Accuracy drops &gt; 5% → Trigger retraining
+
+Best practices:
+- Avoid alert fatigue (too many false alarms)
+- Actionable alerts (clear what to do)
+- Escalation policy (who to page, when)</p>
+<h2 class="sh1">Deployment Strategies</h2>
+<h3 class="sh2">Blue Green Deployment</h3>
+<p class="prose">Maintain two environments: blue (current) and green (new)
+
+Process:
+1. Deploy new model to green environment
+2. Test green environment
+3. Switch traffic from blue to green
+4. Keep blue as backup (rollback if issues)
+
+Benefits:
+- Zero downtime
+- Instant rollback
+
+Cost: Run two environments simultaneously</p>
+<h3 class="sh2">Canary Deployment</h3>
+<p class="prose">Gradually roll out new model to subset of traffic
+
+Process:
+1. Deploy new model (v2)
+2. Route 5% traffic to v2, 95% to v1
+3. Monitor v2 metrics
+4. If good: Increase to 10%, 25%, 50%, 100%
+5. If bad: Rollback to 100% v1
+
+Benefits:
+- Detect issues early (limited blast radius)
+- Gradual validation
+
+Common in production</p>
+<h3 class="sh2">Shadow Mode</h3>
+<p class="prose">Run new model in parallel without affecting production
+
+Process:
+1. Production model (v1) serves predictions
+2. New model (v2) also predicts (logged, not used)
+3. Compare v1 and v2 predictions offline
+4. If v2 better: Promote to canary deployment
+
+Benefits:
+- Risk-free validation
+- Real production data
+
+Cost: Double inference cost</p>
+<h3 class="sh2">Rollback Strategy</h3>
+<p class="prose">When new model has issues:
+
+Immediate rollback:
+- Switch traffic back to previous version
+- Should be one-click operation
+- Practice rollback procedures
+
+Keep previous versions:
+- Store last N model versions
+- Quick rollback to any previous version
+
+Automated rollback:
+- Monitor error rate, latency
+- Automatically rollback if thresholds exceeded</p>
+<h2 class="sh1">Practical Example</h2>
+<pre class="code"><code>&quot;&quot;&quot;
+Deploying a malware detection model as REST API
+&quot;&quot;&quot;
+
+from flask import Flask, request, jsonify
+import joblib
+import numpy as np
+import time
+
+app = Flask(__name__)
+
+# Load model at startup
+model = joblib.load(&#x27;malware_model_v1.2.0.pkl&#x27;)
+preprocessor = joblib.load(&#x27;preprocessor_v1.2.0.pkl&#x27;)
+
+# Metrics
+request_count = 0
+error_count = 0
+latencies = []
+
+@app.route(&#x27;/health&#x27;, methods=[&#x27;GET&#x27;])
+def health():
+    &quot;&quot;&quot;Health check endpoint&quot;&quot;&quot;
+    return jsonify({
+        &#x27;status&#x27;: &#x27;healthy&#x27;,
+        &#x27;model_version&#x27;: &#x27;1.2.0&#x27;,
+        &#x27;uptime&#x27;: time.time() - app.start_time
+    })
+
+@app.route(&#x27;/predict&#x27;, methods=[&#x27;POST&#x27;])
+def predict():
+    &quot;&quot;&quot;Prediction endpoint&quot;&quot;&quot;
+    global request_count, error_count
+    
+    start_time = time.time()
+    request_count += 1
+    
+    try:
+        # Parse input
+        data = request.json
+        features = np.array(data[&#x27;features&#x27;]).reshape(1, -1)
+        
+        # Preprocess
+        features_processed = preprocessor.transform(features)
+        
+        # Predict
+        prediction = model.predict(features_processed)[0]
+        probability = model.predict_proba(features_processed)[0, 1]
+        
+        # Record latency
+        latency = time.time() - start_time
+        latencies.append(latency)
+        
+        # Return result
+        return jsonify({
+            &#x27;prediction&#x27;: &#x27;malicious&#x27; if prediction == 1 else &#x27;benign&#x27;,
+            &#x27;confidence&#x27;: float(probability),
+            &#x27;latency_ms&#x27;: latency * 1000,
+            &#x27;model_version&#x27;: &#x27;1.2.0&#x27;
+        })
+    
+    except Exception as e:
+        error_count += 1
+        return jsonify({
+            &#x27;error&#x27;: str(e)
+        }), 500
+
+@app.route(&#x27;/metrics&#x27;, methods=[&#x27;GET&#x27;])
+def metrics():
+    &quot;&quot;&quot;Metrics endpoint (for monitoring)&quot;&quot;&quot;
+    return jsonify({
+        &#x27;requests&#x27;: request_count,
+        &#x27;errors&#x27;: error_count,
+        &#x27;error_rate&#x27;: error_count / request_count if request_count &gt; 0 else 0,
+        &#x27;latency_p50&#x27;: np.percentile(latencies, 50) if latencies else 0,
+        &#x27;latency_p95&#x27;: np.percentile(latencies, 95) if latencies else 0,
+        &#x27;latency_p99&#x27;: np.percentile(latencies, 99) if latencies else 0
+    })
+
+if __name__ == &#x27;__main__&#x27;:
+    app.start_time = time.time()
+    # Production: Use gunicorn or uwsgi instead of Flask dev server
+    app.run(host=&#x27;0.0.0.0&#x27;, port=5000)
+
+&quot;&quot;&quot;
+Deployment checklist:
+1. ✓ Health check endpoint
+2. ✓ Versioning (model_version in response)
+3. ✓ Error handling
+4. ✓ Metrics endpoint
+5. ✓ Latency tracking
+
+Production improvements:
+- Use production WSGI server (gunicorn)
+- Add authentication (API keys)
+- Add rate limiting
+- Add request logging
+- Add structured logging
+- Container deployment (Docker)
+- Orchestration (Kubernetes)
+- Load balancer (nginx, AWS ELB)
+- Auto-scaling based on load
+- Distributed tracing (Jaeger)
+- Centralized logging (ELK stack)
+&quot;&quot;&quot;</code></pre>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Deployment != Training (different requirements)</li><li>Inference: Low latency, high availability critical</li><li>Batch vs real-time: Trade-off latency for throughput</li><li>Monitor: System metrics, model metrics, data drift</li><li>Deploy safely: Canary deployment, rollback strategy</li><li>Versioning: Track models, enable rollback</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Serialize models (pickle, ONNX, SavedModel)</li><li>Build inference API (Flask, FastAPI)</li><li>Optimize performance (quantization, caching)</li><li>Monitor metrics (latency, throughput, drift)</li><li>Deploy incrementally (canary, blue-green)</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Real-time detection needs &lt;100ms latency</li><li>High availability critical (99.9%+ uptime)</li><li>Attackers evolve → monitor drift, update frequently</li><li>Safe updates crucial (don&#x27;t break production)</li><li>Log predictions for forensics and retraining</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Training is offline, inference is online (different constraints)</li><li>Version everything (models, code, data)</li><li>Monitor drift (data and model performance)</li><li>Deploy incrementally (canary → full rollout)</li><li>Always have rollback plan (one-click revert)</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: A/B Testing for ML</li><li>You now understand model deployment!</li><li>Critical bridge between research and production</li></ul>
+</article>

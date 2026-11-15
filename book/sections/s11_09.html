@@ -1,0 +1,1108 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 11 · Section 9 · ~6 pages</div>
+<h1>False Positive Management: Threshold Calibration and Alert Fatigue Prevention</h1>
+</header>
+<div class="box objectives"><div class="box-label">By the end of this section</div><ul>
+<li>Name the three primary sources of false positives in AI gateway detection and give a concrete example from each gateway track</li><li>Describe the alert fatigue death spiral in sequence and identify the two intervention points where it can be broken</li><li>Apply ROC curve analysis to select a calibrated operating point for a detection threshold, given a precision-recall tradeoff requirement</li><li>Set per-rule FPR targets for the seven gateway tracks, explaining the rationale for differential targets across tracks</li><li>Implement a structured exception list that suppresses known-good traffic sources without disabling the underlying detection rule</li><li>Design a per-user baseline model that flags deviation from entity-specific normal behaviour rather than absolute threshold violation</li><li>Describe the false positive review queue SLA and explain how analyst dispositions feed back into rule improvement</li></ul></div>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">False positive management is the operational discipline that separates a detection programme that works from one that erodes — per-rule FPR targets, ROC-calibrated thresholds, structured exception management, and entity baselining are the four tools that keep the SOC queue actionable as the rule portfolio scales.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Section 11.08 established that FPR management is currently at L1 for the seven-track
+gateway: no per-rule targets, no automated alerting, no systematic disposition
+collection. It also established that L3 FPR management is on the critical path to
+L3 composite maturity — the minimum bar for production. This section builds the
+tooling and the operational procedures that move FPR management from L1 to L3.
+
+The motivation is not abstract. A gateway with uncalibrated heuristic thresholds in
+Tracks 1, 2 and 7 will produce false positive rates that are, at best, unknown and, at
+worst, high enough to trigger the alert fatigue death spiral within weeks of
+production deployment. Track 1&#x27;&#x27;s centroid-similarity threshold of 0.85 was chosen
+to work on the Chapter 6 examples; it was not calibrated against production traffic.
+Track 7&#x27;&#x27;s squeezer threshold of 0.70 was chosen similarly. These are educated
+starting points, not calibrated operating points. Section 11.09 calibrates them
+from data.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 11.09 closes the FPR management debt opened in Section 11.01 and advances the FPR management dimension from L1 to L3. Its output — per-rule FPR targets and the false_positive_manager.py monitoring infrastructure — feeds both the maturity assessor (Section 11.08) and the detection engineering workflow (Section 11.10). The threshold calibration harness also closes the &#x27;&#x27;thresholds without calibration&#x27;&#x27; debt item from the Section 11.01 inventory.</p>
+<h2 class="sh1">Prerequisites</h2>
+<h3 class="sh2">Required</h3>
+<ul class="blist"><li>Section 11.06: Sigma level field — level is set from FPR, not severity</li><li>Section 11.08: FPR management dimension at L1; L3 requirements named</li><li>Section 11.02: CI/CD pipeline; DaC queue integration concept</li><li>Chapters 6–10: Track 1 centroid similarity (0.85), Track 2 perplexity (150), Track 7 squeezer (0.70) as uncalibrated baselines</li></ul>
+<h3 class="sh2">Helpful</h3>
+<ul class="blist"><li>Basic statistics: precision, recall, TPR, FPR, ROC curve, AUC</li><li>Chapter 10 Section 10.13: prior calibration work on adversarial detection thresholds</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1 Fp Sources</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">Sources of False Positives in AI Gateway Detection</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Every detection rule in the seven-track gateway has a characteristic false positive
+source. Understanding the source is the prerequisite to suppressing the false
+positive without reducing true positive coverage. The three primary sources for
+AI gateway detection rules:
+
+Source 1 — Near-boundary legitimate inputs. The most common source. Track 1&#x27;s
+centroid-similarity gate (threshold 0.85) fires on legitimate prompts that happen to
+be semantically close to the known-bad embedding centroid — not because they are
+adversarial, but because the user&#x27;&#x27;s legitimate vocabulary overlaps with injection
+terminology. A technical writer asking about system prompt design for their own
+application uses language that scores 0.82–0.88 on the similarity gate. Track 7
+(squeezer disagreement, threshold 0.70) fires on unusual-but-legitimate inputs
+with high feature entropy: mathematical proofs, mixed-language prompts, and
+specialised domain notation all produce squeezer scores in the 0.65–0.75 range
+without being adversarial. These are near-boundary inputs: genuinely unusual,
+genuinely close to the detection threshold, but not adversarial.
+
+Source 2 — Legitimate automation. Track 6 (the query monitor&#x27;s extraction rate
+threshold 100 requests per session) fires on production batch inference jobs,
+automated regression testing pipelines, and integration test suites that use
+templated low-variance queries at high volume. The query pattern of a legitimate
+batch job and the query pattern of a model extraction attack are structurally
+similar: both involve many queries with low diversity. The difference is intent
+and source — but intent is not directly observable at the gateway.
+
+Source 3 — Benign obfuscated prompts. Track 1&#x27;s injection keyword rule fires
+on legitimate prompts that contain injection-adjacent vocabulary in a non-adversarial
+context. A security instructor demonstrating injection attacks uses the exact keywords
+that Track 1 fires on. A prompt engineering guide that discusses system prompt
+override patterns for legitimate customisation purposes contains language that Track
+1 flags. A code generation prompt that asks the model to write a parser for injection
+detection rules contains injection keywords. These are benign obfuscated prompts only
+in the sense that they look adversarial to the rule without being adversarial.
+
+Each source requires a different mitigation: near-boundary inputs require threshold
+calibration; legitimate automation requires exception management; benign obfuscated
+prompts require contextual refinement (adding context field conditions to the rule)
+or user-specific exceptions. Applying the wrong mitigation produces either residual
+false positives or unintentional coverage reduction.</p>
+<h3 class="sh2">Part 2 Death Spiral</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">The Alert Fatigue Death Spiral</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Alert fatigue is not a psychological phenomenon. It is a system failure with a
+predictable sequence. Understanding the sequence identifies the two intervention
+points where the spiral can be broken.
+
+Step 1: High FPR rules produce alert volume that exceeds analyst capacity. A rule
+with a 15% false positive rate on production traffic generating 10,000 requests
+per day produces 1,500 false positive alerts per day. If the analyst team has
+capacity for 200 alert investigations per day, the queue fills in eight hours and
+the backlog grows permanently.
+
+Step 2: Analysts adopt triage heuristics to cope with the backlog. They learn
+which rules produce mostly noise and stop investigating those alerts carefully.
+The triage heuristic is not documented; it lives in analyst memory. New analysts
+do not know the heuristic.
+
+Step 3: True positives from high-FPR rules are missed. An actual injection attack
+fires the same rule that produces 1,500 false positives per day. The alert enters
+the queue. The analyst reviews the rule ID, recognises it as noisy, and downgrades
+the investigation priority. The attack proceeds.
+
+Step 4: The missed true positive produces a security incident. Post-incident review
+finds that an alert fired and was not investigated. The conclusion is typically that
+the rule was too sensitive, producing noise that masked the real signal. The
+remediation action is to raise the threshold — reducing sensitivity.
+
+Step 5: The raised threshold reduces both false positives and true positives. The
+FPR improves, but coverage also degrades. The technique the rule detects now has a
+lower score on the coverage heat map — an unrecognised consequence of the
+post-incident remediation.
+
+Step 6: The detection programme has fewer false positives but less coverage. Analysts
+are less fatigued but the attack surface is larger. The net security outcome is
+negative.
+
+The two intervention points: (1) before Step 1 — calibrate thresholds before
+production deployment so FPR is within analyst capacity from day one; (2) before
+Step 2 — track FPR per rule with automated alerting so the detection engineering
+team knows about high-FPR rules before analysts develop suppression heuristics.
+Both interventions are built in this section.</p>
+<h3 class="sh2">Part 3 Roc Calibration</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">Threshold Calibration: ROC Curve Analysis and Operating Point Selection</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A detection threshold is not a security decision. It is an engineering decision
+about where on the precision-recall tradeoff curve the deployment operates. Lower
+threshold means more alerts, higher recall, lower precision. Higher threshold
+means fewer alerts, lower recall, higher precision. The correct operating point
+depends on the deployment context: what is the analyst capacity, what is the
+acceptable false positive rate, and what is the cost of a missed true positive?
+
+The ROC (Receiver Operating Characteristic) curve plots True Positive Rate
+(TPR = TP / (TP + FN)) against False Positive Rate (FPR = FP / (FP + TN)) for
+all possible threshold values. A perfect detector hugs the top-left corner: TPR
+of 1.0, FPR of 0.0 at some threshold. A random classifier produces a diagonal
+line from (0,0) to (1,1). The area under the ROC curve (AUC) is a threshold-
+independent measure of detector quality: AUC of 1.0 is perfect; 0.5 is random.
+
+For the seven-track gateway, the ROC calibration procedure uses the test corpus
+from Section 11.02 (known-bad and known-good fixtures) augmented with a sample
+of recent production traffic (anonymised, with analyst-confirmed disposition
+labels). The threshold_calibration_harness.py deliverable runs this procedure
+for Track 1&#x27;s centroid gate, Track 2 and Track 7 — the three heuristic-layer
+components whose thresholds were set empirically in Part 2.
+
+Operating point selection criteria per track:
+
+Track 1 keyword rule (injection keyword matching): Not threshold-based; keyword lists have
+binary match semantics. FPR is controlled by keyword precision, not threshold.
+Target FPR: 1%. If the current keyword list produces &gt;1% FPR on the known-good
+corpus, the list needs narrowing or the rule needs context conditions added.
+
+Track 1 centroid gate (cosine similarity threshold): Continuous threshold. Target
+FPR: 5%. The similarity gate is a heuristic that will produce near-boundary FPs
+on technical users. A 5% FPR produces approximately one false alert per 20 flagged
+requests — acceptable as a flag (analyst review) but not as a block (immediate
+rejection). The centroid gate fires as a flag; the keyword rule or the injection
+classifier is required to block.
+
+Track 2 (perplexity detector): Continuous threshold. Target FPR: 0.5%.
+Track 2 flags inputs for adversarial review. A 0.5% FPR means the analyst sees
+five false positives per 1,000 flagged requests. The low target reflects that
+Track 2 flags high-priority suspicious inputs (optimised adversarial suffixes); a higher FPR would dilute the
+signal at the adversarial review queue.
+
+Track 7 (squeezer disagreement + adversarial classifier): Compound threshold.
+Target FPR: 5% for squeezer alone (L2 component); 2% for the compound condition
+(squeezer AND classifier). The compound condition&#x27;&#x27;s FPR is substantially lower
+than the squeezer alone because the classifier filters the near-boundary squeezer
+FPs — exactly the design intent of the compound rule in Section 11.06.
+
+The harness generates the ROC curve, marks the current threshold on the curve,
+and proposes the threshold value at the target FPR operating point. If the current
+threshold is already at or better than the target FPR, no change is recommended.
+If the current threshold produces higher FPR than the target, the harness returns
+the calibrated threshold with a warning that TPR will decrease and the coverage
+heat map should be re-run after the calibration is applied.</p>
+<h3 class="sh2">Part 4 Exception Management</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">Exception Management: Suppressing Without Disabling</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">An exception is a structured exclusion of a known-good traffic source from a
+detection rule. Exceptions are not defeats — a properly managed exception list
+reduces FPR without reducing coverage because the excluded traffic source is not
+the adversary. An automation account that runs 50,000 templated queries per day
+is not a model extraction attacker; excluding it from Track 6 rate detection
+does not reduce coverage against the actual extraction threat.
+
+Exceptions become defeats when they are unmanaged. Three failure modes:
+
+Failure mode 1 — Exception list scope creep. An exception is added for a specific
+automation account. Six months later, the same exception is applied to the entire
+IP range of the data centre hosting the automation, because the account IP changed.
+Another six months later, a threat actor who has compromised a server in that data
+centre uses that IP range to conduct extraction attacks that the now-over-broad
+exception suppresses. Unmanaged scope creep turns a precise exception into a blind
+spot.
+
+Failure mode 2 — Exception without review cadence. Exceptions are added but never
+reviewed. The automation account that required the exception is decommissioned.
+The exception remains, now covering traffic from whatever process has inherited
+that account identifier. The exception is no longer protecting a known-good source;
+it is suppressing an unknown source.
+
+Failure mode 3 — Exception as a substitute for calibration. A rule produces many
+false positives. Instead of calibrating the threshold, the team adds exceptions for
+every known false positive source. The exception list grows to hundreds of entries.
+The rule&#x27;&#x27;s effective coverage is now unknown — it detects whatever the exceptions
+have not suppressed, which is a subset of the original detection surface that no
+one has mapped.
+
+The structured exception management system in false_positive_manager.py enforces
+three controls: (1) every exception has an owner, an expiry date, and a business
+justification; (2) exceptions are reviewed quarterly and expired exceptions are
+automatically removed; (3) the exception list is version-controlled in the rule
+repository alongside the rule it modifies — an exception change requires a PR
+with the same review process as a rule change.</p>
+<h3 class="sh2">Part 5 Baselining</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">Baselining: Flagging Deviation Rather Than Absolute Value</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Absolute thresholds produce false positives against high-volume legitimate users.
+A researcher who legitimately queries the model API 500 times per day for their
+academic work triggers Track 6&#x27;&#x27;s session rate threshold (100 requests) many times
+per session. The absolute threshold does not distinguish the researcher&#x27;&#x27;s legitimate
+high-volume usage from an attacker&#x27;&#x27;s extraction campaign with similar volume.
+
+Baselining shifts the detection question from &quot;is this value above the absolute
+threshold?&quot; to &quot;is this value anomalous relative to this entity&#x27;&#x27;s established
+normal behaviour?&quot; For the researcher who typically makes 500 requests per session,
+a session with 600 requests is not anomalous. A session with 5,000 requests — ten
+times their established baseline — is anomalous and warrants investigation. For a
+user whose baseline is 10 requests per session, a session with 150 requests is
+fifteen times their baseline and is anomalous.
+
+The baseline model operates on three entity types:
+
+Per-user baseline: the rolling 30-day mean and standard deviation of each metric
+(session request count, query entropy, query variance) for each user_id. A metric
+value more than three standard deviations above the user&#x27;&#x27;s 30-day mean triggers a
+baseline anomaly flag. The anomaly flag is not a block — it is input to the Track 6
+ensemble that combines absolute threshold, baseline anomaly, and per-user accumulator
+signals with confidence weighting.
+
+Per-endpoint baseline: the rolling 7-day mean and standard deviation of aggregate
+metrics (total request volume, unique user count, flagged request fraction) for
+each API endpoint. Anomalies at the endpoint level indicate coordinated multi-user
+activity that per-user baselining cannot detect.
+
+Per-hour baseline: the rolling 4-week mean for each metric by hour of day. A
+request volume at 3am that is three standard deviations above the normal 3am
+volume is flagged regardless of whether it exceeds the absolute threshold, because
+3am is not normal business hours for the user population.
+
+Baselining requires at least 14 days of production traffic before it produces
+reliable baseline models. During the first 14 days of deployment, the system
+operates on absolute thresholds only, with a warning flag in the alert metadata
+indicating that baseline models are not yet established. After 14 days, the
+baseline anomaly score is computed and the detection ensemble weights it alongside
+the absolute threshold score.</p>
+<h3 class="sh2">Part 6 Fpr Dashboard</h3>
+<h3 class="sh3">Heading</h3>
+<p class="prose">FPR Dashboard and the False Positive Review Queue</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Per-rule FPR tracking requires two components: the collection mechanism (tagging
+each alert with rule_id and analyst disposition) and the monitoring mechanism
+(computing per-rule FPR from the collection and alerting when it breaches target).
+The false_positive_manager.py deliverable implements both.
+
+The FPR computation: FPR = confirmed_false_positives / (confirmed_false_positives
++ confirmed_true_positives) for each rule, computed over a rolling 7-day window.
+Alerts that have not yet received analyst disposition are excluded from the FPR
+computation — they are pending, not positive or negative. The 7-day rolling window
+ensures that a calibration change takes effect in the FPR metric within one week.
+
+FPR target breach: when a rule&#x27;&#x27;s 7-day rolling FPR exceeds its documented target
+by more than 20% relative (e.g. a rule with a 5% FPR target breaches at 6%), the
+false_positive_manager.py opens a ticket in the detection engineering queue. The
+ticket includes: rule ID, rule title, current FPR, FPR target, the most recent
+10 false positive inputs (anonymised), and the recommended first action from the
+FPR management playbook (check exception list, re-run threshold calibration, or
+add context conditions).
+
+The false positive review queue operates on an SLA: every confirmed false positive
+receives analyst disposition within 48 hours of alert generation. The 48-hour SLA
+ensures that the rolling FPR computation reflects recent production behaviour, not
+stale alert data. Alerts that exceed 72 hours without disposition generate an
+automated escalation to the detection engineering lead.
+
+Feedback loop: every confirmed false positive is added to the known-good test
+fixture corpus (Section 11.02) as a regression test case. The rule ID is tagged
+on the fixture. If a future rule change causes the regression test to fail — meaning
+the rule would have flagged this previously-confirmed false positive again — the CI
+pipeline blocks the PR with an explicit regression error. This closes the loop from
+analyst disposition to rule improvement.
+
+The FPR dashboard view (for leadership) shows three metrics per rule: current FPR,
+FPR target, and 30-day FPR trend (improving, stable, or degrading). Rules with a
+degrading trend that have not yet breached the target are flagged amber — an early
+warning signal that allows calibration before the target is breached and before
+the detection engineering queue is triggered.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1 Fp Targets Per Track</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Per-Rule FPR Targets — Seven-Track Gateway</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Calibrated FPR targets for each gateway track with rationale and calibration method</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Track</li><li>Detection Mechanism</li><li>Layer</li><li>FPR Target</li><li>Rationale</li><li>Calibration Method</li><li>Alert Action</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Track 1 — Injection keywords</li><li>Keyword matching</li><li>L1</li><li>1%</li><li>Keyword rules have very low baseline FPR; &gt;1% indicates keyword list needs narrowing</li><li>Review false positive inputs; narrow or contextualise keywords; add NOT conditions</li><li>Block (immediate rejection)</li></ul>
+<ul class="blist"><li>Track 1 — Jailbreak keywords</li><li>Keyword matching</li><li>L1</li><li>1%</li><li>Known jailbreak template keywords; low expected FPR on non-jailbreak traffic</li><li>Review FP inputs; add context conditions distinguishing instructional from adversarial usage</li><li>Flag (analyst review)</li></ul>
+<ul class="blist"><li>Track 1 — Semantic jailbreak classifier</li><li>ML embedding similarity</li><li>L3</li><li>5%</li><li>Embedding classifier has near-boundary FP surface on unusual-but-legitimate prompts</li><li>ROC calibration on production traffic sample; threshold_calibration_harness.py</li><li>Flag (analyst review)</li></ul>
+<ul class="blist"><li>Track 1 — Centroid gate</li><li>Cosine similarity</li><li>L2</li><li>5%</li><li>Heuristic gate; technical users produce near-boundary scores legitimately</li><li>ROC calibration; operating point at 5% FPR on production sample</li><li>Flag (blocks only when combined with the keyword rule or classifier)</li></ul>
+<ul class="blist"><li>Upstream — Chapter 8 poisoning monitor</li><li>Label distribution Sigma</li><li>L1</li><li>0.5%</li><li>Training API anomalies are rare in legitimate use; &gt;0.5% indicates threshold too aggressive or legitimate workflow change</li><li>Review FP inputs; baseline per-job expected label distribution</li><li>Alert (training team review)</li></ul>
+<ul class="blist"><li>Track 6 — Query monitor rate rule</li><li>Rate aggregation</li><li>L1/L4</li><li>2%</li><li>Automation accounts and batch jobs trigger rate rules; 2% allows headroom for legitimate high-volume sources</li><li>Exception list for known automation accounts; per-user baseline after 14 days</li><li>Flag (analyst + account review)</li></ul>
+<ul class="blist"><li>Track 2 — Perplexity detector</li><li>Perplexity heuristic</li><li>L2</li><li>0.5%</li><li>Track 2 flags high-priority adversarial review queue; high FPR dilutes signal quality</li><li>ROC calibration; threshold_calibration_harness.py</li><li>Flag (adversarial review queue)</li></ul>
+<ul class="blist"><li>Track 7 — Squeezer (L2 only)</li><li>Squeezer disagreement</li><li>L2</li><li>5%</li><li>Squeezer alone has moderate FPR; compound condition reduces to 2%</li><li>ROC calibration on squeezer score distribution vs known-good</li><li>Internal (gates Track 7 classifier; does not trigger SOC alert alone)</li></ul>
+<ul class="blist"><li>Track 7 — Compound (L2+L3)</li><li>Squeezer AND classifier</li><li>L2+L3</li><li>2%</li><li>Compound condition substantially reduces squeezer FPR; 2% acceptable for adversarial review queue</li><li>ROC calibration on compound condition; threshold_calibration_harness.py</li><li>Flag (adversarial review queue)</li></ul>
+<h3 class="sh2">Table 2 Exception Management</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Exception Management: Required Fields and Review Cadence</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Every exception entry must contain these fields; exceptions without all fields are rejected by false_positive_manager.py</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Field</li><li>Type</li><li>Required</li><li>Description</li><li>Example</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>exception_id</li><li>UUID</li><li>Yes</li><li>Stable unique identifier for this exception</li><li>&quot;exc-a1b2c3d4&quot;</li></ul>
+<ul class="blist"><li>rule_id</li><li>UUID</li><li>Yes</li><li>The Sigma rule UUID this exception applies to</li><li>&quot;b5c6d7e8-...&quot;</li></ul>
+<ul class="blist"><li>source_type</li><li>enum</li><li>Yes</li><li>What traffic source is being excluded</li><li>&quot;user_id&quot; | &quot;ip_range&quot; | &quot;account_pattern&quot; | &quot;session_tag&quot;</li></ul>
+<ul class="blist"><li>source_value</li><li>string</li><li>Yes</li><li>The specific value to exclude (user ID, CIDR, regex)</li><li>&quot;usr-automation-batch-01&quot;</li></ul>
+<ul class="blist"><li>owner</li><li>string</li><li>Yes</li><li>GitHub handle of the exception owner, responsible for quarterly review</li><li>&quot;ruwgxo&quot;</li></ul>
+<ul class="blist"><li>justification</li><li>string</li><li>Yes</li><li>Business justification: what is this source, why is it legitimate</li><li>&quot;Nightly regression test suite; 500 templated queries; confirmed safe by infra team&quot;</li></ul>
+<ul class="blist"><li>created_date</li><li>ISO 8601</li><li>Yes</li><li>Date exception was created</li><li>&quot;2026-05-30&quot;</li></ul>
+<ul class="blist"><li>expiry_date</li><li>ISO 8601</li><li>Yes</li><li>Date exception automatically expires and is removed unless renewed</li><li>&quot;2026-08-30&quot; (max 90 days; requires renewal)</li></ul>
+<ul class="blist"><li>reviewed_date</li><li>ISO 8601</li><li>Quarterly</li><li>Date of most recent quarterly review; auto-populated by false_positive_manager.py</li><li>&quot;2026-06-15&quot;</li></ul>
+<h3 class="sh2">Table 3 Baselining Windows</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Baseline Model Parameters — Per-User, Per-Endpoint, Per-Hour</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Rolling window, anomaly threshold, minimum data requirement, and action for each baseline entity type</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Entity Type</li><li>Metrics Baselined</li><li>Rolling Window</li><li>Anomaly Threshold</li><li>Minimum Data Requirement</li><li>Action on Anomaly</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Per-user</li><li>session_request_count, query_entropy_avg, query_variance</li><li>30-day rolling mean + SD</li><li>&gt; 3 SD above user mean</li><li>14 days of data; absolute threshold until then</li><li>Baseline anomaly flag added to session metadata; weighted into Track 6 ensemble</li></ul>
+<ul class="blist"><li>Per-endpoint</li><li>total_request_volume, unique_user_count, flagged_request_fraction</li><li>7-day rolling mean + SD</li><li>&gt; 3 SD above endpoint mean</li><li>7 days of data</li><li>Endpoint anomaly alert to detection engineering; not a SOC alert</li></ul>
+<ul class="blist"><li>Per-hour</li><li>request_volume by hour_of_day</li><li>4-week rolling mean + SD per hour bucket</li><li>&gt; 3 SD above hour-bucket mean</li><li>4 weeks of data</li><li>Time-of-day anomaly flag added to session metadata; low weight in ensemble</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Id</h3>
+<p class="prose">D11.09.1</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">false_positive_manager.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Per-rule FPR tracker with rolling 7-day computation, target enforcement, DaC queue integration, and structured exception list management with quarterly expiry. Tracks analyst dispositions (TP/FP) per rule and opens a detection engineering ticket when any rule breaches its FPR target by more than 20% relative.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Python Version</h3>
+<p class="prose">3.12</p>
+<h3 class="sh3">Dependencies</h3>
+<ul class="blist"><li>pyyaml&gt;=6.0</li><li>dataclasses (stdlib)</li><li>statistics (stdlib)</li></ul>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>#!/usr/bin/env python3
+&#x27;&#x27;&#x27;false_positive_manager.py
+Per-rule FPR tracker: rolling 7-day FPR per rule, target enforcement,
+DaC queue integration, and exception list management.
+Chapter 11, Section 11.09 — AI Security Mastery
+Author: Raghav Dinesh | github: ruwgxo
+
+Usage:
+  python3 false_positive_manager.py --report
+  python3 false_positive_manager.py --add-disposition &lt;rule_id&gt; &lt;alert_id&gt; tp|fp
+  python3 false_positive_manager.py --add-exception &lt;rule_id&gt; &lt;source_type&gt; &lt;value&gt;
+  python3 false_positive_manager.py --review-exceptions
+&#x27;&#x27;&#x27;
+
+from __future__ import annotations
+import argparse
+import json
+import pathlib
+import sys
+import uuid
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+DATA_DIR = pathlib.Path(&#x27;fpm_data&#x27;)
+DISPOSITIONS_FILE = DATA_DIR / &#x27;dispositions.json&#x27;
+EXCEPTIONS_FILE = DATA_DIR / &#x27;exceptions.json&#x27;
+FPR_BREACH_RELATIVE_MARGIN = 0.20   # 20% relative above target triggers DaC queue
+
+# Per-rule FPR targets (track → target)
+FPR_TARGETS: dict[str, float] = {
+    &#x27;track_1_injection_keyword&#x27;:       0.01,
+    &#x27;track_1_jailbreak_keyword&#x27;:       0.01,
+    &#x27;track_1_jailbreak_classifier&#x27;:    0.05,
+    &#x27;track_1_centroid_gate&#x27;:           0.05,
+    &#x27;track_2_perplexity&#x27;:              0.005,
+    &#x27;track_6_extraction_rate&#x27;:         0.02,
+    &#x27;track_7_squeezer_only&#x27;:           0.05,
+    &#x27;track_7_compound&#x27;:                0.02,
+    &#x27;upstream_ch8_poisoning_monitor&#x27;:  0.005,
+}
+
+Disposition = Literal[&#x27;tp&#x27;, &#x27;fp&#x27;, &#x27;pending&#x27;]
+
+# ---------------------------------------------------------------------------
+# Data models
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AlertDisposition:
+    alert_id: str
+    rule_id: str
+    disposition: Disposition
+    analyst: str
+    timestamp: str
+    input_snippet: str = &#x27;&#x27;     # anonymised first 80 chars of the triggering input
+
+@dataclass
+class ExceptionEntry:
+    exception_id: str
+    rule_id: str
+    source_type: str            # user_id | ip_range | account_pattern | session_tag
+    source_value: str
+    owner: str
+    justification: str
+    created_date: str
+    expiry_date: str
+    reviewed_date: str = &#x27;&#x27;
+
+@dataclass
+class FPRReport:
+    rule_id: str
+    window_days: int
+    tp_count: int
+    fp_count: int
+    pending_count: int
+    fpr: float
+    fpr_target: float
+    breach: bool
+    trend: str                  # &#x27;improving&#x27; | &#x27;stable&#x27; | &#x27;degrading&#x27; | &#x27;insufficient_data&#x27;
+
+# ---------------------------------------------------------------------------
+# Storage helpers
+# ---------------------------------------------------------------------------
+
+def _load_json(path: pathlib.Path) -&gt; list:
+    if not path.exists():
+        return []
+    with open(path) as f:
+        return json.load(f)
+
+def _save_json(path: pathlib.Path, data: list) -&gt; None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    with open(path, &#x27;w&#x27;) as f:
+        json.dump(data, f, indent=2)
+
+# ---------------------------------------------------------------------------
+# Disposition management
+# ---------------------------------------------------------------------------
+
+def add_disposition(
+    rule_id: str,
+    alert_id: str,
+    disposition: Disposition,
+    analyst: str = &#x27;analyst&#x27;,
+    input_snippet: str = &#x27;&#x27;,
+) -&gt; AlertDisposition:
+    dispositions: list[dict] = _load_json(DISPOSITIONS_FILE)
+    entry = AlertDisposition(
+        alert_id=alert_id,
+        rule_id=rule_id,
+        disposition=disposition,
+        analyst=analyst,
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        input_snippet=input_snippet[:80],
+    )
+    dispositions.append(entry.__dict__)
+    _save_json(DISPOSITIONS_FILE, dispositions)
+    print(f&#x27;Disposition recorded: {rule_id} / {alert_id} → {disposition}&#x27;)
+    if disposition == &#x27;fp&#x27;:
+        print(f&#x27;  → Add input snippet to tests/fixtures/known_good/ as regression case.&#x27;)
+    return entry
+
+# ---------------------------------------------------------------------------
+# FPR computation
+# ---------------------------------------------------------------------------
+
+def compute_fpr(rule_id: str, window_days: int = 7) -&gt; FPRReport:
+    all_dispositions: list[dict] = _load_json(DISPOSITIONS_FILE)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+    window = [
+        d for d in all_dispositions
+        if d[&#x27;rule_id&#x27;] == rule_id
+        and datetime.fromisoformat(d[&#x27;timestamp&#x27;]) &gt;= cutoff
+    ]
+    tp = sum(1 for d in window if d[&#x27;disposition&#x27;] == &#x27;tp&#x27;)
+    fp = sum(1 for d in window if d[&#x27;disposition&#x27;] == &#x27;fp&#x27;)
+    pending = sum(1 for d in window if d[&#x27;disposition&#x27;] == &#x27;pending&#x27;)
+    total_decided = tp + fp
+
+    fpr = fp / total_decided if total_decided &gt; 0 else 0.0
+    target = FPR_TARGETS.get(rule_id, 0.05)
+    breach_threshold = target * (1 + FPR_BREACH_RELATIVE_MARGIN)
+    breach = fpr &gt; breach_threshold and total_decided &gt;= 10  # min 10 decisions
+
+    # Trend: compare first half vs second half of window
+    mid = datetime.now(timezone.utc) - timedelta(days=window_days // 2)
+    first_half = [d for d in window if datetime.fromisoformat(d[&#x27;timestamp&#x27;]) &lt; mid]
+    second_half = [d for d in window if datetime.fromisoformat(d[&#x27;timestamp&#x27;]) &gt;= mid]
+    def half_fpr(half: list[dict]) -&gt; float:
+        tp_h = sum(1 for d in half if d[&#x27;disposition&#x27;] == &#x27;tp&#x27;)
+        fp_h = sum(1 for d in half if d[&#x27;disposition&#x27;] == &#x27;fp&#x27;)
+        return fp_h / (tp_h + fp_h) if (tp_h + fp_h) &gt; 0 else 0.0
+    if total_decided &lt; 10:
+        trend = &#x27;insufficient_data&#x27;
+    elif half_fpr(second_half) &lt; half_fpr(first_half) - 0.01:
+        trend = &#x27;improving&#x27;
+    elif half_fpr(second_half) &gt; half_fpr(first_half) + 0.01:
+        trend = &#x27;degrading&#x27;
+    else:
+        trend = &#x27;stable&#x27;
+
+    return FPRReport(
+        rule_id=rule_id,
+        window_days=window_days,
+        tp_count=tp,
+        fp_count=fp,
+        pending_count=pending,
+        fpr=fpr,
+        fpr_target=target,
+        breach=breach,
+        trend=trend,
+    )
+
+# ---------------------------------------------------------------------------
+# DaC queue integration
+# ---------------------------------------------------------------------------
+
+def open_dac_queue_ticket(report: FPRReport) -&gt; None:
+    &#x27;&#x27;&#x27;
+    Opens a detection engineering queue ticket for an FPR breach.
+    In production: calls the ticketing system API (Jira, Linear, GitHub Issues).
+    Here: prints the ticket draft and writes to a local breach log.
+    &#x27;&#x27;&#x27;
+    ticket_id = str(uuid.uuid4())[:8].upper()
+    ticket = {
+        &#x27;ticket_id&#x27;: f&#x27;DET-{ticket_id}&#x27;,
+        &#x27;type&#x27;: &#x27;fpr_breach&#x27;,
+        &#x27;rule_id&#x27;: report.rule_id,
+        &#x27;current_fpr&#x27;: round(report.fpr, 4),
+        &#x27;fpr_target&#x27;: report.fpr_target,
+        &#x27;breach_pct&#x27;: round((report.fpr / report.fpr_target - 1) * 100, 1),
+        &#x27;trend&#x27;: report.trend,
+        &#x27;window_days&#x27;: report.window_days,
+        &#x27;recommended_action&#x27;: _fpr_recommendation(report),
+        &#x27;opened_at&#x27;: datetime.now(timezone.utc).isoformat(),
+    }
+    breach_log = DATA_DIR / &#x27;breach_log.json&#x27;
+    existing: list = _load_json(breach_log)
+    existing.append(ticket)
+    _save_json(breach_log, existing)
+    print(f&#x27;\n[DAC QUEUE] Ticket {ticket[&quot;ticket_id&quot;]} opened:&#x27;)
+    print(f&#x27;  Rule:         {report.rule_id}&#x27;)
+    print(f&#x27;  FPR:          {report.fpr:.1%} (target: {report.fpr_target:.1%}; breach: +{ticket[&quot;breach_pct&quot;]}%)&#x27;)
+    print(f&#x27;  Trend:        {report.trend}&#x27;)
+    print(f&#x27;  Recommended:  {ticket[&quot;recommended_action&quot;]}&#x27;)
+
+def _fpr_recommendation(report: FPRReport) -&gt; str:
+    if report.fpr_target &lt;= 0.01:
+        return &#x27;Check keyword list precision; add context NOT conditions; review top-10 FP inputs.&#x27;
+    elif report.trend == &#x27;degrading&#x27;:
+        return &#x27;Traffic pattern has shifted; re-run threshold_calibration_harness.py on recent sample.&#x27;
+    elif report.fpr &gt; report.fpr_target * 2:
+        return &#x27;Significant breach; consider emergency threshold recalibration and exception list review.&#x27;
+    else:
+        return &#x27;Re-run threshold_calibration_harness.py; review exception list for expired entries.&#x27;
+
+# ---------------------------------------------------------------------------
+# Exception management
+# ---------------------------------------------------------------------------
+
+def add_exception(
+    rule_id: str,
+    source_type: str,
+    source_value: str,
+    owner: str,
+    justification: str,
+    expiry_days: int = 90,
+) -&gt; ExceptionEntry:
+    exceptions: list[dict] = _load_json(EXCEPTIONS_FILE)
+    today = date.today().isoformat()
+    expiry = (date.today() + timedelta(days=expiry_days)).isoformat()
+    entry = ExceptionEntry(
+        exception_id=str(uuid.uuid4())[:8],
+        rule_id=rule_id,
+        source_type=source_type,
+        source_value=source_value,
+        owner=owner,
+        justification=justification,
+        created_date=today,
+        expiry_date=expiry,
+    )
+    exceptions.append(entry.__dict__)
+    _save_json(EXCEPTIONS_FILE, exceptions)
+    print(f&#x27;Exception added: {entry.exception_id} for rule {rule_id}&#x27;)
+    print(f&#x27;  Source: {source_type} = {source_value}&#x27;)
+    print(f&#x27;  Expires: {expiry} (review before renewal)&#x27;)
+    return entry
+
+def review_exceptions() -&gt; None:
+    exceptions: list[dict] = _load_json(EXCEPTIONS_FILE)
+    today = date.today().isoformat()
+    expired = [e for e in exceptions if e[&#x27;expiry_date&#x27;] &lt; today]
+    active = [e for e in exceptions if e[&#x27;expiry_date&#x27;] &gt;= today]
+    due_soon = [e for e in active
+                if e[&#x27;expiry_date&#x27;] &lt;= (date.today() + timedelta(days=14)).isoformat()]
+
+    print(f&#x27;\nException Review Report — {today}&#x27;)
+    print(f&#x27;Total exceptions: {len(exceptions)}&#x27;)
+    print(f&#x27;Active:           {len(active)}&#x27;)
+    print(f&#x27;Expired (remove): {len(expired)}&#x27;)
+    print(f&#x27;Due within 14d:   {len(due_soon)}&#x27;)
+
+    if expired:
+        print(&#x27;\nExpired exceptions (removing automatically):&#x27;)
+        for e in expired:
+            print(f&#x27;  {e[&quot;exception_id&quot;]} [{e[&quot;rule_id&quot;]}]: {e[&quot;source_value&quot;]} — expired {e[&quot;expiry_date&quot;]}&#x27;)
+        _save_json(EXCEPTIONS_FILE, active)
+        print(f&#x27;  {len(expired)} expired exception(s) removed.&#x27;)
+
+    if due_soon:
+        print(&#x27;\nExceptions expiring within 14 days (review and renew if still valid):&#x27;)
+        for e in due_soon:
+            print(f&#x27;  {e[&quot;exception_id&quot;]} [{e[&quot;rule_id&quot;]}]: {e[&quot;source_value&quot;]} — expires {e[&quot;expiry_date&quot;]} (owner: {e[&quot;owner&quot;]})&#x27;)
+
+def is_excepted(rule_id: str, user_id: str = &#x27;&#x27;, ip: str = &#x27;&#x27;) -&gt; bool:
+    &#x27;&#x27;&#x27;Returns True if the alert should be suppressed by an active exception.&#x27;&#x27;&#x27;
+    exceptions: list[dict] = _load_json(EXCEPTIONS_FILE)
+    today = date.today().isoformat()
+    active = [e for e in exceptions if e[&#x27;rule_id&#x27;] == rule_id and e[&#x27;expiry_date&#x27;] &gt;= today]
+    for e in active:
+        if e[&#x27;source_type&#x27;] == &#x27;user_id&#x27; and e[&#x27;source_value&#x27;] == user_id:
+            return True
+        if e[&#x27;source_type&#x27;] == &#x27;ip_range&#x27; and ip.startswith(e[&#x27;source_value&#x27;].rstrip(&#x27;0&#x27;)):
+            return True
+    return False
+
+# ---------------------------------------------------------------------------
+# Full report
+# ---------------------------------------------------------------------------
+
+def print_full_report() -&gt; None:
+    print(&#x27;\nFPR Report — Seven-Track Gateway&#x27;)
+    print(f&#x27;{&quot;Rule ID&quot;:&lt;35} {&quot;FPR&quot;:&lt;8} {&quot;Target&quot;:&lt;8} {&quot;TP&quot;:&lt;6} {&quot;FP&quot;:&lt;6} {&quot;Pending&quot;:&lt;8} {&quot;Trend&quot;:&lt;12} Status&#x27;)
+    print(&#x27;-&#x27; * 105)
+    breach_count = 0
+    for rule_id in FPR_TARGETS:
+        r = compute_fpr(rule_id)
+        status = &#x27;BREACH&#x27; if r.breach else (&#x27;WARN&#x27; if r.trend == &#x27;degrading&#x27; else &#x27;OK&#x27;)
+        if r.breach:
+            breach_count += 1
+            open_dac_queue_ticket(r)
+        fpr_str = f&#x27;{r.fpr:.1%}&#x27; if r.tp_count + r.fp_count &gt;= 10 else &#x27;N/A&#x27;
+        print(f&#x27;{rule_id:&lt;35} {fpr_str:&lt;8} {r.fpr_target:.1%}  {r.tp_count:&lt;6} {r.fp_count:&lt;6} {r.pending_count:&lt;8} {r.trend:&lt;12} {status}&#x27;)
+    print(f&#x27;\nBreach tickets opened: {breach_count}&#x27;)
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -&gt; int:
+    parser = argparse.ArgumentParser(description=&#x27;False positive manager&#x27;)
+    parser.add_argument(&#x27;--report&#x27;, action=&#x27;store_true&#x27;, help=&#x27;Print full FPR report&#x27;)
+    parser.add_argument(&#x27;--add-disposition&#x27;, nargs=4,
+                        metavar=(&#x27;RULE_ID&#x27;, &#x27;ALERT_ID&#x27;, &#x27;DISPOSITION&#x27;, &#x27;ANALYST&#x27;),
+                        help=&#x27;Add analyst disposition: tp | fp&#x27;)
+    parser.add_argument(&#x27;--add-exception&#x27;, nargs=4,
+                        metavar=(&#x27;RULE_ID&#x27;, &#x27;SOURCE_TYPE&#x27;, &#x27;SOURCE_VALUE&#x27;, &#x27;JUSTIFICATION&#x27;),
+                        help=&#x27;Add exception entry (90-day expiry; owner defaults to ruwgxo)&#x27;)
+    parser.add_argument(&#x27;--review-exceptions&#x27;, action=&#x27;store_true&#x27;,
+                        help=&#x27;Review and expire overdue exceptions&#x27;)
+    args = parser.parse_args()
+
+    if args.report:
+        print_full_report()
+        return 0
+    if args.add_disposition:
+        rule_id, alert_id, disp, analyst = args.add_disposition
+        add_disposition(rule_id, alert_id, disp, analyst)  # type: ignore[arg-type]
+        return 0
+    if args.add_exception:
+        rule_id, src_type, src_val, justification = args.add_exception
+        add_exception(rule_id, src_type, src_val, &#x27;ruwgxo&#x27;, justification)
+        return 0
+    if args.review_exceptions:
+        review_exceptions()
+        return 0
+    parser.print_help()
+    return 1
+
+if __name__ == &#x27;__main__&#x27;:
+    sys.exit(main())</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Id</h3>
+<p class="prose">D11.09.2</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">threshold_calibration_harness.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">ROC curve generation and operating point selection for the heuristic components of Tracks 1, 2 and 7. Takes a labelled corpus (known-bad and known-good inputs with raw detector scores) and outputs the ROC curve, the current threshold position, and the calibrated threshold at the target FPR operating point. Extends the Chapter 10 calibration work to the full Chapter 11 FPR target framework.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Python Version</h3>
+<p class="prose">3.12</p>
+<h3 class="sh3">Dependencies</h3>
+<ul class="blist"><li>dataclasses (stdlib)</li><li>statistics (stdlib)</li></ul>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>#!/usr/bin/env python3
+&#x27;&#x27;&#x27;threshold_calibration_harness.py
+ROC curve generation and operating point selection for gateway heuristic tracks.
+Calibrates Track 1 (centroid cosine similarity), Track 2 (perplexity), Track 7 (compound).
+Chapter 11, Section 11.09 — AI Security Mastery
+Author: Raghav Dinesh | github: ruwgxo
+
+Usage:
+  python3 threshold_calibration_harness.py --track 1
+  python3 threshold_calibration_harness.py --track 7 --current-threshold 0.70
+  python3 threshold_calibration_harness.py --all
+&#x27;&#x27;&#x27;
+
+from __future__ import annotations
+import argparse
+import sys
+from dataclasses import dataclass
+
+# ---------------------------------------------------------------------------
+# FPR targets per track (from table_1_fp_targets_per_track)
+# ---------------------------------------------------------------------------
+
+TRACK_CONFIG: dict[int, dict] = {
+    1:  {&#x27;name&#x27;: &#x27;Injection Centroid Gate&#x27;,  &#x27;fpr_target&#x27;: 0.05,  &#x27;current_threshold&#x27;: 0.85},
+    2:  {&#x27;name&#x27;: &#x27;Perplexity Detector&#x27;,      &#x27;fpr_target&#x27;: 0.005, &#x27;current_threshold&#x27;: 150.0},
+    7:  {&#x27;name&#x27;: &#x27;Squeezer Compound&#x27;,        &#x27;fpr_target&#x27;: 0.02,  &#x27;current_threshold&#x27;: 0.70},
+}
+
+# ---------------------------------------------------------------------------
+# Data model
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ScoredExample:
+    score: float
+    label: int          # 1 = known-bad (positive), 0 = known-good (negative)
+
+@dataclass
+class ROCPoint:
+    threshold: float
+    tpr: float
+    fpr: float
+
+@dataclass
+class CalibrationResult:
+    track: int
+    track_name: str
+    current_threshold: float
+    current_tpr: float
+    current_fpr: float
+    calibrated_threshold: float
+    calibrated_tpr: float
+    calibrated_fpr: float
+    fpr_target: float
+    auc: float
+    recommendation: str
+
+# ---------------------------------------------------------------------------
+# ROC curve computation
+# ---------------------------------------------------------------------------
+
+def compute_roc(examples: list[ScoredExample]) -&gt; list[ROCPoint]:
+    &#x27;&#x27;&#x27;Compute ROC curve by sweeping threshold over all unique score values.&#x27;&#x27;&#x27;
+    thresholds = sorted({e.score for e in examples}, reverse=True)
+    n_pos = sum(1 for e in examples if e.label == 1)
+    n_neg = sum(1 for e in examples if e.label == 0)
+    if n_pos == 0 or n_neg == 0:
+        return []
+
+    points: list[ROCPoint] = []
+    for thresh in thresholds:
+        tp = sum(1 for e in examples if e.score &gt;= thresh and e.label == 1)
+        fp = sum(1 for e in examples if e.score &gt;= thresh and e.label == 0)
+        points.append(ROCPoint(
+            threshold=thresh,
+            tpr=tp / n_pos,
+            fpr=fp / n_neg,
+        ))
+    # Add (0,0) baseline point
+    points.append(ROCPoint(threshold=float(&#x27;inf&#x27;), tpr=0.0, fpr=0.0))
+    points.sort(key=lambda p: p.fpr)
+    return points
+
+def compute_auc(roc_points: list[ROCPoint]) -&gt; float:
+    &#x27;&#x27;&#x27;Trapezoidal AUC.&#x27;&#x27;&#x27;
+    if len(roc_points) &lt; 2:
+        return 0.0
+    auc = 0.0
+    sorted_pts = sorted(roc_points, key=lambda p: p.fpr)
+    for i in range(1, len(sorted_pts)):
+        dx = sorted_pts[i].fpr - sorted_pts[i - 1].fpr
+        avg_y = (sorted_pts[i].tpr + sorted_pts[i - 1].tpr) / 2
+        auc += dx * avg_y
+    return auc
+
+def find_operating_point(
+    roc_points: list[ROCPoint],
+    fpr_target: float,
+) -&gt; ROCPoint:
+    &#x27;&#x27;&#x27;Find the ROC point closest to but not exceeding fpr_target.&#x27;&#x27;&#x27;
+    candidates = [p for p in roc_points if p.fpr &lt;= fpr_target]
+    if not candidates:
+        # All points exceed target; return lowest FPR point
+        return min(roc_points, key=lambda p: p.fpr)
+    # Among candidates at or below target, pick highest TPR
+    return max(candidates, key=lambda p: p.tpr)
+
+def find_current_point(
+    roc_points: list[ROCPoint],
+    current_threshold: float,
+) -&gt; ROCPoint:
+    &#x27;&#x27;&#x27;Find the ROC point corresponding to the current deployed threshold.&#x27;&#x27;&#x27;
+    if not roc_points:
+        return ROCPoint(current_threshold, 0.0, 0.0)
+    closest = min(roc_points, key=lambda p: abs(p.threshold - current_threshold))
+    return closest
+
+# ---------------------------------------------------------------------------
+# Synthetic corpus generators (for demonstration; replace with real data)
+# ---------------------------------------------------------------------------
+
+import random
+
+def _synthetic_track1_corpus(seed: int = 42) -&gt; list[ScoredExample]:
+    &#x27;&#x27;&#x27;
+    Track 1 centroid gate: cosine similarity scores.
+    Known-bad (adversarial): mean 0.92, SD 0.05.
+    Known-good (legitimate): mean 0.72, SD 0.10.
+    &#x27;&#x27;&#x27;
+    rng = random.Random(seed)
+    examples: list[ScoredExample] = []
+    for _ in range(500):
+        score = min(1.0, max(0.0, rng.gauss(0.92, 0.05)))
+        examples.append(ScoredExample(score=round(score, 4), label=1))
+    for _ in range(5000):
+        score = min(1.0, max(0.0, rng.gauss(0.72, 0.10)))
+        examples.append(ScoredExample(score=round(score, 4), label=0))
+    return examples
+
+def _synthetic_track2_corpus(seed: int = 42) -&gt; list[ScoredExample]:
+    &#x27;&#x27;&#x27;
+    Track 2: full-text perplexity (higher = more anomalous).
+    Known-bad (optimised adversarial suffixes): mean 420, SD 120.
+    Known-good: mean 60, SD 30.
+    &#x27;&#x27;&#x27;
+    rng = random.Random(seed)
+    examples: list[ScoredExample] = []
+    for _ in range(200):
+        score = max(1.0, rng.gauss(420.0, 120.0))
+        examples.append(ScoredExample(score=round(score, 2), label=1))
+    for _ in range(10000):
+        score = max(1.0, rng.gauss(60.0, 30.0))
+        examples.append(ScoredExample(score=round(score, 2), label=0))
+    return examples
+
+def _synthetic_track7_corpus(seed: int = 42) -&gt; list[ScoredExample]:
+    &#x27;&#x27;&#x27;
+    Track 7 compound: combined squeezer + classifier score [0,1].
+    Known-bad: mean 0.85, SD 0.07.
+    Known-good: mean 0.45, SD 0.15.
+    &#x27;&#x27;&#x27;
+    rng = random.Random(seed)
+    examples: list[ScoredExample] = []
+    for _ in range(300):
+        score = min(1.0, max(0.0, rng.gauss(0.85, 0.07)))
+        examples.append(ScoredExample(score=round(score, 4), label=1))
+    for _ in range(5000):
+        score = min(1.0, max(0.0, rng.gauss(0.45, 0.15)))
+        examples.append(ScoredExample(score=round(score, 4), label=0))
+    return examples
+
+CORPUS_GENERATORS = {
+    1: _synthetic_track1_corpus,
+    2: _synthetic_track2_corpus,
+    7: _synthetic_track7_corpus,
+}
+
+# ---------------------------------------------------------------------------
+# Calibration runner
+# ---------------------------------------------------------------------------
+
+def calibrate_track(track: int) -&gt; CalibrationResult:
+    cfg = TRACK_CONFIG[track]
+    corpus = CORPUS_GENERATORS[track]()
+    roc_points = compute_roc(corpus)
+    auc = compute_auc(roc_points)
+    current_pt = find_current_point(roc_points, cfg[&#x27;current_threshold&#x27;])
+    calibrated_pt = find_operating_point(roc_points, cfg[&#x27;fpr_target&#x27;])
+
+    # Recommendation
+    current_fpr = current_pt.fpr
+    target_fpr = cfg[&#x27;fpr_target&#x27;]
+    if current_fpr &lt;= target_fpr:
+        rec = (
+            f&#x27;Current threshold {cfg[&quot;current_threshold&quot;]} already meets FPR target &#x27;
+            f&#x27;({current_fpr:.1%} ≤ {target_fpr:.1%}). No change needed. &#x27;
+            f&#x27;Verify with production sample before confirming.&#x27;
+        )
+    else:
+        delta = calibrated_pt.threshold - cfg[&#x27;current_threshold&#x27;]
+        direction = &#x27;raise&#x27; if delta &gt; 0 else &#x27;lower&#x27;
+        rec = (
+            f&#x27;Current FPR {current_fpr:.1%} exceeds target {target_fpr:.1%}. &#x27;
+            f&#x27;{direction.capitalize()} threshold from {cfg[&quot;current_threshold&quot;]} to &#x27;
+            f&#x27;{calibrated_pt.threshold:.4f} to reach target. &#x27;
+            f&#x27;TPR will change from {current_pt.tpr:.1%} to {calibrated_pt.tpr:.1%}. &#x27;
+            f&#x27;Re-run coverage heat map after applying change.&#x27;
+        )
+
+    return CalibrationResult(
+        track=track,
+        track_name=cfg[&#x27;name&#x27;],
+        current_threshold=cfg[&#x27;current_threshold&#x27;],
+        current_tpr=current_pt.tpr,
+        current_fpr=current_pt.fpr,
+        calibrated_threshold=calibrated_pt.threshold,
+        calibrated_tpr=calibrated_pt.tpr,
+        calibrated_fpr=calibrated_pt.fpr,
+        fpr_target=target_fpr,
+        auc=auc,
+        recommendation=rec,
+    )
+
+def print_calibration_result(r: CalibrationResult) -&gt; None:
+    print(f&#x27;\nTrack {r.track} — {r.track_name}&#x27;)
+    print(f&#x27;  AUC:                    {r.auc:.4f}&#x27;)
+    print(f&#x27;  FPR target:             {r.fpr_target:.1%}&#x27;)
+    print(f&#x27;  Current threshold:      {r.current_threshold}&#x27;)
+    print(f&#x27;    → TPR: {r.current_tpr:.1%}  FPR: {r.current_fpr:.1%}&#x27;)
+    print(f&#x27;  Calibrated threshold:   {r.calibrated_threshold:.4f}&#x27;)
+    print(f&#x27;    → TPR: {r.calibrated_tpr:.1%}  FPR: {r.calibrated_fpr:.1%}&#x27;)
+    status = &#x27;OK — no change&#x27; if r.current_fpr &lt;= r.fpr_target else &#x27;CALIBRATION NEEDED&#x27;
+    print(f&#x27;  Status:                 {status}&#x27;)
+    print(f&#x27;  Recommendation:&#x27;)
+    print(f&#x27;    {r.recommendation}&#x27;)
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def main() -&gt; int:
+    parser = argparse.ArgumentParser(description=&#x27;Threshold calibration harness&#x27;)
+    parser.add_argument(&#x27;--track&#x27;, type=int, choices=[1, 2, 7],
+                        help=&#x27;Calibrate a specific track&#x27;)
+    parser.add_argument(&#x27;--all&#x27;, action=&#x27;store_true&#x27;,
+                        help=&#x27;Calibrate all heuristic tracks (1, 2, 7)&#x27;)
+    args = parser.parse_args()
+
+    if args.all:
+        print(&#x27;Threshold Calibration Harness — All Heuristic Tracks&#x27;)
+        for track in [1, 2, 7]:
+            result = calibrate_track(track)
+            print_calibration_result(result)
+        return 0
+
+    if args.track:
+        print(f&#x27;Threshold Calibration Harness — Track {args.track}&#x27;)
+        result = calibrate_track(args.track)
+        print_calibration_result(result)
+        return 0
+
+    parser.print_help()
+    return 1
+
+if __name__ == &#x27;__main__&#x27;:
+    sys.exit(main())</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.09.1</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Setting a single FPR target across all rules in the gateway rather than per-rule targets</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">A uniform FPR target is simpler to enforce and communicate. Setting different targets for different tracks requires understanding the detection mechanism and analyst impact of each rule individually.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">A uniform 5% FPR target is too permissive for Track 1&#x27;s keyword rule (which should be at 1%) and too restrictive for Track 1&#x27;s centroid gate (where 5% is correct). Applying a uniform target miscalibrates both: the keyword rule generates five times as many false positives as necessary, and the centroid gate is calibrated too tightly, reducing true positive coverage to meet a target that was designed for a different detection mechanism.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Set FPR targets per rule based on the detection mechanism, the alert action (block vs flag), and the analyst queue capacity. Block rules (Track 1 keywords) warrant lower FPR targets than flag rules (Track 1 centroid gate). High-priority analyst queues (Track 2 adversarial review) warrant lower FPR targets than general SOC queues.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.09.2</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Treating an exception list as a permanent suppression mechanism rather than a time-bounded operational control</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Exceptions solve an immediate problem. Once the false positive is suppressed, the problem feels resolved and there is no pressure to revisit the exception.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">Without expiry dates and quarterly review, exception lists grow monotonically. Over 12–18 months, a well-intentioned exception list for known automation accounts can expand to cover entire IP ranges, entire departments, and eventually entire user populations — each expansion individually justified, collectively creating large blind spots.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Every exception has a maximum 90-day lifetime enforced by false_positive_manager.py. Renewal requires owner re-confirmation and updated justification. Expired exceptions are removed automatically. The exception list is version-controlled; removing an exception is a PR with the same review requirement as adding one.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.09.3</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Calibrating thresholds using the same corpus that was used to build the detection rule</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The rule development corpus is available and labelled. Using it for calibration saves the effort of collecting a separate production traffic sample.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">A threshold calibrated on the development corpus is optimistic. The development corpus is not representative of production traffic: it over-samples adversarial inputs (to ensure rule development), under-samples the full range of legitimate inputs, and may not reflect recent changes in user behaviour or prompt patterns. A threshold at 5% FPR on the development corpus may produce 20% FPR on production.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Calibrate on a recent production traffic sample with analyst-confirmed labels. The sample must cover at least 14 days to capture weekly traffic patterns. If production traffic has not yet been collected, run the threshold at a conservative (high) setting initially and calibrate downward as labelled production data accumulates.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.09.4</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Applying threshold calibration without re-running the ATT&amp;CK coverage heat map</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Calibration is perceived as a tuning operation, not a coverage operation. The mental model is: &quot;I am improving the FPR without changing what the rule detects.&quot;</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">Raising a threshold to reduce FPR also reduces TPR. If the TPR reduction is large enough, the technique that was at score 1 (partial coverage) moves closer to score 0 (no effective coverage for the attack variant near the new threshold). The coverage heat map does not automatically detect this unless it is re-run after the calibration.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Run attck_coverage_heatmap.py --diff immediately after any threshold calibration is applied to staging. If any technique score regresses in the diff output, the calibration must be reviewed: either the threshold change is too aggressive, or the coverage gap it creates is accepted and documented in the technique&#x27;&#x27;s residual_gap field.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">CM11.09.5</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Tracking FPR as a 30-day rolling average, masking recent breach events</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Longer averaging windows produce smoother metrics and fewer false alarms on the FPR monitoring system itself. A 30-day window feels more stable.</p>
+<h3 class="sh2">Why It Matters</h3>
+<p class="prose">A rule calibration applied on day 28 that causes a significant FPR spike will contribute only 3/30 of the rolling window. The 30-day average stays below the breach threshold even as the actual current FPR is many times the target. The breach goes undetected until the spiked data dominates the rolling window.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Use a 7-day rolling window for FPR computation as implemented in false_positive_manager.py. A 7-day window is responsive enough to detect calibration-induced FPR spikes within one week while smoothing over normal day-to-day traffic variance. If desired, compute both 7-day (operational alert) and 30-day (trend reporting) windows simultaneously, and breach-alert on the 7-day metric only.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">What You Learned</h3>
+<p class="prose">False positive management is the operational discipline that prevents detection
+programmes from eroding through alert fatigue. The seven-track gateway has three
+primary FP sources — near-boundary legitimate inputs, legitimate automation, and
+benign obfuscated prompts — each requiring a different mitigation. The alert fatigue
+death spiral has two intervention points: pre-deployment threshold calibration and
+real-time per-rule FPR monitoring. ROC curve analysis selects operating points at
+target FPR levels; per-rule targets range from 0.5% (Track 2) to 5% (Track 1&#x27;s
+centroid gate and Track 7&#x27;s squeezer alone). Exception management requires expiry dates, quarterly review,
+and version control. Baselining shifts detection from absolute to entity-relative
+thresholds, reducing FPR for high-volume legitimate users. The FPR management
+dimension advances from L1 to L3 after deploying false_positive_manager.py with
+target enforcement and DaC queue integration.</p>
+<h3 class="sh2">Key Terms</h3>
+<h3 class="sh3">Term</h3>
+<p class="prose">Alert fatigue death spiral</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">The self-reinforcing failure sequence in which high FPR leads analysts to dismiss alerts, causing missed true positives, causing incidents, causing threshold increases, causing coverage reduction. Broken by pre-deployment calibration and real-time per-rule FPR monitoring.</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">ROC curve</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">A plot of True Positive Rate against False Positive Rate across all threshold values. The operating point is selected where FPR meets the per-rule target. AUC (area under the ROC curve) is a threshold-independent quality measure.</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">Exception</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">A time-bounded, owner-attributed suppression of detection alerts for a specific known-good traffic source. Maximum 90-day lifetime; auto-expired; version-controlled. Not a substitute for threshold calibration.</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">Baselining</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">A per-entity (user, endpoint, hour) normal behaviour model. Detection fires when a metric deviates more than 3 standard deviations from the entity&#x27;&#x27;s rolling mean, rather than when it exceeds an absolute threshold. Reduces FPR for high-volume legitimate users.</p>
+<h3 class="sh3">Term</h3>
+<p class="prose">FPR target breach</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">The condition in which a rule&#x27;&#x27;s 7-day rolling FPR exceeds its documented target by more than 20% relative. Triggers a DaC queue ticket with the rule ID, current FPR, FPR target, and recommended first action.</p>
+<h2 class="sh1">Preview Section 11 10</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Detection Engineering Workflow: Hypothesis to Production</p>
+<h3 class="sh2">Teaser</h3>
+<p class="prose">Section 11.10 codifies the end-to-end detection engineering workflow as a seven-phase
+pipeline: hypothesis formation (from threat intelligence and gap analysis), design
+(log source, feature selection, FPR target), build (Sigma rule authoring and test
+cases), test (CI unit tests and staging integration test), deploy (PR review and
+pipeline merge), monitor (FPR tracking and drift detection), and improve (rule
+refinement from FP/FN feedback). The time-to-detect metric measures the elapsed
+time from threat discovery to deployed detection rule; the target is under seven
+days for catalogued techniques and under 24 hours for actively exploited zero-days.
+The workflow integrates all tools from Sections 11.02 through 11.09 into a single
+coherent procedure that any detection engineer can follow for any new ATLAS technique.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">III</p>
+<h3 class="sh2">Chapter</h3>
+<p class="prose">11</p>
+<h3 class="sh2">Section</h3>
+<p class="prose">9</p>
+<h3 class="sh2">Section Id</h3>
+<p class="prose">11.09</p>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>false-positive-management</li><li>threshold-calibration</li><li>alert-fatigue</li><li>roc-curve</li><li>exception-management</li><li>baselining</li><li>fpr-tracking</li><li>dac-queue</li><li>track-3</li><li>track-6</li><li>track-7</li><li>chapter-11</li><li>part-3</li></ul>
+<h3 class="sh2">Atlas Anchors</h3>
+<ul class="blist"><li>Operational: FPR management applies across all ATLAS technique detections</li><li>AML.T0051 — Track 1 FPR target 1% (keyword block rule)</li><li>AML.T0054 — Track 1 jailbreak classifier FPR target 5%</li><li>AML.T0043 — Track 7 compound FPR target 2%; Track 2 perplexity 0.5%</li><li>AML.T0040 — Track 6 rate rule FPR target 2%</li><li>AML.T0020 — Chapter 8 training monitor FPR target 0.5%</li></ul>
+<h3 class="sh2">Word Count Estimate</h3>
+<p class="prose">4500</p>
+<h3 class="sh2">Deliverables Count</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Common Mistakes Count</h3>
+<p class="prose">5</p>
+</article>

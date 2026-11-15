@@ -1,0 +1,918 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 14 · ~8 pages</div>
+<h1>Complete Transformer: Encoder-Decoder Assembly</h1>
+<div class="tags"><span class="tag">complete-transformer</span><span class="tag">encoder-decoder</span><span class="tag">teacher-forcing</span><span class="tag">beam-search</span><span class="tag">autoregressive-inference</span><span class="tag">transformer-training</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Complete Transformer: Encoder-Decoder Assembly</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.14</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">The complete transformer (Vaswani et al., 2017) combines encoder and decoder stacks 
+for sequence-to-sequence tasks. The encoder processes input sequences into contextual 
+representations, the decoder generates output sequences autoregressively while attending 
+to encoder outputs via cross-attention. This architecture revolutionized machine 
+translation and established the foundation for modern NLP.
+
+Training uses teacher forcing - feeding ground truth tokens to decoder during training 
+for efficient parallel learning. Inference is autoregressive - generating one token at 
+a time, feeding each prediction back as input. Beam search explores multiple generation 
+paths simultaneously for better output quality than greedy decoding.
+
+For security engineers: Complete transformers combine encoder and decoder vulnerabilities. 
+Teacher forcing creates train-test mismatch exploitable by adversaries. Beam search can 
+be manipulated to extract training data or generate specific outputs. Understanding the 
+full architecture reveals end-to-end attack surfaces from input encoding through output 
+generation.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand complete transformer: encoder stack + decoder stack</li><li>Grasp teacher forcing: parallel training with ground truth</li><li>Learn autoregressive inference: sequential token generation</li><li>See beam search: exploring multiple generation paths</li><li>Compare training vs inference modes and their differences</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement complete encoder-decoder transformer from scratch</li><li>Build training loop with teacher forcing</li><li>Create autoregressive inference pipeline</li><li>Implement beam search decoder</li><li>Train transformer on sequence-to-sequence task</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Exploit teacher forcing train-test mismatch</li><li>Manipulate beam search for data extraction</li><li>Attack complete transformer end-to-end</li><li>Analyze encoder-decoder vulnerability interactions</li><li>Audit transformer training and inference pipelines</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.12: Transformer encoder</li><li>Section 3.13: Transformer decoder</li><li>Chapter 2: Training neural networks, loss functions</li><li>Understanding of sequence-to-sequence tasks</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>All previous transformer implementations</li><li>Training loop construction</li><li>Loss computation and backpropagation</li><li>Sampling and decoding strategies</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 13</h3>
+<p class="prose">Section 3.13 built the transformer decoder for generation. Now we combine encoder 
+and decoder into the complete transformer, covering training with teacher forcing 
+and inference with beam search.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.15 will explore GPT (decoder-only transformers) - how removing the 
+encoder and using only masked self-attention creates powerful language models 
+for text generation.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Complete Transformer Architecture</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The complete transformer has two main components: encoder stack (processes input) 
+and decoder stack (generates output). Encoder runs once to create source representations, 
+decoder runs autoregressively using encoder outputs via cross-attention. Final decoder 
+output is projected to vocabulary for token prediction.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Full Architecture</h3>
+<h4 class="sh3">Components</h4>
+<h4 class="sh3">Input Processing</h4>
+<h4 class="sh3">Tokenization</h4>
+<p class="prose">Input text → token IDs</p>
+<h4 class="sh3">Embedding</h4>
+<p class="prose">Token IDs → embeddings (d_model)</p>
+<h4 class="sh3">Positional Encoding</h4>
+<p class="prose">Add position information</p>
+<h4 class="sh3">Encoder Stack</h4>
+<h4 class="sh3">Layers</h4>
+<p class="prose">N encoder layers (typically 6)</p>
+<h4 class="sh3">Per Layer</h4>
+<p class="prose">Self-attention (bidirectional) + FFN</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Contextualized source representations</p>
+<h4 class="sh3">Decoder Stack</h4>
+<h4 class="sh3">Layers</h4>
+<p class="prose">N decoder layers (typically 6)</p>
+<h4 class="sh3">Per Layer</h4>
+<p class="prose">Masked self-attention + Cross-attention + FFN</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Target representations</p>
+<h4 class="sh3">Output Projection</h4>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Linear projection to vocabulary</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">d_model → vocab_size</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Logits for next token prediction</p>
+<h4 class="sh3">Data Flow</h4>
+<p class="prose">Source text
+↓ (tokenize + embed + positional)
+Encoder input (batch, source_len, d_model)
+↓ (encoder stack)
+Encoder output (batch, source_len, d_model)
+↓ (provided to decoder via cross-attention)
+
+Target text
+↓ (tokenize + embed + positional)
+Decoder input (batch, target_len, d_model)
+↓ (decoder stack with cross-attention to encoder)
+Decoder output (batch, target_len, d_model)
+↓ (output projection)
+Logits (batch, target_len, vocab_size)
+↓ (softmax)
+Token probabilities</p>
+<h3 class="sh3">Encoder Decoder Connection</h3>
+<h4 class="sh3">Cross Attention At Each Layer</h4>
+<p class="prose">Every decoder layer attends to encoder output
+→ Decoder has access to source at all depths
+→ Rich encoder-decoder alignment</p>
+<h4 class="sh3">Encoder Computed Once</h4>
+<p class="prose">Encoder processes source sequence ONCE
+→ Encoder output cached and reused
+→ Efficient: don&#x27;t recompute for each target token</p>
+<h4 class="sh3">Asymmetry</h4>
+<p class="prose">Encoder: Bidirectional (sees full source)
+Decoder: Causal (sees only past target)
+
+→ Different attention patterns for different purposes</p>
+<h3 class="sh3">Hyperparameters</h3>
+<h4 class="sh3">Model Architecture</h4>
+<h4 class="sh3">Num Encoder Layers</h4>
+<p class="prose">6 (original), 12-24 (large models)</p>
+<h4 class="sh3">Num Decoder Layers</h4>
+<p class="prose">6 (original), 12-24 (large models)</p>
+<h4 class="sh3">D Model</h4>
+<p class="prose">512 (base), 768-1024 (large)</p>
+<h4 class="sh3">Num Heads</h4>
+<p class="prose">8 (base), 12-16 (large)</p>
+<h4 class="sh3">D Ff</h4>
+<p class="prose">2048 (base), 3072-4096 (large)</p>
+<h4 class="sh3">Vocabulary</h4>
+<h4 class="sh3">Vocab Size</h4>
+<p class="prose">30K-50K (typical for translation)</p>
+<h4 class="sh3">Shared Embeddings</h4>
+<p class="prose">Often share encoder/decoder embeddings</p>
+<h4 class="sh3">Training</h4>
+<h4 class="sh3">Dropout</h4>
+<p class="prose">0.1 typical</p>
+<h4 class="sh3">Learning Rate</h4>
+<p class="prose">Warmup schedule (Section 3.15)</p>
+<h4 class="sh3">Batch Size</h4>
+<p class="prose">Variable (depends on sequence length)</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Complete Transformer</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class Transformer:
+    &quot;&quot;&quot;
+    Complete encoder-decoder transformer.
+    
+    Architecture:
+    - Encoder stack: processes source sequence
+    - Decoder stack: generates target sequence
+    - Output projection: decoder output → vocabulary logits
+    &quot;&quot;&quot;
+    
+    def __init__(self, 
+                src_vocab_size: int,
+                tgt_vocab_size: int,
+                max_len: int = 512,
+                num_layers: int = 6,
+                d_model: int = 512,
+                num_heads: int = 8,
+                d_ff: int = 2048,
+                dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            src_vocab_size: Source vocabulary size
+            tgt_vocab_size: Target vocabulary size
+            max_len: Maximum sequence length
+            num_layers: Number of encoder/decoder layers
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        # Import from previous sections
+        from section_3_12_transformer_encoder import CompleteTransformerEncoder
+        from section_3_13_transformer_decoder import TransformerDecoder
+        
+        # Encoder
+        self.encoder = CompleteTransformerEncoder(
+            src_vocab_size, max_len, num_layers,
+            d_model, num_heads, d_ff, dropout
+        )
+        
+        # Decoder
+        self.decoder = TransformerDecoder(
+            tgt_vocab_size, max_len, num_layers,
+            d_model, num_heads, d_ff, dropout
+        )
+        
+        self.d_model = d_model
+        self.tgt_vocab_size = tgt_vocab_size
+    
+    def forward(self,
+               src_ids: np.ndarray,
+               tgt_ids: np.ndarray,
+               src_mask: np.ndarray = None,
+               training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Forward pass through complete transformer.
+        
+        Args:
+            src_ids: Source token IDs (batch, src_len)
+            tgt_ids: Target token IDs (batch, tgt_len)
+            src_mask: Optional source padding mask
+            training: Whether in training mode
+        
+        Returns:
+            logits: (batch, tgt_len, vocab_size)
+        &quot;&quot;&quot;
+        # Encode source sequence
+        encoder_output, _ = self.encoder(src_ids, src_mask, training)
+        
+        # Decode target sequence (with cross-attention to encoder)
+        logits = self.decoder(tgt_ids, encoder_output, src_mask, training)
+        
+        return logits
+    
+    def __call__(self, src_ids: np.ndarray, tgt_ids: np.ndarray,
+                src_mask: np.ndarray = None,
+                training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(src_ids, tgt_ids, src_mask, training)
+
+
+# Example usage
+print(&quot;=== Complete Transformer ===\n&quot;)
+
+src_vocab_size = 30000
+tgt_vocab_size = 25000
+num_layers = 6
+d_model = 512
+num_heads = 8
+d_ff = 2048
+
+transformer = Transformer(
+    src_vocab_size, tgt_vocab_size,
+    num_layers=num_layers, d_model=d_model,
+    num_heads=num_heads, d_ff=d_ff
+)
+
+# Sample input
+batch_size = 2
+src_len = 10
+tgt_len = 8
+
+src_ids = np.random.randint(0, src_vocab_size, (batch_size, src_len))
+tgt_ids = np.random.randint(0, tgt_vocab_size, (batch_size, tgt_len))
+
+# Forward pass
+logits = transformer(src_ids, tgt_ids, training=False)
+
+print(f&quot;Architecture:&quot;)
+print(f&quot;  Source vocabulary: {src_vocab_size:,}&quot;)
+print(f&quot;  Target vocabulary: {tgt_vocab_size:,}&quot;)
+print(f&quot;  Encoder layers: {num_layers}&quot;)
+print(f&quot;  Decoder layers: {num_layers}&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print()
+print(f&quot;Input:&quot;)
+print(f&quot;  Source IDs: {src_ids.shape}&quot;)
+print(f&quot;  Target IDs: {tgt_ids.shape}&quot;)
+print()
+print(f&quot;Output:&quot;)
+print(f&quot;  Logits: {logits.shape}&quot;)
+print()
+print(&quot;Complete pipeline:&quot;)
+print(&quot;  1. Encode source sequence&quot;)
+print(&quot;  2. Decode target sequence (attend to encoder)&quot;)
+print(&quot;  3. Project to vocabulary logits&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">End To End Attack Surface</h3>
+<p class="prose">Complete transformer combines all vulnerabilities:
+- Input encoding attacks (encoder)
+- Generation manipulation (decoder)
+- Cross-attention exploitation (encoder-decoder link)
+- Output projection attacks (vocabulary manipulation)
+- Defense: Multi-layer security, monitor entire pipeline</p>
+<h3 class="sh3">Encoder Decoder Interaction Exploits</h3>
+<p class="prose">Adversary can attack encoder to corrupt decoder:
+- Poison encoder outputs via input manipulation
+- Cross-attention propagates corruption to decoder
+- Decoder generates based on corrupted context
+- Defense: Validate encoder outputs before decoder</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Training with Teacher Forcing</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Teacher forcing trains the decoder efficiently by feeding ground truth tokens (not 
+predictions) as input. During training, the entire target sequence is processed in 
+parallel with causal masking. This is faster than sequential generation but creates 
+train-test mismatch - training sees ground truth, inference sees predictions.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Teacher Forcing Explained</h3>
+<h4 class="sh3">Without Teacher Forcing Autoregressive</h4>
+<p class="prose">Naive training (autoregressive):
+
+Step 1: Generate token₁, compare to ground truth
+Step 2: Feed token₁ (prediction), generate token₂
+Step 3: Feed token₁, token₂, generate token₃
+...
+
+Problem: Sequential (slow), error accumulation</p>
+<h4 class="sh3">With Teacher Forcing Parallel</h4>
+<p class="prose">Teacher forcing:
+
+Input: [&lt;START&gt;, ground_truth₁, ground_truth₂, ...]
+Output: [ground_truth₁, ground_truth₂, ground_truth₃, ...]
+
+All positions processed in parallel!
+→ Much faster training</p>
+<h4 class="sh3">Causal Masking Ensures Validity</h4>
+<p class="prose">Even though all positions processed together:
+- Causal mask prevents position t seeing position t+1
+- Position t sees only ground truth tokens 0...t-1
+- Same as autoregressive but parallelized</p>
+<h3 class="sh3">Training Procedure</h3>
+<h4 class="sh3">Data Preparation</h4>
+<p class="prose">Source: &quot;The cat sat&quot;
+Target: &quot;Le chat assis&quot;
+
+Decoder input:  [&lt;START&gt;, Le, chat, assis]
+Decoder target: [Le, chat, assis, &lt;END&gt;]
+
+→ Shifted by one position</p>
+<h4 class="sh3">Forward Pass</h4>
+<p class="prose">1. Encode source: encoder_output = Encoder(source)
+2. Decode target: logits = Decoder(target_input, encoder_output)
+3. Compute loss: CrossEntropy(logits, target_truth)</p>
+<h4 class="sh3">Loss Computation</h4>
+<p class="prose">For each position t:
+loss_t = -log P(ground_truth_t | logits_t)
+
+Total loss = mean over all positions
+
+Only compute loss on non-padding tokens!</p>
+<h4 class="sh3">Backward Pass</h4>
+<p class="prose">Standard backpropagation:
+- Gradients flow through decoder → encoder
+- Update all parameters
+- Cross-attention connects encoder and decoder gradients</p>
+<h3 class="sh3">Train Test Mismatch</h3>
+<h4 class="sh3">Training Condition</h4>
+<p class="prose">Decoder sees ground truth tokens
+→ Always has correct context</p>
+<h4 class="sh3">Inference Condition</h4>
+<p class="prose">Decoder sees its own predictions
+→ Errors accumulate (wrong token → wrong context → more errors)</p>
+<h4 class="sh3">Mismatch Problem</h4>
+<p class="prose">Model trained on perfect inputs
+Tested on imperfect inputs (its own predictions)
+→ Performance degradation</p>
+<h4 class="sh3">Solutions</h4>
+<h4 class="sh3">Scheduled Sampling</h4>
+<p class="prose">Gradually mix predictions with ground truth during training
+→ Model learns to handle its own errors</p>
+<h4 class="sh3">Exposure Bias Mitigation</h4>
+<p class="prose">Train with noisy/perturbed ground truth
+→ More robust to inference errors</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Training Loop</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def train_step(transformer: Transformer,
+              src_ids: np.ndarray,
+              tgt_ids: np.ndarray,
+              learning_rate: float = 1e-4) -&gt; float:
+    &quot;&quot;&quot;
+    Single training step with teacher forcing.
+    
+    Args:
+        transformer: Transformer model
+        src_ids: Source token IDs (batch, src_len)
+        tgt_ids: Target token IDs (batch, tgt_len)
+        learning_rate: Learning rate
+    
+    Returns:
+        loss: Cross-entropy loss
+    &quot;&quot;&quot;
+    batch_size, tgt_len = tgt_ids.shape
+    
+    # Prepare decoder input (shift right by 1)
+    # Input: [&lt;START&gt;, token1, token2, ...]
+    # Target: [token1, token2, token3, &lt;END&gt;]
+    
+    START_TOKEN = 0  # Convention: 0 is &lt;START&gt;
+    decoder_input = np.concatenate([
+        np.full((batch_size, 1), START_TOKEN),
+        tgt_ids[:, :-1]
+    ], axis=1)
+    
+    decoder_target = tgt_ids  # Ground truth
+    
+    # Forward pass
+    logits = transformer(src_ids, decoder_input, training=True)
+    # logits: (batch, tgt_len, vocab_size)
+    
+    # Compute cross-entropy loss
+    # For each position, compare predicted distribution to target token
+    loss = compute_cross_entropy_loss(logits, decoder_target)
+    
+    # Backward pass (simplified - in practice use autograd)
+    # gradients = backward(loss)
+    # update_parameters(transformer, gradients, learning_rate)
+    
+    return loss
+
+
+def compute_cross_entropy_loss(logits: np.ndarray,
+                               targets: np.ndarray) -&gt; float:
+    &quot;&quot;&quot;
+    Compute cross-entropy loss.
+    
+    Args:
+        logits: (batch, seq_len, vocab_size)
+        targets: (batch, seq_len) - token IDs
+    
+    Returns:
+        loss: Mean cross-entropy
+    &quot;&quot;&quot;
+    batch_size, seq_len, vocab_size = logits.shape
+    
+    # Softmax to get probabilities
+    # Stabilized softmax: subtract max for numerical stability
+    logits_max = np.max(logits, axis=-1, keepdims=True)
+    exp_logits = np.exp(logits - logits_max)
+    probs = exp_logits / np.sum(exp_logits, axis=-1, keepdims=True)
+    
+    # Gather probabilities of target tokens
+    # For each position, get probability of ground truth token
+    batch_indices = np.arange(batch_size)[:, None]
+    seq_indices = np.arange(seq_len)[None, :]
+    target_probs = probs[batch_indices, seq_indices, targets]
+    
+    # Cross-entropy: -log(p_target)
+    # Add small epsilon to avoid log(0)
+    losses = -np.log(target_probs + 1e-10)
+    
+    # Mean over batch and sequence
+    loss = np.mean(losses)
+    
+    return loss
+
+
+# Example training step
+print(&quot;\n=== Training with Teacher Forcing ===\n&quot;)
+
+transformer = Transformer(30000, 25000, num_layers=6, d_model=512)
+
+# Sample batch
+batch_size = 4
+src_len = 12
+tgt_len = 10
+
+src_ids = np.random.randint(1, 30000, (batch_size, src_len))
+tgt_ids = np.random.randint(1, 25000, (batch_size, tgt_len))
+
+# Training step
+loss = train_step(transformer, src_ids, tgt_ids)
+
+print(f&quot;Batch size: {batch_size}&quot;)
+print(f&quot;Source length: {src_len}&quot;)
+print(f&quot;Target length: {tgt_len}&quot;)
+print()
+print(f&quot;Loss: {loss:.4f}&quot;)
+print()
+print(&quot;Teacher forcing:&quot;)
+print(&quot;  1. Feed ground truth tokens to decoder&quot;)
+print(&quot;  2. Process all positions in parallel (with causal mask)&quot;)
+print(&quot;  3. Compute loss comparing predictions to targets&quot;)
+print(&quot;  4. Backpropagate and update parameters&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Teacher Forcing Exploitation</h3>
+<p class="prose">Train-test mismatch creates vulnerabilities:
+- Model robust to ground truth errors (training)
+- Brittle to prediction errors (inference)
+- Adversary can exploit this mismatch
+- Example: Small input perturbation → prediction error → cascading failures
+- Defense: Scheduled sampling, adversarial training</p>
+<h3 class="sh3">Training Data Extraction</h3>
+<p class="prose">Model learns to predict training data exactly:
+- Given similar input, may reproduce training examples
+- Teacher forcing reinforces memorization
+- Adversary can query model to extract training data
+- Defense: Differential privacy, output filtering</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Inference and Decoding Strategies</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">At inference, the decoder generates sequences autoregressively - one token at a time, 
+feeding each prediction back as input for the next. Greedy decoding selects the most 
+likely token at each step (fast but suboptimal). Beam search maintains multiple 
+hypotheses to explore better generation paths (slower but higher quality).</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Autoregressive Inference</h3>
+<h4 class="sh3">Sequential Generation</h4>
+<p class="prose">Start with &lt;START&gt; token
+
+Step 1: Predict token₁ given [&lt;START&gt;]
+Step 2: Predict token₂ given [&lt;START&gt;, token₁]
+Step 3: Predict token₃ given [&lt;START&gt;, token₁, token₂]
+...
+Until &lt;END&gt; token or max length</p>
+<h4 class="sh3">Encoder Decoder Flow</h4>
+<p class="prose">1. Encode source ONCE (before generation)
+2. Initialize decoder with &lt;START&gt;
+3. Generate loop:
+   - Decoder attends to encoder output (cross-attention)
+   - Predict next token
+   - Append to sequence
+   - Repeat until done</p>
+<h4 class="sh3">Stopping Criteria</h4>
+<h4 class="sh3">End Token</h4>
+<p class="prose">Generate &lt;END&gt; token</p>
+<h4 class="sh3">Max Length</h4>
+<p class="prose">Reach maximum sequence length</p>
+<h4 class="sh3">Early Stopping</h4>
+<p class="prose">Probability threshold (beam search)</p>
+<h3 class="sh3">Greedy Decoding</h3>
+<h4 class="sh3">Algorithm</h4>
+<p class="prose">At each step t:
+1. Compute logits for position t
+2. token_t = argmax(softmax(logits_t))
+3. Append token_t to sequence
+4. Continue to step t+1</p>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Fast (one forward pass per token)</li><li>Deterministic (same input → same output)</li><li>Low memory (only track one sequence)</li></ul>
+<h4 class="sh3">Disadvantages</h4>
+<ul class="blist"><li>Locally optimal, globally suboptimal</li><li>Cannot recover from bad early choices</li><li>Misses higher-probability sequences</li></ul>
+<h4 class="sh3">Example Problem</h4>
+<p class="prose">Position 1: Choose A (p=0.5) over B (p=0.4)
+Position 2 given A: Choose C (p=0.3)
+Position 2 given B: Choose D (p=0.5)
+
+Greedy: A→C (total p = 0.5 × 0.3 = 0.15)
+Better: B→D (total p = 0.4 × 0.5 = 0.20)
+
+→ Greedy missed better sequence!</p>
+<h3 class="sh3">Beam Search</h3>
+<h4 class="sh3">Core Idea</h4>
+<p class="prose">Maintain k best hypotheses (beam)
+At each step:
+1. Expand each hypothesis with top k tokens
+2. Keep k best overall sequences
+3. Continue until all beams end</p>
+<h4 class="sh3">Algorithm</h4>
+<p class="prose">beam_size = k
+beams = [(&lt;START&gt;, score=0.0)]
+
+for step in range(max_len):
+    candidates = []
+    for beam, score in beams:
+        # Get next token probabilities
+        probs = model.predict_next(beam)
+        # Expand with top k tokens
+        for token in top_k(probs, k):
+            new_beam = beam + [token]
+            new_score = score + log(probs[token])
+            candidates.append((new_beam, new_score))
+    
+    # Keep k best
+    beams = top_k(candidates, k)
+    
+    # Check if all beams ended
+    if all(beam ends with &lt;END&gt; for beam in beams):
+        break
+
+return best(beams)</p>
+<h4 class="sh3">Beam Size Tradeoffs</h4>
+<h4 class="sh3">K 1</h4>
+<p class="prose">Greedy decoding</p>
+<h4 class="sh3">K 5</h4>
+<p class="prose">Good balance (typical)</p>
+<h4 class="sh3">K 10</h4>
+<p class="prose">Better quality, slower</p>
+<h4 class="sh3">K Large</h4>
+<p class="prose">Approaches exhaustive search</p>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Explores multiple paths</li><li>Finds higher-probability sequences</li><li>Better output quality</li></ul>
+<h4 class="sh3">Disadvantages</h4>
+<ul class="blist"><li>Slower (k× more computation)</li><li>More memory (track k sequences)</li><li>Can still miss global optimum</li></ul>
+<h3 class="sh3">Sampling Strategies</h3>
+<h4 class="sh3">Temperature Sampling</h4>
+<p class="prose">Adjust probability distribution:
+probs = softmax(logits / temperature)
+
+temperature &lt; 1: Sharper (more deterministic)
+temperature = 1: Standard distribution
+temperature &gt; 1: Flatter (more random)</p>
+<h4 class="sh3">Top K Sampling</h4>
+<p class="prose">Sample from only top-k most likely tokens
+→ Avoid sampling very unlikely tokens</p>
+<h4 class="sh3">Nucleus Top P Sampling</h4>
+<p class="prose">Sample from smallest set where cumulative prob ≥ p
+→ Dynamic vocabulary based on distribution</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Greedy Decoder</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def greedy_decode(transformer: Transformer,
+                 src_ids: np.ndarray,
+                 max_len: int = 50,
+                 start_token: int = 0,
+                 end_token: int = 1) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    Greedy decoding: select most likely token at each step.
+    
+    Args:
+        transformer: Trained transformer model
+        src_ids: Source token IDs (batch, src_len)
+        max_len: Maximum generation length
+        start_token: Start token ID
+        end_token: End token ID
+    
+    Returns:
+        generated: Generated token IDs (batch, gen_len)
+    &quot;&quot;&quot;
+    batch_size = src_ids.shape[0]
+    
+    # Encode source (done once)
+    encoder_output, _ = transformer.encoder(src_ids, training=False)
+    
+    # Initialize decoder input with &lt;START&gt;
+    decoder_input = np.full((batch_size, 1), start_token)
+    
+    # Generate tokens sequentially
+    for step in range(max_len):
+        # Decode current sequence
+        logits = transformer.decoder(
+            decoder_input, encoder_output, training=False
+        )
+        
+        # Get logits for last position (next token prediction)
+        next_token_logits = logits[:, -1, :]  # (batch, vocab_size)
+        
+        # Greedy: select most likely token
+        next_token = np.argmax(next_token_logits, axis=-1, keepdims=True)
+        # (batch, 1)
+        
+        # Append to sequence
+        decoder_input = np.concatenate([decoder_input, next_token], axis=1)
+        
+        # Check if all sequences ended
+        if np.all(next_token == end_token):
+            break
+    
+    # Remove &lt;START&gt; token
+    generated = decoder_input[:, 1:]
+    
+    return generated
+
+
+print(&quot;\n=== Greedy Decoding ===\n&quot;)
+
+# Simulate source
+src_ids = np.random.randint(1, 30000, (1, 10))
+
+# Greedy decode
+generated = greedy_decode(transformer, src_ids, max_len=20)
+
+print(f&quot;Source length: {src_ids.shape[1]}&quot;)
+print(f&quot;Generated length: {generated.shape[1]}&quot;)
+print()
+print(&quot;Greedy decoding:&quot;)
+print(&quot;  1. Start with &lt;START&gt; token&quot;)
+print(&quot;  2. At each step, select argmax(probabilities)&quot;)
+print(&quot;  3. Feed prediction back as input&quot;)
+print(&quot;  4. Continue until &lt;END&gt; or max length&quot;)</code></pre>
+<h3 class="sh3">Beam Search Decoder</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def beam_search_decode(transformer: Transformer,
+                      src_ids: np.ndarray,
+                      beam_size: int = 5,
+                      max_len: int = 50,
+                      start_token: int = 0,
+                      end_token: int = 1) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    Beam search decoding: maintain k best hypotheses.
+    
+    Args:
+        transformer: Trained transformer model
+        src_ids: Source token IDs (1, src_len) - single sequence
+        beam_size: Number of beams to maintain
+        max_len: Maximum generation length
+        start_token: Start token ID
+        end_token: End token ID
+    
+    Returns:
+        best_sequence: Best generated sequence (gen_len,)
+    &quot;&quot;&quot;
+    # Encode source
+    encoder_output, _ = transformer.encoder(src_ids, training=False)
+    # (1, src_len, d_model)
+    
+    # Initialize beams: [(sequence, score)]
+    beams = [([start_token], 0.0)]
+    
+    for step in range(max_len):
+        candidates = []
+        
+        for sequence, score in beams:
+            # Skip if sequence already ended
+            if sequence[-1] == end_token:
+                candidates.append((sequence, score))
+                continue
+            
+            # Prepare decoder input
+            decoder_input = np.array([sequence])  # (1, seq_len)
+            
+            # Get next token logits
+            logits = transformer.decoder(
+                decoder_input, encoder_output, training=False
+            )
+            next_token_logits = logits[0, -1, :]  # (vocab_size,)
+            
+            # Convert to log probabilities
+            log_probs = next_token_logits - np.logaddexp.reduce(next_token_logits)
+            
+            # Get top-k tokens
+            top_k_indices = np.argsort(log_probs)[-beam_size:]
+            
+            for token_id in top_k_indices:
+                new_sequence = sequence + [token_id]
+                new_score = score + log_probs[token_id]
+                candidates.append((new_sequence, new_score))
+        
+        # Keep top-k candidates
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        beams = candidates[:beam_size]
+        
+        # Check if all beams ended
+        if all(seq[-1] == end_token for seq, _ in beams):
+            break
+    
+    # Return best sequence (highest score)
+    best_sequence, best_score = beams[0]
+    
+    return np.array(best_sequence[1:])  # Remove &lt;START&gt;
+
+
+print(&quot;\n=== Beam Search Decoding ===\n&quot;)
+
+# Simulate source
+src_ids = np.random.randint(1, 30000, (1, 10))
+
+# Beam search decode
+generated = beam_search_decode(transformer, src_ids, beam_size=5, max_len=20)
+
+print(f&quot;Source length: {src_ids.shape[1]}&quot;)
+print(f&quot;Generated length: {len(generated)}&quot;)
+print(f&quot;Beam size: 5&quot;)
+print()
+print(&quot;Beam search:&quot;)
+print(&quot;  1. Maintain k=5 best hypotheses&quot;)
+print(&quot;  2. At each step, expand each beam with top-k tokens&quot;)
+print(&quot;  3. Keep k best overall sequences&quot;)
+print(&quot;  4. Return highest-scoring complete sequence&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Beam Search Manipulation</h3>
+<p class="prose">Adversary can exploit beam search:
+- Craft inputs that maximize specific outputs
+- Force model to generate adversarial content
+- Extract training data by beam search over prompts
+- Defense: Limit beam size, output filtering</p>
+<h3 class="sh3">Autoregressive Vulnerabilities</h3>
+<p class="prose">Sequential generation creates dependencies:
+- Early token errors cascade through generation
+- Adversary can manipulate early tokens for late effects
+- One bad token → entire sequence corrupted
+- Defense: Monitor generation quality, early stopping</p>
+<h3 class="sh3">Inference Time Attacks</h3>
+<p class="prose">Inference is slower than training:
+- Adversary can DoS via expensive queries (large beam size)
+- Resource exhaustion through long sequences
+- Defense: Rate limiting, beam size caps, length limits</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Complete transformer = encoder stack + decoder stack + output projection</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Foundation for seq2seq: translation, summarization, dialogue</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Teacher forcing: feed ground truth during training (parallel, fast)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Efficient training but creates train-test mismatch</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Autoregressive inference: generate one token at a time sequentially</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Slower than training, errors can accumulate</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Beam search maintains k hypotheses for better generation</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Higher quality than greedy, finds higher-probability sequences</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Encoder computed once, reused for all decoder steps</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Efficient - don&#x27;t recompute encoder for each token</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement complete encoder-decoder transformer</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Encoder stack → decoder stack → output projection</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Build training loop with teacher forcing</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Parallel target processing with causal mask, cross-entropy loss</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Create greedy decoder for autoregressive inference</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Sequential generation, argmax selection</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement beam search decoder</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Maintain k beams, expand and prune at each step</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Understand train-test mismatch and mitigation strategies</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Scheduled sampling, exposure bias solutions</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Complete transformer combines all encoder and decoder vulnerabilities</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">End-to-end security, monitor entire pipeline</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Teacher forcing creates train-test mismatch</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary exploits difference between training and inference</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Beam search can be manipulated for targeted generation</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Craft inputs to force specific outputs via beam search</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Autoregressive generation creates error cascades</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Early perturbations propagate through entire sequence</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Inference slower than training (sequential vs parallel)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">DoS attacks via expensive inference queries</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not shifting decoder input during teacher forcing</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Input: [&lt;START&gt;, tok1, tok2], Target: [tok1, tok2, &lt;END&gt;]</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Recomputing encoder for each decoder step during inference</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Encode source ONCE, cache and reuse encoder output</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting causal mask during training with teacher forcing</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">ALWAYS apply causal mask to prevent future leakage</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using different padding strategies for train vs inference</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Consistent padding/masking in both modes</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Beam search without length normalization</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Normalize scores by length to avoid bias toward short sequences</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 12</h3>
+<ul class="blist"><li>Transformer encoder (first half of complete transformer)</li><li>Encoder stack architecture and implementation</li></ul>
+<h3 class="sh3">From Section 3 13</h3>
+<ul class="blist"><li>Transformer decoder (second half)</li><li>Masked self-attention and cross-attention</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.15: GPT and decoder-only transformers</li><li>Removing encoder, using only masked self-attention</li><li>Language modeling objective</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Decoder-only transformers (GPT architecture)</li><li>Language modeling vs seq2seq</li><li>Scaling transformers (GPT-2, GPT-3)</li><li>Emergent capabilities from scale</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement GPT-style decoder-only model</li><li>Train language models</li><li>Generate text with GPT</li><li>Understand scaling laws</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">The complete transformer (Vaswani et al., 2017) revolutionized NLP by combining 
+encoder and decoder stacks for sequence-to-sequence tasks. The encoder processes input 
+sequences with bidirectional self-attention, the decoder generates outputs autoregressively 
+using masked self-attention and cross-attention to encoder outputs. This architecture 
+powers machine translation, summarization, and many other seq2seq applications.
+
+Training uses teacher forcing - feeding ground truth tokens to the decoder and processing 
+all positions in parallel with causal masking. This is dramatically faster than sequential 
+generation but creates train-test mismatch: the model trains on perfect ground truth but 
+must inference using its own (potentially incorrect) predictions. Solutions include 
+scheduled sampling and exposure bias mitigation.
+
+At inference, the decoder generates sequences autoregressively - one token at a time, 
+feeding each prediction back as input. Greedy decoding selects the most likely token 
+at each step (fast, deterministic, suboptimal). Beam search maintains k hypotheses to 
+explore multiple paths (slower, higher quality, finds better sequences). The encoder 
+is computed once and reused for all decoder steps for efficiency.
+
+From a security perspective: complete transformers combine all encoder and decoder 
+vulnerabilities end-to-end. Teacher forcing train-test mismatch can be exploited - 
+models robust to ground truth errors but brittle to prediction errors. Beam search can 
+be manipulated to extract training data or generate targeted outputs. Autoregressive 
+generation creates error cascades where early perturbations propagate through the 
+entire sequence. Inference is sequential (slower than parallel training), creating DoS 
+vulnerabilities via expensive queries.
+
+Next: Section 3.15 explores GPT and decoder-only transformers. By removing the encoder 
+and using only masked self-attention, we get powerful language models that generate 
+text through pure autoregressive prediction. This architecture scales remarkably well, 
+leading to GPT-2, GPT-3, and modern LLMs.</p>
+</article>

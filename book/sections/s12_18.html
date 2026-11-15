@@ -1,0 +1,852 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 12 · Section 18 · ~6 pages</div>
+<h1>Section 12.18: Chapter 12 Summary</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Chapter 12 built the ML detection layer of the security gateway: five detector families, a four-detector ensemble, and the operational infrastructure that keeps it accurate, fast, and current in production.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapter 12 spanned seventeen content sections that each built one component of an ML-based
+detection system. Read in isolation, each section is a technique -- an anomaly detector, a
+calibration method, a model registry. Read together, they are a single architecture: a
+production ML detection layer that extends the Chapter 11 signature-based gateway with
+classifiers that catch the novel attack variants signatures miss.
+
+This summary synthesises the seventeen sections into that architecture. It revisits the five
+detection families and the four-detector ensemble, the feature pipeline shared across the
+detectors, the calibration and inference optimisation that make the ensemble deployable, the
+model registry and live curation that keep it from decaying, and the production gateway
+capstone that integrates everything. It consolidates the chapter&#x27;s central thesis -- that ML
+detection complements rather than replaces signature detection -- and it sets up Chapter 13,
+where the per-request detection decisions made by this gateway are lifted to session-level
+behavioural analysis.
+
+The summary is the map of the territory the chapter covered, the reference for the decisions
+a practitioner makes when building an ML detection system, and the bridge to the behavioural
+analysis that the per-request classifiers cannot perform alone.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 12.18 closes Chapter 12. It synthesises Sections 12.1 through 12.17 and previews
+Chapter 13 (Behavioural Analysis and Monitoring). It is the final section of the chapter and
+the transition point from the per-request ML detection layer to the session-level behavioural
+layer that Chapter 13 builds on top of it.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Sections 12.1 through 12.17: the complete Chapter 12 content this summary synthesises</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 12.1 and 12.2 in Review: Taxonomy and Feature Engineering</p>
+<h3 class="sh2">Body</h3>
+<pre class="code"><code>Chapter 12 opened by establishing what ML-based detection is and is not. Section 12.1 built the
+taxonomy of five detection families -- unsupervised anomaly detection, supervised classification,
+sequence modelling, embedding-based semantic detection, and neural classification -- and the
+maturity ladder that places a detection programme on the path from no ML (L1) through the full
+ensemble (L3). The taxonomy is the map: it tells a practitioner which family fits which attack
+class and which families are worth the operational cost at each maturity level.
+
+Section 12.2 built the feature engineering that every supervised detector depends on. The five
+feature groups -- token, structural, semantic, contextual, and API-level -- convert a raw request
+into the SecurityFeatureVector that the classifiers consume. The section introduced the
+training-serving skew risk that Section 12.11 later addressed in production, and it established
+SHAP as the explainability method that makes a classifier&#x27;s decision attributable to specific
+features. The feature engineering is the foundation: a detector is only as good as the features
+it sees, and the shared feature design is what lets the detectors be combined coherently.</code></pre>
+<h3 class="sh2">Part</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 12.3 and 12.4 in Review: Anomaly Detection and Dataset Curation</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 12.3 built the first detector, the one that needs no labels. The Isolation Forest and
+One-Class SVM learn the benign distribution and flag deviations, catching novel attacks on day
+one before any labelled data exists. The anomaly-to-label pipeline turned the anomaly alerts into
+the seed labelled data for the supervised detectors, establishing the bootstrap that lets the
+detection programme start with zero labels and grow its dataset from production.
+
+Section 12.4 built the dataset curation that the supervised detectors train on. The four data
+sources, the temporal split that prevents future-leakage, the SMOTE and class-weighting that handle
+the severe class imbalance of security data, and the inter-annotator agreement that ensures label
+quality together produce the training dataset. The temporal-split discipline established here
+propagated through the whole chapter: every detector, every calibration, and every meta-learner
+trains on the temporal split, never a random one, because a random split inflates the metrics with
+future-leakage.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 12.5 through 12.9 in Review: The Four Trained Detectors and the PII Scanner</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Sections 12.5 through 12.8 built the four supervised detectors. Section 12.5 built the Random
+Forest and XGBoost supervised classifiers and the shared security_evaluator.py that every
+subsequent detector section imported. Section 12.6 built the LSTM and GRU sequence models that
+catch multi-turn escalation -- the attacks that build across conversation turns, which single-message
+detectors cannot see. Section 12.7 built the embedding-based semantic detector that catches paraphrase
+variants by similarity to known attacks. Section 12.8 built the DistilBERT neural classifier, the
+highest-precision supervised detector, with the model card that became the registry gate condition.
+
+Section 12.9 built the PII scanner, the chapter&#x27;s only output-side detector. It scans the model
+response, not the user request, addressing the OWASP LLM06 leakage that no input-side detector can
+catch. The three-layer ensemble -- regex, NER, and Presidio with context scoring -- distinguishes real
+PII from the fictional and example data that a model legitimately generates. The PII scanner&#x27;s
+output-side position is why it runs separately from the four-detector input-side ensemble.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 12.10 through 12.12 in Review: Calibration, Feature Pipeline, and Inference Optimisation</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Sections 12.10 through 12.12 built the layer that turns the trained detectors into deployable
+production components. Section 12.10 built the calibration -- Platt scaling and isotonic regression --
+that makes the detector scores reliable probabilities on a common scale, the prerequisite for combining
+them in the ensemble, and the threshold tuning that sets each detector&#x27;s operating point from the
+analyst capacity rather than the default 0.5.
+
+Section 12.11 built the production feature pipeline that makes the Section 12.2 feature design real:
+sub-5ms extraction, training-serving parity through a single canonical pipeline and the same ONNX
+embedding model at training and serving, and feature schema versioning that rejects mismatched
+requests. Section 12.12 built the inference optimisation that fits the four-detector ensemble within
+the 50ms P99 budget: INT8 quantisation, async parallel scoring that makes the ensemble latency the
+maximum rather than the sum of the detector latencies, early exit, and model warm-up. Together these
+three sections are why the ensemble runs in production rather than only in a notebook.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 12.13 and 12.14 in Review: Model Registry and Live Dataset Curation</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Sections 12.13 and 12.14 built the infrastructure that keeps the detection system from decaying.
+Section 12.13 built the model registry -- the control plane that makes every detector update safe and
+reversible. The Staging-Production-Archived stage model, the stage transition gates that enforce the
+calibration, latency, accuracy, and model-card checks, the shadow mode and canary promotion that
+validate a candidate on live traffic, and the model lineage that satisfies the audit requirement
+together make model deployment a governed operation rather than a manual incident.
+
+Section 12.14 built the live dataset curation that closes the active learning loop. Uncertainty
+sampling focuses the scarce analyst annotation on the boundary cases that improve the model most; the
+composite retraining trigger combines data quantity and drift signal; the data flywheel turns
+production traffic into the fresh labelled data that keeps the detectors current as adversaries adapt.
+Together, the registry and the curation are the difference between a one-time detector deployment and
+a self-improving detection system that does not decay.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 12.15 and 12.16 in Review: The Four-Detector Ensemble and Benchmarking</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 12.15 built the four-detector ensemble, the chapter&#x27;s primary production deliverable. The
+Isolation Forest, the supervised classifiers, the GRU, and the embedding detector are combined by
+weighted voting or a stacking meta-learner into a single decision whose coverage and precision exceed
+any individual detector through complementarity. The coverage complementarity analysis and the
+confidence correlation matrix verify that the detectors cover different attack families and make
+independent errors -- the two properties that make the ensemble valuable. The three-tier alert routing
+aligns the ensemble output with the analyst capacity.
+
+Section 12.16 built the benchmarking and A/B testing that back every model promotion with evidence.
+The cross-detector benchmark compares the configurations on the same temporal test set; the A/B testing
+framework validates a candidate on production traffic with statistical significance and guardrail
+metrics; the sample size calculator ensures the test runs long enough to detect the effect; the
+online-offline divergence quantifies the gap between the benchmark and production reality. Together they
+turn anecdotal accuracy claims into statistically significant production evidence.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">7</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 12.17 in Review: The Production ML Gateway Capstone</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 12.17 integrated everything into the production ML gateway. The four input-side detectors are
+distributed across the seven gateway tracks by coverage profile and combined by the ensemble; the PII
+scanner runs as an output-side stage outside the seven tracks; the feature pipeline and inference optimisation keep the integrated
+gateway within the 50ms P99 budget. The ML layer extends the Chapter 11 signature layer rather than
+replacing it, providing defence-in-depth where the two layers cover each other&#x27;s gaps and fail
+independently.
+
+The capstone addressed the production realities that the isolated sections did not. Graceful degradation
+sheds the highest-latency detectors first under load, falling back toward signature-only rather than
+breaching the SLO. The deployment checklist enforces the registry gate conditions as a hard gate before
+any detector handles traffic. The ATLAS AML.T0040 Sigma rule detects the meta-attack -- adversaries probing
+the classifier decision boundaries to craft evasions. The monitoring dashboard makes the ML layer
+observable. The capstone is where the ML detection layer became a deployable, observable, defensible
+production system.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">8</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Integration: How Chapter 12 Extends the Chapter 11 Gateway</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 12 did not build a standalone detection system -- it built a detection layer that plugs into the
+Chapter 11 seven-track gateway. The integration is the chapter&#x27;s architectural through-line: each ML
+detector is assigned to the gateway tracks its coverage profile fits, running in parallel with the
+signature rules already on those tracks. Track 1 (injection) gains the embedding detector and XGBoost;
+Tracks 2-5 (jailbreak) gain the GRU and DistilBERT; a new output-side stage gains the PII scanner;
+Track 6 (extraction) gains the Isolation Forest; Track 7 (adversarial) gains the Chapter 10 detectors.
+
+The integration principle is complementarity at the track level. The signature layer provides fast,
+precise, interpretable detection of known attacks and the baseline that never goes blind. The ML layer
+provides coverage of the novel variants the signatures miss, at the cost of higher latency and lower
+interpretability, managed by the calibration, ensemble, inference optimisation, and monitoring built
+across the chapter. The integrated gateway is more robust than either layer alone because the layers
+cover each others gaps and fail independently -- if the ML layer is shed under load, the signatures
+continue; if a novel attack evades the signatures, the ML layer covers it.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">9</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Cross-Chapter Arc: Rules Plus Classifiers Equals Defence-in-Depth</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 11 built the rules; Chapter 12 built the classifiers. Together they close the detection layer of
+Part 3 of the book. The cross-chapter arc is the maturation of the detection system from a pure
+signature-based gateway to a hybrid gateway with both a fast, precise signature layer and a coverage-broad
+ML layer. Neither layer alone is sufficient: signatures miss novel variants, ML detectors are slower and
+less interpretable, and a sophisticated adversary can probe either. The two together provide
+defence-in-depth.
+
+This arc reflects the central thesis of Chapter 12: ML detection is not a replacement for signature
+detection but a complement. The chapters that follow build on this hybrid detection foundation. Chapter 13
+lifts the per-request decisions to session-level behavioural analysis. Chapter 14 scales the deployment.
+Chapter 17 monitors and tunes the system over time. The detection system the book builds is the hybrid
+gateway, and Chapter 12 is the chapter that added its ML half.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">10</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Five Cross-Cutting Threads</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Five threads ran through the whole chapter and are worth isolating. First, the temporal split: every
+detector, calibration, and meta-learner trains on the temporal split, never a random one, because the
+random split inflates metrics with future-leakage that production does not enjoy. Second, calibration as a
+prerequisite: uncalibrated scores cannot be combined, cannot be uncertainty-sampled, and cannot be
+interpreted, so the Section 12.10 calibration underpins the ensemble, the curation, and the explainability.
+
+Third, the latency budget as a security constraint: a detector that breaches the 50ms SLO is disabled under
+load, so the inference optimisation and graceful degradation are not performance niceties but security
+requirements. Fourth, the operational sustainability: the registry, curation, and monitoring are what
+separate a sustainable detection system from a decaying snapshot, and a detector without them will fall
+behind the attack distribution. Fifth, defence-in-depth: the ML layer complements the signature layer, the
+ensemble complements the individual detectors, and the output-side PII scanner complements the input-side
+detectors -- redundant coverage that fails independently.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">11</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Quick Reference: Decision Trees, Track Mapping, and Operating Points</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">For the practitioner building an ML detection system, the chapter&#x27;s decisions reduce to a few reference
+structures. The ML family selection decision tree (table 1) maps an attack class to the detection family
+that fits: novel attacks without labels to anomaly detection, known families with labels to supervised
+classification, multi-turn patterns to sequence models, paraphrase variants to embedding detection,
+output leakage to the PII scanner. The detector-to-track mapping (table 2) places each detector on its
+gateway track. The threshold operating point guide (table 3) sets each detector&#x27;s threshold from the
+analyst capacity and the threat-class consequence.
+
+These references are the distillation of the chapter&#x27;s seventeen sections into the decisions a detection
+engineer makes. The decision tree answers which detector to build; the track mapping answers where it
+runs; the operating point guide answers how to tune it. The operational sustainability checklist (table 4)
+answers whether the resulting system will decay -- the four requirements (registry, curation, retraining
+trigger, canary promotion) that a detector needs to stay current rather than degrade.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">12</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 13 Preview: Behavioural Analysis and Monitoring</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 12 trained classifiers that evaluate individual API requests. Each detector, the ensemble, and the
+gateway make a per-request decision: is this request an attack. This is the foundation of detection, but it
+is not the whole. Some attacks are invisible at the per-request level and visible only across a session or
+a user&#x27;s history: a slow extraction campaign where each query is individually benign, a coordinated probing
+where each request is near-the-boundary, an account takeover where the behavioural pattern shifts.
+
+Chapter 13 lifts the analysis from the request to the session and the user. It builds behavioural baselines
+that capture what a normal user session looks like, drift detection that flags when a user&#x27;s behaviour
+deviates from baseline, rate-based detection that the per-request classifiers cannot see, and user
+behaviour profiling that builds entity-level risk scores across sessions. It also covers model behavioural
+monitoring -- detecting when the LLM&#x27;s output distribution shifts in ways that indicate injection success
+rather than surface-level injection attempts. By the end of Chapter 13, the detection system covers the
+full arc from individual request analysis (Chapter 12) to session-level behavioural analysis (Chapter 13),
+ready for Chapter 14&#x27;s production deployment at scale.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ML Detection Family Selection Decision Tree</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Maps an attack class and its data situation to the detection family that fits</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Attack Situation</li><li>Detection Family</li><li>Detector</li><li>Section</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>Novel attacks, no labelled data</li><li>Unsupervised anomaly</li><li>Isolation Forest, One-Class SVM</li><li>12.3</li></ul>
+<ul class="blist"><li>Known attack families, labelled data</li><li>Supervised classification</li><li>Random Forest, XGBoost</li><li>12.5</li></ul>
+<ul class="blist"><li>Multi-turn escalation across turns</li><li>Sequence modelling</li><li>LSTM, GRU</li><li>12.6</li></ul>
+<ul class="blist"><li>Paraphrase variants of known attacks</li><li>Embedding semantic</li><li>Sentence Transformer + similarity</li><li>12.7</li></ul>
+<ul class="blist"><li>Highest-precision single-turn detection</li><li>Neural classification</li><li>DistilBERT</li><li>12.8</li></ul>
+<ul class="blist"><li>Output-side PII leakage</li><li>Multi-layer PII scan</li><li>Regex + NER + Presidio</li><li>12.9</li></ul>
+<h3 class="sh2">Table</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Detector to Gateway Track Mapping</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Where each Chapter 12 detector runs in the Chapter 11 seven-track gateway</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Track</li><li>Threat Class</li><li>ML Detectors</li><li>Side</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>Track 1</li><li>Prompt injection</li><li>Embedding + XGBoost</li><li>Input</li></ul>
+<ul class="blist"><li>Tracks 2-5</li><li>Jailbreak</li><li>GRU + DistilBERT</li><li>Input</li></ul>
+<ul class="blist"><li>Output stage</li><li>PII leakage</li><li>PII scanner</li><li>Output</li></ul>
+<ul class="blist"><li>Track 6</li><li>Data extraction</li><li>Isolation Forest</li><li>Input</li></ul>
+<ul class="blist"><li>Track 7</li><li>Adversarial input</li><li>Chapter 10 detectors</li><li>Input</li></ul>
+<h3 class="sh2">Table</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Threshold Operating Point Guide</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">How to set each detector operating threshold by capacity and threat-class consequence</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Detector Role</li><li>Threshold Bias</li><li>Driven By</li><li>Section</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>PII scanner (high miss cost)</li><li>Favour recall (lower)</li><li>Cost of missed privacy leak</li><li>12.10</li></ul>
+<ul class="blist"><li>Anomaly detector (high FP cost)</li><li>Favour precision (higher)</li><li>Alert fatigue avoidance</li><li>12.10</li></ul>
+<ul class="blist"><li>Supervised classifiers</li><li>Balanced</li><li>Analyst capacity FPR target</li><li>12.10</li></ul>
+<ul class="blist"><li>All detectors</li><li>Calibrated, not 0.5</li><li>Analyst review capacity</li><li>12.10</li></ul>
+<h3 class="sh2">Table</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Operational Sustainability Checklist</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">The four requirements for a detection system that does not decay</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Requirement</li><li>Purpose</li><li>Section</li><li>Without It</li></ul>
+<h3 class="sh2">Rows</h3>
+<ul class="blist"><li>Model registry</li><li>Governed, reversible model updates</li><li>12.13</li><li>Rollback is a manual recovery; regressions reach production</li></ul>
+<ul class="blist"><li>Live dataset curation</li><li>Fresh labelled data from production</li><li>12.14</li><li>Detectors decay as the attack distribution shifts</li></ul>
+<ul class="blist"><li>Retraining trigger</li><li>Retrain when data and drift warrant it</li><li>12.14</li><li>Retrain too often (waste) or too rarely (decay)</li></ul>
+<ul class="blist"><li>Canary promotion</li><li>Validate on limited live traffic</li><li>12.13</li><li>A regressed model affects all traffic immediately</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">ml_detection_architecture.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the full Chapter 12 ML detection architecture as a layered data structure and renders it as a text diagram: five detector families, four trained models, the feature pipeline, the model registry, and the gateway integration.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies. The architecture layers are data-driven so the diagram is generated from the structure.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># ml_detection_architecture.py
+# Section 12.18: Chapter 12 Summary
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+
+@dataclass
+class ArchitectureLayer:
+    name: str
+    components: List[str]
+    section_refs: List[str]
+
+
+ML_DETECTION_ARCHITECTURE: List[ArchitectureLayer] = [
+    ArchitectureLayer(
+        &#x27;Feature Layer&#x27;,
+        [&#x27;Token features&#x27;, &#x27;Structural features&#x27;, &#x27;Semantic (ONNX embedding)&#x27;,
+         &#x27;Contextual (session cache)&#x27;, &#x27;API-level features&#x27;],
+        [&#x27;12.2&#x27;, &#x27;12.11&#x27;],
+    ),
+    ArchitectureLayer(
+        &#x27;Detector Layer (input-side)&#x27;,
+        [&#x27;Isolation Forest (anomaly)&#x27;, &#x27;XGBoost (supervised)&#x27;,
+         &#x27;GRU (sequence)&#x27;, &#x27;Embedding (semantic)&#x27;, &#x27;DistilBERT (neural)&#x27;],
+        [&#x27;12.3&#x27;, &#x27;12.5&#x27;, &#x27;12.6&#x27;, &#x27;12.7&#x27;, &#x27;12.8&#x27;],
+    ),
+    ArchitectureLayer(
+        &#x27;Detector Layer (output-side)&#x27;,
+        [&#x27;PII scanner (regex + NER + Presidio)&#x27;],
+        [&#x27;12.9&#x27;],
+    ),
+    ArchitectureLayer(
+        &#x27;Calibration Layer&#x27;,
+        [&#x27;Platt scaling / isotonic&#x27;, &#x27;Per-threat-class thresholds&#x27;, &#x27;Drift monitor&#x27;],
+        [&#x27;12.10&#x27;],
+    ),
+    ArchitectureLayer(
+        &#x27;Ensemble Layer&#x27;,
+        [&#x27;Weighted voting&#x27;, &#x27;Stacking meta-learner&#x27;, &#x27;Three-tier routing&#x27;],
+        [&#x27;12.15&#x27;],
+    ),
+    ArchitectureLayer(
+        &#x27;Inference Layer&#x27;,
+        [&#x27;INT8 quantisation&#x27;, &#x27;Async parallel scoring&#x27;, &#x27;Early exit&#x27;, &#x27;Warm-up&#x27;],
+        [&#x27;12.12&#x27;],
+    ),
+    ArchitectureLayer(
+        &#x27;Operational Layer&#x27;,
+        [&#x27;Model registry&#x27;, &#x27;Live curation&#x27;, &#x27;Retraining trigger&#x27;, &#x27;Benchmarking&#x27;, &#x27;Monitoring&#x27;],
+        [&#x27;12.13&#x27;, &#x27;12.14&#x27;, &#x27;12.16&#x27;, &#x27;12.17&#x27;],
+    ),
+    ArchitectureLayer(
+        &#x27;Gateway Integration&#x27;,
+        [&#x27;Seven-track assignment&#x27;, &#x27;Signature + ML combine&#x27;, &#x27;Graceful degradation&#x27;,
+         &#x27;AML.T0040 meta-attack detection&#x27;],
+        [&#x27;12.17&#x27;],
+    ),
+]
+
+
+def render_architecture(layers: List[ArchitectureLayer] = None) -&gt; str:
+    layers = layers or ML_DETECTION_ARCHITECTURE
+    lines = [&#x27;ML Detection Architecture (Chapter 12)&#x27;, &#x27;=&#x27; * 60]
+    for layer in layers:
+        refs = &#x27;, &#x27;.join(layer.section_refs)
+        lines.append(f&#x27;\n[{layer.name}]  (sections {refs})&#x27;)
+        for comp in layer.components:
+            lines.append(f&#x27;    - {comp}&#x27;)
+    lines.append(&#x27;\n&#x27; + &#x27;=&#x27; * 60)
+    lines.append(&#x27;Flow: request -&gt; features -&gt; detectors -&gt; calibration -&gt; ensemble&#x27;)
+    lines.append(&#x27;      -&gt; inference optimisation -&gt; gateway decision -&gt; response&#x27;)
+    lines.append(&#x27;      (output-side PII scan on the response; operational layer governs all)&#x27;)
+    return &#x27;\n&#x27;.join(lines)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(render_architecture())</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">ml_detector_reference_card.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Reference card for all four input-side detectors plus the PII scanner: accuracy profile, latency, coverage, and operating threshold for quick lookup.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies. Values are representative profiles consolidated from the chapter sections.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># ml_detector_reference_card.py
+# Section 12.18: Chapter 12 Summary
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class DetectorCard:
+    name: str
+    family: str
+    latency_ms: str
+    coverage: str
+    threshold_bias: str
+    section: str
+
+
+DETECTOR_CARDS: List[DetectorCard] = [
+    DetectorCard(&#x27;Isolation Forest&#x27;, &#x27;Anomaly&#x27;, &#x27;1-3ms&#x27;,
+                 &#x27;Novel attacks, no labels&#x27;, &#x27;Favour precision&#x27;, &#x27;12.3&#x27;),
+    DetectorCard(&#x27;XGBoost&#x27;, &#x27;Supervised&#x27;, &#x27;1-3ms&#x27;,
+                 &#x27;Known injection patterns&#x27;, &#x27;Balanced&#x27;, &#x27;12.5&#x27;),
+    DetectorCard(&#x27;GRU&#x27;, &#x27;Sequence&#x27;, &#x27;5-15ms&#x27;,
+                 &#x27;Multi-turn escalation&#x27;, &#x27;Balanced toward recall&#x27;, &#x27;12.6&#x27;),
+    DetectorCard(&#x27;Embedding&#x27;, &#x27;Semantic&#x27;, &#x27;2-4ms&#x27;,
+                 &#x27;Paraphrase variants&#x27;, &#x27;Balanced&#x27;, &#x27;12.7&#x27;),
+    DetectorCard(&#x27;DistilBERT&#x27;, &#x27;Neural&#x27;, &#x27;5-7ms (INT8)&#x27;,
+                 &#x27;Single-turn jailbreaks&#x27;, &#x27;Balanced toward recall&#x27;, &#x27;12.8&#x27;),
+    DetectorCard(&#x27;PII scanner&#x27;, &#x27;Output-side&#x27;, &#x27;15-40ms&#x27;,
+                 &#x27;Output PII leakage (LLM06)&#x27;, &#x27;Favour recall&#x27;, &#x27;12.9&#x27;),
+]
+
+
+def print_reference_card(cards: List[DetectorCard] = None) -&gt; None:
+    cards = cards or DETECTOR_CARDS
+    print(&#x27;Chapter 12 ML Detector Reference Card&#x27;)
+    print(&#x27;=&#x27; * 92)
+    fmt = &#x27;{:&lt;16} {:&lt;12} {:&lt;14} {:&lt;26} {:&lt;20} {:&lt;6}&#x27;
+    print(fmt.format(&#x27;Detector&#x27;, &#x27;Family&#x27;, &#x27;Latency&#x27;, &#x27;Coverage&#x27;, &#x27;Threshold Bias&#x27;, &#x27;Sec&#x27;))
+    print(&#x27;-&#x27; * 92)
+    for c in cards:
+        print(fmt.format(c.name, c.family, c.latency_ms, c.coverage[:26],
+                         c.threshold_bias, c.section))
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_reference_card()</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">operational_sustainability_checklist.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">The four requirements for a detector that does not decay -- model registry, live dataset curation, retraining trigger, canary promotion -- as an assessable checklist that scores a detection system operational sustainability.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># operational_sustainability_checklist.py
+# Section 12.18: Chapter 12 Summary
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, List
+
+
+@dataclass
+class SustainabilityRequirement:
+    name: str
+    section: str
+    present: bool
+    without_it: str
+
+
+def assess_sustainability(
+    has_registry: bool,
+    has_curation: bool,
+    has_retraining_trigger: bool,
+    has_canary: bool,
+) -&gt; List[SustainabilityRequirement]:
+    return [
+        SustainabilityRequirement(&#x27;Model registry&#x27;, &#x27;12.13&#x27;, has_registry,
+                                  &#x27;Rollback is manual; regressions reach production&#x27;),
+        SustainabilityRequirement(&#x27;Live dataset curation&#x27;, &#x27;12.14&#x27;, has_curation,
+                                  &#x27;Detectors decay as the attack distribution shifts&#x27;),
+        SustainabilityRequirement(&#x27;Retraining trigger&#x27;, &#x27;12.14&#x27;, has_retraining_trigger,
+                                  &#x27;Retrain too often (waste) or too rarely (decay)&#x27;),
+        SustainabilityRequirement(&#x27;Canary promotion&#x27;, &#x27;12.13&#x27;, has_canary,
+                                  &#x27;A regressed model affects all traffic immediately&#x27;),
+    ]
+
+
+def print_assessment(requirements: List[SustainabilityRequirement]) -&gt; bool:
+    print(&#x27;Operational Sustainability Assessment&#x27;)
+    print(&#x27;=&#x27; * 60)
+    all_present = True
+    for r in requirements:
+        status = &#x27;PRESENT&#x27; if r.present else &#x27;MISSING&#x27;
+        print(f&#x27;  [{status:&gt;7}] {r.name} ({r.section})&#x27;)
+        if not r.present:
+            all_present = False
+            print(f&#x27;            Without it: {r.without_it}&#x27;)
+    print(&#x27;-&#x27; * 60)
+    verdict = &#x27;SUSTAINABLE&#x27; if all_present else &#x27;WILL DECAY&#x27;
+    print(f&#x27;  Verdict: {verdict}&#x27;)
+    return all_present
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # A system missing curation and the retraining trigger will decay
+    reqs = assess_sustainability(
+        has_registry=True, has_curation=False,
+        has_retraining_trigger=False, has_canary=True,
+    )
+    print_assessment(reqs)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">chapter_12_knowledge_assessment.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Chapter 12 knowledge assessment: 20 questions across the five detection families, the operational infrastructure, the ensemble, and the gateway integration, with an answer key and section references for review.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies. Each question carries the section reference for targeted review.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># chapter_12_knowledge_assessment.py
+# Section 12.18: Chapter 12 Summary
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class Question:
+    number: int
+    question: str
+    answer: str
+    section: str
+
+
+ASSESSMENT: List[Question] = [
+    Question(1, &#x27;Which detection family requires no labelled data?&#x27;,
+             &#x27;Unsupervised anomaly detection (Isolation Forest, One-Class SVM)&#x27;, &#x27;12.1&#x27;),
+    Question(2, &#x27;What does the anomaly-to-label pipeline produce?&#x27;,
+             &#x27;Seed labelled data for the supervised detectors from anomaly alerts&#x27;, &#x27;12.3&#x27;),
+    Question(3, &#x27;Why must the dataset use a temporal split rather than a random split?&#x27;,
+             &#x27;A random split leaks future attack patterns into training, inflating metrics&#x27;, &#x27;12.4&#x27;),
+    Question(4, &#x27;Which detector catches multi-turn escalation?&#x27;,
+             &#x27;The GRU sequence model&#x27;, &#x27;12.6&#x27;),
+    Question(5, &#x27;Which detector catches paraphrase variants of known attacks?&#x27;,
+             &#x27;The embedding-based semantic detector&#x27;, &#x27;12.7&#x27;),
+    Question(6, &#x27;Why is the PII scanner an output-side detector?&#x27;,
+             &#x27;It scans the model response for leakage, not the user request (OWASP LLM06)&#x27;, &#x27;12.9&#x27;),
+    Question(7, &#x27;Why must classifier scores be calibrated before ensemble combination?&#x27;,
+             &#x27;Uncalibrated scores from different detectors are not on a common scale&#x27;, &#x27;12.10&#x27;),
+    Question(8, &#x27;What sets the operating threshold rather than the default 0.5?&#x27;,
+             &#x27;The analyst review capacity (the acceptable false positive rate)&#x27;, &#x27;12.10&#x27;),
+    Question(9, &#x27;What is training-serving skew?&#x27;,
+             &#x27;A silent divergence between training-time and serving-time feature computation&#x27;, &#x27;12.11&#x27;),
+    Question(10, &#x27;Why use the same ONNX model at training and serving?&#x27;,
+             &#x27;To prevent embedding skew from the PyTorch-versus-ONNX numerical difference&#x27;, &#x27;12.11&#x27;),
+    Question(11, &#x27;Why is async parallel scoring used for the four detectors?&#x27;,
+             &#x27;Ensemble latency becomes the maximum of the detectors, not the sum&#x27;, &#x27;12.12&#x27;),
+    Question(12, &#x27;What does INT8 quantisation do to DistilBERT?&#x27;,
+             &#x27;Reduces latency from 15ms to 5-7ms and size from 265MB to 65MB&#x27;, &#x27;12.12&#x27;),
+    Question(13, &#x27;What are the three model registry stages?&#x27;,
+             &#x27;Staging, Production, Archived&#x27;, &#x27;12.13&#x27;),
+    Question(14, &#x27;What does the stage transition gate check before Production?&#x27;,
+             &#x27;Accuracy regression, latency, calibration, and model card completeness&#x27;, &#x27;12.13&#x27;),
+    Question(15, &#x27;What is uncertainty sampling?&#x27;,
+             &#x27;Prioritising boundary-case predictions (0.4-0.6) for annotation&#x27;, &#x27;12.14&#x27;),
+    Question(16, &#x27;What two conditions does the composite retraining trigger require?&#x27;,
+             &#x27;Sufficient new labelled data AND a drift signal&#x27;, &#x27;12.14&#x27;),
+    Question(17, &#x27;What is coverage complementarity?&#x27;,
+             &#x27;Each detector covers a part of the attack surface the others miss&#x27;, &#x27;12.15&#x27;),
+    Question(18, &#x27;Why measure the confidence correlation between detectors?&#x27;,
+             &#x27;Correlated detectors share blind spots; the ensemble adds little&#x27;, &#x27;12.15&#x27;),
+    Question(19, &#x27;What is a guardrail metric in an A/B test?&#x27;,
+             &#x27;Latency or FPR that fails the test regardless of accuracy improvement&#x27;, &#x27;12.16&#x27;),
+    Question(20, &#x27;What does the AML.T0040 Sigma rule detect?&#x27;,
+             &#x27;Adversaries probing the ML classifier decision boundaries&#x27;, &#x27;12.17&#x27;),
+]
+
+
+def run_assessment(show_answers: bool = False) -&gt; None:
+    print(&#x27;Chapter 12 Knowledge Assessment (20 questions)&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for q in ASSESSMENT:
+        print(f&#x27;\nQ{q.number}. {q.question}&#x27;)
+        if show_answers:
+            print(f&#x27;    Answer: {q.answer}  [Section {q.section}]&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    run_assessment(show_answers=True)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">ml_gateway_security_checklist.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Seven-track ML gateway security checklist for production AI deployments: the pre-production controls that must be verified before the ML detection layer handles production traffic.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies. Consolidates the deployment controls from across the chapter.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># ml_gateway_security_checklist.py
+# Section 12.18: Chapter 12 Summary
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class SecurityControl:
+    category: str
+    control: str
+    section: str
+
+
+SECURITY_CHECKLIST: List[SecurityControl] = [
+    SecurityControl(&#x27;Detection coverage&#x27;, &#x27;All seven tracks have signature + ML coverage&#x27;, &#x27;12.17&#x27;),
+    SecurityControl(&#x27;Detection coverage&#x27;, &#x27;No single-detector track without monitoring&#x27;, &#x27;12.15&#x27;),
+    SecurityControl(&#x27;Calibration&#x27;, &#x27;Every detector ECE below threshold&#x27;, &#x27;12.10&#x27;),
+    SecurityControl(&#x27;Calibration&#x27;, &#x27;Thresholds set from analyst capacity, not 0.5&#x27;, &#x27;12.10&#x27;),
+    SecurityControl(&#x27;Latency&#x27;, &#x27;Gateway P99 within 50ms validated under load&#x27;, &#x27;12.12&#x27;),
+    SecurityControl(&#x27;Latency&#x27;, &#x27;Graceful degradation policy configured&#x27;, &#x27;12.17&#x27;),
+    SecurityControl(&#x27;Feature integrity&#x27;, &#x27;Training-serving parity tests passing&#x27;, &#x27;12.11&#x27;),
+    SecurityControl(&#x27;Feature integrity&#x27;, &#x27;Feature schema versioning enforced&#x27;, &#x27;12.11&#x27;),
+    SecurityControl(&#x27;Governance&#x27;, &#x27;Model registry with stage gates active&#x27;, &#x27;12.13&#x27;),
+    SecurityControl(&#x27;Governance&#x27;, &#x27;Shadow mode and canary validated&#x27;, &#x27;12.13&#x27;),
+    SecurityControl(&#x27;Sustainability&#x27;, &#x27;Live curation and retraining trigger active&#x27;, &#x27;12.14&#x27;),
+    SecurityControl(&#x27;Meta-attack&#x27;, &#x27;AML.T0040 boundary-probing detection deployed&#x27;, &#x27;12.17&#x27;),
+    SecurityControl(&#x27;Observability&#x27;, &#x27;Monitoring dashboard and alerting configured&#x27;, &#x27;12.17&#x27;),
+    SecurityControl(&#x27;Privacy&#x27;, &#x27;PII anonymisation before annotation queue&#x27;, &#x27;12.14&#x27;),
+]
+
+
+def print_security_checklist(controls: List[SecurityControl] = None) -&gt; None:
+    controls = controls or SECURITY_CHECKLIST
+    print(&#x27;Seven-Track ML Gateway Security Checklist&#x27;)
+    print(&#x27;=&#x27; * 66)
+    current_category = None
+    for c in controls:
+        if c.category != current_category:
+            print(f&#x27;\n[{c.category}]&#x27;)
+            current_category = c.category
+        print(f&#x27;    [ ] {c.control}  (Section {c.section})&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_security_checklist()</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">chapter_12_to_13_integration.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Chapter 12 to Chapter 13 integration diagram: per-request ML classification (Chapter 12) as the input to Chapter 13 session-level behavioural analysis, showing the data flow from the gateway decision to the behavioural layer.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># chapter_12_to_13_integration.py
+# Section 12.18: Chapter 12 Summary
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class IntegrationStage:
+    layer: str
+    chapter: str
+    produces: str
+
+
+INTEGRATION_FLOW: List[IntegrationStage] = [
+    IntegrationStage(&#x27;Per-request ML classification&#x27;, &#x27;Chapter 12&#x27;,
+                     &#x27;Per-request attack decision (block/flag/monitor) + detector scores&#x27;),
+    IntegrationStage(&#x27;Decision logging&#x27;, &#x27;Chapter 12 -&gt; 13&#x27;,
+                     &#x27;Stream of per-request decisions tagged with session and source&#x27;),
+    IntegrationStage(&#x27;Session aggregation&#x27;, &#x27;Chapter 13&#x27;,
+                     &#x27;Per-session behavioural features from the decision stream&#x27;),
+    IntegrationStage(&#x27;Behavioural baseline&#x27;, &#x27;Chapter 13&#x27;,
+                     &#x27;What a normal session looks like per user/entity&#x27;),
+    IntegrationStage(&#x27;Drift and rate detection&#x27;, &#x27;Chapter 13&#x27;,
+                     &#x27;Deviations from baseline; rate-based patterns per-request misses&#x27;),
+    IntegrationStage(&#x27;Entity risk scoring&#x27;, &#x27;Chapter 13&#x27;,
+                     &#x27;Cross-session entity-level risk scores&#x27;),
+]
+
+
+def render_integration(flow: List[IntegrationStage] = None) -&gt; str:
+    flow = flow or INTEGRATION_FLOW
+    lines = [&#x27;Chapter 12 -&gt; Chapter 13 Integration&#x27;, &#x27;=&#x27; * 64]
+    for i, stage in enumerate(flow):
+        connector = &#x27;   |&#x27; if i &lt; len(flow) - 1 else &#x27;&#x27;
+        lines.append(f&#x27;\n[{stage.chapter}] {stage.layer}&#x27;)
+        lines.append(f&#x27;    produces: {stage.produces}&#x27;)
+        if connector:
+            lines.append(connector)
+            lines.append(&#x27;   v&#x27;)
+    lines.append(&#x27;\n&#x27; + &#x27;=&#x27; * 64)
+    lines.append(&#x27;Chapter 12 makes the per-request decision; Chapter 13 lifts&#x27;)
+    lines.append(&#x27;the decisions to session-level and entity-level behavioural analysis.&#x27;)
+    return &#x27;\n&#x27;.join(lines)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(render_integration())</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating the individual detectors as the deliverable rather than the integrated system</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Each detector section produced a working detector, so a practitioner concludes that building the
+detectors is the goal. The integration -- the ensemble, the calibration, the operational
+infrastructure -- is seen as secondary to the detectors themselves.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">A collection of individually good detectors without the integration is not a detection system.
+Uncalibrated, they cannot be combined; without the registry, they cannot be updated safely; without
+the curation, they decay. The detectors are necessary but not sufficient; the integration is what
+makes them a system.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Treat the integrated system as the deliverable: the ensemble that combines the detectors, the
+calibration that makes the combination coherent, the inference optimisation that makes it deployable,
+and the operational infrastructure that keeps it current. The detectors are components; the system is
+the integration.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Building the detection system without the operational infrastructure, producing a decaying snapshot</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The detectors work and the ensemble is accurate on the test set, so the system is considered complete.
+The model registry, live curation, and monitoring are deferred as infrastructure to add later, once
+the detection is proven.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Without the operational infrastructure, the detection system is a point-in-time snapshot that decays as
+adversaries adapt. There is no safe way to update it, no fresh data to retrain on, and no visibility
+into its degradation. Within months, the accurate detectors have fallen behind the attack distribution
+with no mechanism to recover.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Build the operational infrastructure as part of the detection system, not as an afterthought. The
+registry, curation, retraining trigger, and monitoring are what make the system sustainable. A
+detection system without them is not finished -- it is a snapshot that will decay.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Ignoring calibration and deploying detectors at the default 0.5 threshold</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The detectors output scores between 0 and 1 that look like probabilities, and 0.5 is the obvious
+decision boundary. Calibration is seen as a refinement, and the default threshold is carried through
+from training to deployment.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The uncalibrated scores cannot be combined in the ensemble coherently, and the default 0.5 threshold
+produces an alert volume that may flood or starve the analyst queue. Both failures stem from skipping
+the calibration and threshold tuning that translate model scores into actionable decisions.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Calibrate every detector and set its threshold from the analyst capacity, per Section 12.10.
+Calibration is a prerequisite for the ensemble, the uncertainty sampling, and the score interpretation,
+not an optional refinement.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Deploying without latency profiling, discovering the SLO breach under production load</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The detectors are individually fast in development, and the latency is not profiled under load. The
+system is deployed on the assumption that individually fast detectors compose into a fast system.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Under production load, the sequential or unoptimised composition of the detectors breaches the 50ms
+P99 SLO, and the detection layer is disabled to recover the latency, leaving the system unprotected.
+The latency was a security constraint that was not validated.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Profile the latency under representative load before deployment, per Section 12.12, and use the async
+parallel scoring, quantisation, and graceful degradation that fit the ensemble within the budget. The
+latency budget is a security constraint, not a performance nicety.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Not versioning models, making rollback a manual recovery and the audit impossible</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Models are deployed by copying files, and versioning is seen as overhead. The system works without it
+until a rollback or an audit is needed.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">When a model regresses, the rollback is a manual recovery that fails if the previous state was not
+preserved. When a decision is challenged, the audit cannot identify which model made it or what it was
+trained on. Both failures stem from the absence of model versioning.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Use the model registry from Section 12.13 to version every model with its full lineage. Versioning
+makes rollback a single operation and the audit possible -- it is the control plane that makes every
+model update safe and every decision traceable.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Chapter 12 built the ML detection layer of the security gateway across seventeen sections. It established
+the five detection families (anomaly, supervised, sequence, semantic, neural) and the feature engineering
+shared across them; built the four input-side detectors and the output-side PII scanner; added the
+calibration, feature pipeline, and inference optimisation that make the detectors deployable within the
+50ms budget; built the model registry and live curation that keep the system from decaying; combined the
+detectors in the four-detector ensemble; validated everything with benchmarking and A/B testing; and
+integrated it all into the production ML gateway capstone. The central thesis is that ML detection
+complements rather than replaces signature detection: the two layers cover each other&#x27;s gaps and fail
+independently, providing defence-in-depth. The chapter&#x27;s deliverable is not the individual detectors but
+the integrated system -- the ensemble plus the operational infrastructure -- and a detection system without
+the registry, curation, and monitoring is a decaying snapshot rather than a sustainable defence. Chapter 13
+lifts the per-request decisions this gateway makes to session-level and entity-level behavioural analysis.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>The Chapter 12 deliverable is the integrated detection system, not the individual detectors: the ensemble combines them, the calibration makes the combination coherent, and the operational infrastructure keeps it current</li><li>Five detection families cover the attack surface: anomaly (novel attacks), supervised (known families), sequence (multi-turn), semantic (paraphrase), and neural (highest precision), with the PII scanner covering output-side leakage</li><li>The operational infrastructure -- registry, curation, retraining trigger, monitoring -- is what separates a sustainable detection system from a decaying snapshot; a detector without it falls behind the attack distribution</li><li>ML detection complements signature detection rather than replacing it: the signatures catch known attacks fast and precisely, the ML detectors cover the novel variants, and the two fail independently for defence-in-depth</li><li>Calibration and the latency budget are not refinements but requirements: uncalibrated scores cannot be combined, and a detector that breaches the SLO is disabled under load</li><li>Chapter 12 makes the per-request decision; Chapter 13 lifts it to session-level behavioural analysis that the per-request classifiers cannot perform, completing the arc from request analysis to behavioural analysis</li></ul>
+<h2 class="sh1">Preview Chapter 13</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 13: Behavioural Analysis and Monitoring</p>
+<h3 class="sh2">Preview</h3>
+<p class="prose">Chapter 12 trained classifiers that evaluate individual API requests. Chapter 13 lifts the analysis to
+the session and user level: behavioural baselines that capture what a normal user session looks like,
+drift detection that flags when a user&#x27;s behaviour deviates from baseline, rate-based detection patterns
+that the Chapter 12 classifiers cannot see because they operate per-request, and user behaviour profiling
+that builds entity-level risk scores across sessions. Chapter 13 also covers model behavioural monitoring:
+detecting when the LLM&#x27;s output distribution shifts in ways that indicate prompt injection success rather
+than surface-level injection attempts. By the end of Chapter 13, the detection system covers the full arc
+from individual request analysis (Chapter 12) to session-level behavioural analysis (Chapter 13), ready
+for Chapter 14&#x27;s production deployment at scale.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 11: the seven-track signature gateway that Chapter 12 extends with ML detectors</li><li>Chapter 10: the adversarial example detectors integrated into Track 7</li><li>Chapter 6-9: the attack taxonomy (injection, jailbreak, extraction, PII) the detectors cover</li><li>Chapter 13: the behavioural analysis that consumes the per-request decisions</li><li>Chapter 17: the monitoring and tuning that extends the benchmarking baseline</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Chapter 13: Behavioural Analysis and Monitoring -- session-level and entity-level analysis</li><li>Chapter 14: production deployment at scale of the detection system</li></ul>
+</article>

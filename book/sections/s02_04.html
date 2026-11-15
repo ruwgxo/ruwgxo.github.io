@@ -1,0 +1,882 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 4 · ~6 pages</div>
+<h1>Loss Functions for Neural Networks</h1>
+<div class="tags"><span class="tag">loss-functions</span><span class="tag">mse</span><span class="tag">cross-entropy</span><span class="tag">focal-loss</span><span class="tag">optimization</span><span class="tag">data-poisoning</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Loss functions are how we measure how wrong our neural network is. They
+convert the difference between predictions and truth into a single number
+that gradient descent tries to minimize.
+
+This section covers all major loss functions: MSE for regression, binary
+cross-entropy for two-class problems, categorical cross-entropy for
+multi-class, sparse categorical (memory efficient), focal loss for
+imbalanced data, and custom losses for specialized tasks.
+
+You&#x27;ll implement each loss function from scratch, understand when to use
+which, compare convergence behavior, and visualize loss landscapes. By
+the end, you&#x27;ll know how to choose and implement the right loss for any
+problem.
+
+Security critical: Loss manipulation is the core of data poisoning attacks.
+Adversaries craft poisoned samples that increase loss on clean data or
+decrease loss on backdoored data, steering model behavior maliciously.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand what loss functions measure</li><li>Know when to use MSE vs cross-entropy</li><li>Grasp why cross-entropy better than MSE for classification</li><li>Understand focal loss motivation (class imbalance)</li><li>Recognize how loss landscape affects optimization</li><li>Connect loss manipulation to data poisoning</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement all major loss functions from scratch</li><li>Compute gradients of loss wrt predictions</li><li>Compare convergence on real datasets</li><li>Visualize loss surfaces (2D projections)</li><li>Handle numerical stability issues</li><li>Build custom loss functions for specific tasks</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Loss manipulation enables data poisoning</li><li>Adversarial perturbations minimize loss changes</li><li>Custom losses for robust training</li><li>Detecting poisoned samples via loss analysis</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 0201-0203 (neural networks, forward pass)</li><li>Understanding of probability (for cross-entropy)</li><li>Calculus (derivatives, chain rule)</li></ul>
+<h2 class="sh1">Loss Function Fundamentals</h2>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">What Is Loss</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">A loss function L(ŷ, y) measures the discrepancy between:
+- ŷ (predictions from model)
+- y (true labels/values)</p>
+<h4 class="sh3">Goal</h4>
+<p class="prose">Minimize loss → model predictions closer to truth</p>
+<h4 class="sh3">Notation</h4>
+<p class="prose">Single sample: L(ŷ, y)
+Batch average: L = (1/m) Σᵢ L(ŷᵢ, yᵢ)
+
+Where m = batch size</p>
+<h3 class="sh3">Properties Of Good Loss</h3>
+<h4 class="sh3">Non Negative</h4>
+<p class="prose">L(ŷ, y) ≥ 0 always (zero = perfect prediction)</p>
+<h4 class="sh3">Differentiable</h4>
+<p class="prose">Need ∂L/∂ŷ for gradient descent</p>
+<h4 class="sh3">Sensitive</h4>
+<p class="prose">Changes when predictions change (captures errors)</p>
+<h4 class="sh3">Appropriate</h4>
+<p class="prose">Matches the task (regression vs classification)</p>
+<h3 class="sh2">Role In Training</h3>
+<h3 class="sh3">Optimization Objective</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Training = finding parameters θ that minimize loss</p>
+<h4 class="sh3">Formulation</h4>
+<p class="prose">θ* = argmin_θ L(f(X; θ), y)
+
+Where:
+f(X; θ) = neural network with parameters θ
+L = loss function
+θ* = optimal parameters</p>
+<h3 class="sh3">Gradient Descent Connection</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Loss gradient tells us how to update parameters</p>
+<h4 class="sh3">Update Rule</h4>
+<p class="prose">θ ← θ - α · ∂L/∂θ
+
+Where:
+α = learning rate
+∂L/∂θ = gradient of loss wrt parameters</p>
+<h4 class="sh3">Chain Rule</h4>
+<p class="prose">∂L/∂θ = ∂L/∂ŷ · ∂ŷ/∂θ
+
+∂L/∂ŷ comes from loss function (this section)
+∂ŷ/∂θ comes from backpropagation (Section 0205-0206)</p>
+<h3 class="sh2">Task Specific Losses</h3>
+<h3 class="sh3">Regression</h3>
+<p class="prose">Predict continuous values (house prices, temperature)</p>
+<h3 class="sh3">Loss Type</h3>
+<p class="prose">Focal Loss, weighted cross-entropy</p>
+<h3 class="sh3">Binary Classification</h3>
+<p class="prose">Two classes (spam/not spam, cat/dog)</p>
+<h3 class="sh3">Multi Class Classification</h3>
+<p class="prose">Multiple classes (digit 0-9, 1000 objects)</p>
+<h3 class="sh3">Imbalanced Classification</h3>
+<p class="prose">Rare classes (fraud detection: 0.1% fraud)</p>
+<h2 class="sh1">Mean Squared Error</h2>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">MSE = (1/m) Σᵢ (ŷᵢ - yᵢ)²
+
+Single sample: L(ŷ, y) = (ŷ - y)²</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Square of error - penalizes large errors heavily</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">True value: y = 5
+
+Prediction: ŷ = 5 → Error = 0 → Loss = 0
+Prediction: ŷ = 6 → Error = 1 → Loss = 1
+Prediction: ŷ = 7 → Error = 2 → Loss = 4 (double error = 4x loss!)
+Prediction: ŷ = 10 → Error = 5 → Loss = 25 (5x error = 25x loss!)</p>
+<h3 class="sh2">Properties</h3>
+<h3 class="sh3">Advantages</h3>
+<ul class="blist"><li>Simple to understand and compute</li><li>Smooth and differentiable everywhere</li><li>Penalizes outliers heavily (large errors costly)</li><li>Connects to maximum likelihood under Gaussian assumption</li></ul>
+<h3 class="sh3">Disadvantages</h3>
+<ul class="blist"><li>Sensitive to outliers (can dominate gradient)</li><li>Not appropriate for classification (probabilities)</li><li>Scale-dependent (units matter)</li></ul>
+<h3 class="sh2">Gradient</h3>
+<h3 class="sh3">Derivation</h3>
+<p class="prose">L = (ŷ - y)²
+
+∂L/∂ŷ = 2(ŷ - y)</p>
+<h3 class="sh3">Batch Gradient</h3>
+<p class="prose">For batch: L = (1/m) Σᵢ (ŷᵢ - yᵢ)²
+
+∂L/∂ŷᵢ = (2/m)(ŷᵢ - yᵢ)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Factor of 2 often omitted (absorbed into learning rate)</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Forward</h3>
+<pre class="code"><code>def mse_loss(y_pred, y_true):
+    &quot;&quot;&quot;
+    y_pred: (n_samples,) predictions
+    y_true: (n_samples,) true values
+    &quot;&quot;&quot;
+    return np.mean((y_pred - y_true) ** 2)</code></pre>
+<h3 class="sh3">Backward</h3>
+<pre class="code"><code>def mse_gradient(y_pred, y_true):
+    &quot;&quot;&quot;
+    Returns gradient ∂L/∂ŷ
+    &quot;&quot;&quot;
+    m = y_pred.shape[0]
+    return (2/m) * (y_pred - y_true)</code></pre>
+<h3 class="sh3">Usage</h3>
+<p class="prose"># Regression task: predict house prices
+y_true = np.array([300, 250, 400, 350])  # True prices ($1000s)
+y_pred = np.array([310, 240, 410, 330])  # Predictions
+
+loss = mse_loss(y_pred, y_true)
+print(f&quot;MSE: {loss:.2f}&quot;)  # MSE: 250.00
+
+gradient = mse_gradient(y_pred, y_true)
+print(f&quot;Gradient: {gradient}&quot;)</p>
+<h3 class="sh2">Variants</h3>
+<h3 class="sh3">Mae</h3>
+<h4 class="sh3">Name</h4>
+<p class="prose">Mean Absolute Error</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">MAE = (1/m) Σᵢ |ŷᵢ - yᵢ|</p>
+<h4 class="sh3">Advantage</h4>
+<p class="prose">Less sensitive to outliers</p>
+<h4 class="sh3">Disadvantage</h4>
+<p class="prose">Not differentiable at ŷ = y</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">When outliers present, want robust loss</p>
+<h3 class="sh3">Huber Loss</h3>
+<h4 class="sh3">Name</h4>
+<p class="prose">Huber Loss (smooth L1)</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">L_δ(ŷ, y) = {
+  ½(ŷ - y)²           if |ŷ - y| ≤ δ
+  δ|ŷ - y| - ½δ²      otherwise
+}</p>
+<h4 class="sh3">Properties</h4>
+<p class="prose">MSE for small errors, MAE for large errors</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">Combine benefits of MSE and MAE</p>
+<h2 class="sh1">Binary Cross Entropy</h2>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">BCE = -(1/m) Σᵢ [yᵢ log(ŷᵢ) + (1-yᵢ) log(1-ŷᵢ)]
+
+Single sample: L(ŷ, y) = -[y log(ŷ) + (1-y) log(1-ŷ)]</p>
+<h3 class="sh3">Assumptions</h3>
+<ul class="blist"><li>y ∈ {0, 1} (binary labels)</li><li>ŷ ∈ [0, 1] (predicted probability)</li><li>ŷ = P(y=1|x) from sigmoid output</li></ul>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">If true label y = 1:
+  Loss = -log(ŷ)
+  ŷ = 1.0 → Loss = 0 (perfect!)
+  ŷ = 0.5 → Loss = 0.69
+  ŷ = 0.1 → Loss = 2.30 (bad prediction = high loss)
+
+If true label y = 0:
+  Loss = -log(1-ŷ)
+  ŷ = 0.0 → Loss = 0 (perfect!)
+  ŷ = 0.5 → Loss = 0.69
+  ŷ = 0.9 → Loss = 2.30 (bad prediction = high loss)</p>
+<h3 class="sh2">Why Cross Entropy For Classification</h3>
+<h3 class="sh3">Probabilistic Interpretation</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Cross-entropy measures KL divergence from true to predicted distribution</p>
+<h4 class="sh3">Connection To Likelihood</h4>
+<p class="prose">Minimizing cross-entropy = maximizing likelihood
+
+For binary: P(y|x) = ŷ^y × (1-ŷ)^(1-y)
+
+Negative log-likelihood = -log P(y|x) = BCE</p>
+<h3 class="sh3">Better Than Mse</h3>
+<h4 class="sh3">Mse Problem</h4>
+<p class="prose">With sigmoid output, MSE gradient:
+∂MSE/∂z = (ŷ - y) · ŷ(1-ŷ)
+
+When ŷ saturated (near 0 or 1), ŷ(1-ŷ) ≈ 0
+→ Gradient vanishes even with large error!</p>
+<h4 class="sh3">Bce Advantage</h4>
+<p class="prose">BCE gradient:
+∂BCE/∂z = ŷ - y
+
+No sigmoid derivative term!
+Gradient proportional to error, never vanishes.</p>
+<h3 class="sh2">Gradient</h3>
+<h3 class="sh3">Derivation</h3>
+<p class="prose">L = -[y log(ŷ) + (1-y) log(1-ŷ)]
+
+∂L/∂ŷ = -[y/ŷ - (1-y)/(1-ŷ)]
+       = -(y - ŷ) / [ŷ(1-ŷ)]</p>
+<h3 class="sh3">Combined With Sigmoid</h3>
+<p class="prose">Output layer: ŷ = σ(z) = 1/(1 + e^(-z))
+
+∂L/∂z = ∂L/∂ŷ · ∂ŷ/∂z
+      = -(y - ŷ) / [ŷ(1-ŷ)] · ŷ(1-ŷ)
+      = -(y - ŷ)
+      = ŷ - y
+
+Beautiful simplification! Gradient = prediction error.</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Forward</h3>
+<pre class="code"><code>def binary_cross_entropy(y_pred, y_true):
+    &quot;&quot;&quot;
+    y_pred: (n_samples,) predicted probabilities ∈ [0, 1]
+    y_true: (n_samples,) true labels ∈ {0, 1}
+    &quot;&quot;&quot;
+    # Clip to avoid log(0)
+    epsilon = 1e-15
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    return -np.mean(
+        y_true * np.log(y_pred) + 
+        (1 - y_true) * np.log(1 - y_pred)
+    )</code></pre>
+<h3 class="sh3">Backward</h3>
+<pre class="code"><code>def binary_cross_entropy_gradient(y_pred, y_true):
+    &quot;&quot;&quot;
+    Returns gradient ∂L/∂ŷ
+    &quot;&quot;&quot;
+    epsilon = 1e-15
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    m = y_pred.shape[0]
+    return -(y_true / y_pred - (1 - y_true) / (1 - y_pred)) / m</code></pre>
+<h3 class="sh3">Combined With Sigmoid</h3>
+<pre class="code"><code>def bce_with_logits(logits, y_true):
+    &quot;&quot;&quot;
+    Numerically stable: combines sigmoid + BCE
+    
+    logits: raw scores (before sigmoid)
+    &quot;&quot;&quot;
+    # Use log-sum-exp trick for stability
+    max_val = np.maximum(logits, 0)
+    loss = max_val - logits * y_true + np.log(
+        np.exp(-max_val) + np.exp(-logits - max_val)
+    )
+    return np.mean(loss)</code></pre>
+<h3 class="sh3">Usage</h3>
+<p class="prose"># Binary classification: spam detection
+y_true = np.array([1, 0, 1, 0, 1])  # 1=spam, 0=not spam
+y_pred = np.array([0.9, 0.1, 0.8, 0.2, 0.7])  # Probabilities
+
+loss = binary_cross_entropy(y_pred, y_true)
+print(f&quot;BCE: {loss:.4f}&quot;)  # BCE: 0.1625</p>
+<h2 class="sh1">Categorical Cross Entropy</h2>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">CCE = -(1/m) Σᵢ Σⱼ yᵢⱼ log(ŷᵢⱼ)
+
+Single sample: L(ŷ, y) = -Σⱼ yⱼ log(ŷⱼ)</p>
+<h3 class="sh3">Assumptions</h3>
+<ul class="blist"><li>y is one-hot encoded: y = [0, 0, 1, 0, ...] (only one 1)</li><li>ŷ is probability distribution: Σⱼ ŷⱼ = 1, all ŷⱼ ∈ [0,1]</li><li>ŷ from softmax output</li></ul>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Only the true class contributes to loss.
+
+If true class is 3 (one-hot: [0,0,1,0]):
+  Loss = -log(ŷ₃)
+  
+  ŷ₃ = 0.9 → Loss = -log(0.9) = 0.105
+  ŷ₃ = 0.5 → Loss = -log(0.5) = 0.693
+  ŷ₃ = 0.1 → Loss = -log(0.1) = 2.303
+
+High confidence in correct class → low loss
+Low confidence in correct class → high loss</p>
+<h3 class="sh2">Example</h3>
+<h3 class="sh3">Mnist Digit Classification</h3>
+<p class="prose">True label: 7 (one-hot: [0,0,0,0,0,0,0,1,0,0])
+
+Prediction 1: [0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.55, 0.05, 0.05]
+→ Loss = -log(0.55) = 0.60
+
+Prediction 2: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.91, 0.01, 0.01]
+→ Loss = -log(0.91) = 0.09
+
+Model 2 is more confident in correct class → lower loss</p>
+<h3 class="sh2">Gradient</h3>
+<h3 class="sh3">Derivation</h3>
+<p class="prose">L = -Σⱼ yⱼ log(ŷⱼ)
+
+∂L/∂ŷₖ = -yₖ/ŷₖ</p>
+<h3 class="sh3">Combined With Softmax</h3>
+<p class="prose">Softmax: ŷⱼ = e^zⱼ / Σₖ e^zₖ
+
+Combined gradient:
+∂L/∂zₖ = ŷₖ - yₖ
+
+Again, beautiful simplification: gradient = prediction error!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Forward</h3>
+<pre class="code"><code>def categorical_cross_entropy(y_pred, y_true):
+    &quot;&quot;&quot;
+    y_pred: (n_samples, n_classes) probabilities
+    y_true: (n_samples, n_classes) one-hot encoded
+    &quot;&quot;&quot;
+    epsilon = 1e-15
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    return -np.mean(np.sum(y_true * np.log(y_pred), axis=1))</code></pre>
+<h3 class="sh3">Backward</h3>
+<pre class="code"><code>def categorical_cross_entropy_gradient(y_pred, y_true):
+    &quot;&quot;&quot;
+    Returns gradient ∂L/∂ŷ
+    Shape: (n_samples, n_classes)
+    &quot;&quot;&quot;
+    epsilon = 1e-15
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    m = y_pred.shape[0]
+    return -y_true / y_pred / m</code></pre>
+<h3 class="sh3">Usage</h3>
+<p class="prose"># MNIST digit classification (10 classes)
+y_true = np.array([
+    [0, 0, 0, 1, 0, 0, 0, 0, 0, 0],  # Digit 3
+    [0, 0, 0, 0, 0, 0, 0, 1, 0, 0]   # Digit 7
+])
+
+y_pred = np.array([
+    [0.05, 0.05, 0.1, 0.6, 0.05, 0.05, 0.05, 0.02, 0.02, 0.01],
+    [0.01, 0.01, 0.01, 0.01, 0.01, 0.01, 0.03, 0.88, 0.01, 0.02]
+])
+
+loss = categorical_cross_entropy(y_pred, y_true)
+print(f&quot;CCE: {loss:.4f}&quot;)</p>
+<h3 class="sh2">Sparse Categorical Cross Entropy</h3>
+<h3 class="sh3">Motivation</h3>
+<p class="prose">Memory efficient - don&#x27;t need one-hot encoding</p>
+<h3 class="sh3">Difference</h3>
+<p class="prose">Regular CCE:
+  y_true: [0,0,1,0,0] (one-hot, 5 values)
+
+Sparse CCE:
+  y_true: 2 (integer class label, 1 value)</p>
+<h3 class="sh3">Implementation</h3>
+<pre class="code"><code>def sparse_categorical_cross_entropy(y_pred, y_true):
+    &quot;&quot;&quot;
+    y_pred: (n_samples, n_classes) probabilities
+    y_true: (n_samples,) integer class labels
+    &quot;&quot;&quot;
+    epsilon = 1e-15
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    m = y_pred.shape[0]
+    log_likelihood = -np.log(y_pred[range(m), y_true])
+    return np.mean(log_likelihood)</code></pre>
+<h3 class="sh3">Memory Savings</h3>
+<p class="prose">MNIST (60K samples, 10 classes):
+
+One-hot: 60,000 × 10 × 4 bytes = 2.4 MB
+Sparse: 60,000 × 1 × 4 bytes = 0.24 MB
+
+Savings: 10x less memory!</p>
+<h2 class="sh1">Focal Loss</h2>
+<h3 class="sh2">Motivation</h3>
+<h3 class="sh3">Class Imbalance Problem</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Fraud detection: 99.9% legitimate, 0.1% fraud</p>
+<h4 class="sh3">Naive Cross Entropy Issue</h4>
+<p class="prose">Model can achieve 99.9% accuracy by predicting &quot;legitimate&quot; always!
+
+Easy negatives (legitimate) dominate gradient:
+- Many samples (99.9%)
+- Each contributes small gradient
+- Total gradient overwhelms rare positives</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Model doesn&#x27;t learn to detect fraud</p>
+<h3 class="sh3">Solution Idea</h3>
+<p class="prose">Down-weight easy examples, focus on hard examples</p>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">FL(ŷ, y) = -(1-ŷ)^γ × y log(ŷ) - ŷ^γ × (1-y) log(1-ŷ)
+
+Where γ ≥ 0 is focusing parameter (typically γ = 2)</p>
+<h3 class="sh3">Modulating Factor</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Weight down-weights easy examples</p>
+<h4 class="sh3">For Positive Class</h4>
+<p class="prose">y = 1, weight = (1-ŷ)^γ
+
+ŷ = 0.9 (confident correct) → weight = 0.1^2 = 0.01 (down-weight heavily)
+ŷ = 0.5 (uncertain) → weight = 0.5^2 = 0.25 (moderate weight)
+ŷ = 0.1 (confident wrong) → weight = 0.9^2 = 0.81 (full weight)</p>
+<h4 class="sh3">For Negative Class</h4>
+<p class="prose">y = 0, weight = ŷ^γ
+
+Similar logic: easy negatives down-weighted</p>
+<h3 class="sh2">Comparison To Standard Ce</h3>
+<h3 class="sh3">Example Losses</h3>
+<p class="prose">Standard CE vs Focal Loss (γ=2)
+
+Easy example (ŷ=0.9, y=1):
+  CE: -log(0.9) = 0.105
+  FL: (0.1)^2 × 0.105 = 0.001 (100x less!)
+
+Hard example (ŷ=0.1, y=1):
+  CE: -log(0.1) = 2.303
+  FL: (0.9)^2 × 2.303 = 1.865 (only 20% less)
+
+Effect: Easy examples contribute much less to gradient</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Forward</h3>
+<pre class="code"><code>def focal_loss(y_pred, y_true, gamma=2.0, alpha=0.25):
+    &quot;&quot;&quot;
+    y_pred: (n_samples,) predicted probabilities
+    y_true: (n_samples,) true labels {0, 1}
+    gamma: focusing parameter
+    alpha: class weighting (optional)
+    &quot;&quot;&quot;
+    epsilon = 1e-15
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    # Compute cross-entropy
+    ce = -(y_true * np.log(y_pred) + 
+           (1 - y_true) * np.log(1 - y_pred))
+    
+    # Compute modulating factor
+    p_t = y_true * y_pred + (1 - y_true) * (1 - y_pred)
+    modulating = (1 - p_t) ** gamma
+    
+    # Optional class weighting
+    if alpha is not None:
+        alpha_t = y_true * alpha + (1 - y_true) * (1 - alpha)
+        focal = alpha_t * modulating * ce
+    else:
+        focal = modulating * ce
+    
+    return np.mean(focal)</code></pre>
+<h3 class="sh3">Usage</h3>
+<p class="prose"># Imbalanced dataset: 1% positive class
+y_true = np.array([0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
+y_pred = np.array([0.1, 0.05, 0.2, 0.15, 0.1, 0.08, 0.12, 0.09, 0.11, 0.8])
+
+ce_loss = binary_cross_entropy(y_pred, y_true)
+fl_loss = focal_loss(y_pred, y_true, gamma=2.0)
+
+print(f&quot;CE Loss: {ce_loss:.4f}&quot;)
+print(f&quot;Focal Loss: {fl_loss:.4f}&quot;)</p>
+<h3 class="sh2">When To Use</h3>
+<ul class="blist"><li>Highly imbalanced datasets (fraud, anomaly detection)</li><li>Object detection (many background boxes, few objects)</li><li>Medical diagnosis (rare diseases)</li><li>When standard CE leads to ignoring minority class</li></ul>
+<h2 class="sh1">Custom Loss Functions</h2>
+<h3 class="sh2">When Needed</h3>
+<ul class="blist"><li>Domain-specific requirements</li><li>Combining multiple objectives</li><li>Incorporating constraints</li><li>Adversarial robustness</li></ul>
+<h3 class="sh2">Examples</h3>
+<h3 class="sh3">Contrastive Loss</h3>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Metric learning, face verification</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">L = (1/2) [y × d² + (1-y) × max(0, margin - d)²]
+
+Where:
+d = distance between embeddings
+y = 1 if same class, 0 if different
+margin = threshold distance</p>
+<h4 class="sh3">Intuition</h4>
+<p class="prose">Same class pairs: minimize distance
+Different class pairs: push apart (at least margin distance)</p>
+<h3 class="sh3">Triplet Loss</h3>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Face recognition, image retrieval</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">L = max(0, d(anchor, positive) - d(anchor, negative) + margin)</p>
+<h4 class="sh3">Intuition</h4>
+<p class="prose">Anchor and positive should be closer than
+anchor and negative by at least margin</p>
+<h3 class="sh3">Center Loss</h3>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Improve intra-class compactness</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">L = (1/2) Σᵢ ||xᵢ - cᵧᵢ||²
+
+Where cᵧᵢ is center of class yᵢ</p>
+<h4 class="sh3">Combined</h4>
+<p class="prose">Usually used with softmax: L_total = L_softmax + λ × L_center</p>
+<h3 class="sh2">Implementation Template</h3>
+<h3 class="sh3">Structure</h3>
+<pre class="code"><code>class CustomLoss:
+    def __init__(self, **hyperparams):
+        # Store hyperparameters
+        pass
+    
+    def forward(self, y_pred, y_true, **kwargs):
+        &quot;&quot;&quot;
+        Compute loss value
+        
+        Returns: scalar loss
+        &quot;&quot;&quot;
+        pass
+    
+    def backward(self, y_pred, y_true, **kwargs):
+        &quot;&quot;&quot;
+        Compute gradient ∂L/∂ŷ
+        
+        Returns: array same shape as y_pred
+        &quot;&quot;&quot;
+        pass</code></pre>
+<h3 class="sh3">Example Perceptual Loss</h3>
+<pre class="code"><code>class PerceptualLoss:
+    &quot;&quot;&quot;
+    For image generation: match feature representations
+    &quot;&quot;&quot;
+    def __init__(self, feature_extractor):
+        self.extractor = feature_extractor
+    
+    def forward(self, generated, target):
+        # Extract features
+        gen_features = self.extractor(generated)
+        target_features = self.extractor(target)
+        
+        # MSE on features
+        loss = np.mean((gen_features - target_features) ** 2)
+        return loss</code></pre>
+<h2 class="sh1">Loss Landscape</h2>
+<h3 class="sh2">What Is Loss Landscape</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">The loss landscape is the loss value as a function of parameters.
+L(θ) where θ = all model parameters</p>
+<h3 class="sh3">Dimensionality</h3>
+<p class="prose">For network with 1M parameters:
+Loss landscape is 1M-dimensional surface!
+
+Visualization: Project to 2D or 3D for interpretation</p>
+<h3 class="sh2">Visualization Methods</h3>
+<h3 class="sh3">Two Parameter Slice</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Vary two parameters, fix others</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_loss_2d(model, X, y, param1, param2, range_vals):
+    &quot;&quot;&quot;
+    param1, param2: parameter names to vary
+    range_vals: values to try for each parameter
+    &quot;&quot;&quot;
+    original_params = {
+        param1: model.params[param1].copy(),
+        param2: model.params[param2].copy()
+    }
+    
+    losses = np.zeros((len(range_vals), len(range_vals)))
+    
+    for i, val1 in enumerate(range_vals):
+        for j, val2 in enumerate(range_vals):
+            model.params[param1] = original_params[param1] + val1
+            model.params[param2] = original_params[param2] + val2
+            
+            y_pred = model.forward(X)
+            losses[i, j] = compute_loss(y_pred, y)
+    
+    # Restore
+    model.params[param1] = original_params[param1]
+    model.params[param2] = original_params[param2]
+    
+    # Plot
+    plt.contourf(range_vals, range_vals, losses, levels=20)
+    plt.colorbar(label=&#x27;Loss&#x27;)
+    plt.xlabel(param1)
+    plt.ylabel(param2)
+    plt.show()</code></pre>
+<h3 class="sh3">Random Directions</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Project loss along random directions in parameter space</p>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Pick two random directions: d1, d2 (unit vectors)
+2. Vary: θ_new = θ_current + α·d1 + β·d2
+3. Compute loss for grid of (α, β)
+4. Visualize as contour plot</p>
+<h3 class="sh2">Landscape Characteristics</h3>
+<h3 class="sh3">Convex Vs Nonconvex</h3>
+<h4 class="sh3">Convex</h4>
+<p class="prose">Single global minimum, gradient descent guaranteed to find it</p>
+<h4 class="sh3">Nonconvex</h4>
+<p class="prose">Multiple local minima, saddle points, plateaus</p>
+<h4 class="sh3">Neural Networks</h4>
+<p class="prose">Highly non-convex! But often many good minima</p>
+<h3 class="sh3">Sharp Vs Flat Minima</h3>
+<h4 class="sh3">Sharp</h4>
+<p class="prose">Loss increases rapidly when moving away from minimum</p>
+<h4 class="sh3">Flat</h4>
+<p class="prose">Loss stays low in neighborhood of minimum</p>
+<h4 class="sh3">Generalization</h4>
+<p class="prose">Flat minima generalize better!
+Sharp minima overfit (sensitive to small parameter changes)</p>
+<h3 class="sh3">Loss Landscape And Training</h3>
+<h4 class="sh3">Good Initialization</h4>
+<p class="prose">Start in basin of good minimum</p>
+<h4 class="sh3">Learning Rate</h4>
+<p class="prose">Too large: skip over minima; too small: stuck in poor minimum</p>
+<h4 class="sh3">Momentum</h4>
+<p class="prose">Helps escape shallow local minima</p>
+<h4 class="sh3">Batch Size</h4>
+<p class="prose">Larger batches → smoother landscape</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Data Poisoning Via Loss</h3>
+<h3 class="sh3">Attack Mechanism</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Adversary injects poisoned training samples that manipulate loss
+to steer model behavior maliciously.</p>
+<h4 class="sh3">Two Strategies</h4>
+<h4 class="sh3">Dirty Label</h4>
+<p class="prose">Change labels to increase loss on target samples</p>
+<h4 class="sh3">Clean Label</h4>
+<p class="prose">Craft inputs that model learns incorrectly while maintaining correct labels</p>
+<h3 class="sh3">Example Targeted Attack</h3>
+<h4 class="sh3">Goal</h4>
+<p class="prose">Make model misclassify specific input (e.g., attacker&#x27;s face) as authorized user</p>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Attacker controls small fraction of training data (e.g., 1%)
+2. Inject samples: (attacker_face, label=authorized_user)
+3. Model minimizes loss → learns association
+4. At test time: attacker_face → predicted as authorized_user</p>
+<h4 class="sh3">Loss Perspective</h4>
+<p class="prose">Poisoned samples contribute to loss:
+L_total = L_clean + L_poison
+
+Gradient descent minimizes both, giving adversary influence</p>
+<h3 class="sh3">Example Availability Attack</h3>
+<h4 class="sh3">Goal</h4>
+<p class="prose">Degrade model performance on all inputs</p>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Inject many mislabeled samples
+2. Loss on these samples very high
+3. Model tries to fit noise → poor generalization</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Model accuracy drops from 95% to 60%</p>
+<h3 class="sh2">Adversarial Perturbations Minimize Loss Change</h3>
+<h3 class="sh3">Concept</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Adversarial examples: small input changes that change prediction
+but keep loss approximately the same (stealthy)</p>
+<h4 class="sh3">Formulation</h4>
+<p class="prose">Find perturbation δ such that:
+1. ||δ|| small (imperceptible)
+2. f(x + δ) ≠ f(x) (prediction changes)
+3. L(f(x + δ), y) ≈ L(f(x), y) (loss barely changes)</p>
+<h3 class="sh3">Why Loss Matters</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">If loss changes a lot, model is &quot;confident&quot; change is wrong.
+If loss changes little, perturbation bypasses detection.</p>
+<h4 class="sh3">Defense Implication</h4>
+<p class="prose">Monitor loss on incoming samples:
+High loss → potential adversarial input
+
+But clever adversaries minimize loss change!</p>
+<h3 class="sh2">Robust Loss Functions</h3>
+<h3 class="sh3">Motivation</h3>
+<p class="prose">Design losses resilient to poisoned samples</p>
+<h3 class="sh3">Strategies</h3>
+<h4 class="sh3">Outlier Resistant Losses</h4>
+<h4 class="sh3">Huber Loss</h4>
+<p class="prose">Less sensitive to outliers than MSE</p>
+<h4 class="sh3">Mae</h4>
+<p class="prose">Robust to label noise</p>
+<h4 class="sh3">Tradeoff</h4>
+<p class="prose">May slow convergence on clean data</p>
+<h4 class="sh3">Reweighting Schemes</h4>
+<h4 class="sh3">Sample Reweighting</h4>
+<p class="prose">Detect suspicious samples (high loss), down-weight them:
+L = Σᵢ wᵢ L(ŷᵢ, yᵢ)
+
+Where wᵢ inversely proportional to loss magnitude</p>
+<h4 class="sh3">Meta Learning</h4>
+<p class="prose">Learn which samples to trust during training</p>
+<h4 class="sh3">Certified Defenses</h4>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Prove model robust within loss threshold</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">If L(f(x), y) &lt; ε, guarantee prediction won&#x27;t change
+within ||δ|| &lt; τ perturbation</p>
+<h3 class="sh2">Detecting Poisoned Samples</h3>
+<h3 class="sh3">Loss Based Detection</h3>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Train model on dataset
+2. Compute loss for each sample
+3. Samples with anomalously high loss → suspicious</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def detect_poison_via_loss(model, X_train, y_train, threshold_percentile=95):
+    &quot;&quot;&quot;
+    Flag samples with loss &gt; threshold
+    &quot;&quot;&quot;
+    losses = []
+    for x, y in zip(X_train, y_train):
+        y_pred = model.forward(x)
+        loss = compute_loss(y_pred, y)
+        losses.append(loss)
+    
+    threshold = np.percentile(losses, threshold_percentile)
+    suspicious = np.where(np.array(losses) &gt; threshold)[0]
+    
+    return suspicious</code></pre>
+<h4 class="sh3">Limitation</h4>
+<p class="prose">Clean outliers also have high loss.
+Clever adversary crafts poison with normal loss.</p>
+<h3 class="sh3">Influence Functions</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Measure how much each training sample influences model</p>
+<h4 class="sh3">High Influence</h4>
+<p class="prose">Removing sample significantly changes model</p>
+<h4 class="sh3">Detection</h4>
+<p class="prose">Poisoned samples often have anomalously high influence</p>
+<h2 class="sh1">Hands On Exercises</h2>
+<h3 class="sh2">Exercise 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Implement All Loss Functions</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Intermediate</p>
+<h3 class="sh3">Time</h3>
+<p class="prose">60 minutes</p>
+<h3 class="sh3">Task</h3>
+<p class="prose">Build complete loss function library with forward and backward</p>
+<h3 class="sh3">Requirements</h3>
+<ul class="blist"><li>MSE, MAE, Huber Loss</li><li>Binary Cross-Entropy, Categorical Cross-Entropy, Sparse CCE</li><li>Focal Loss</li><li>Numerical stability for all</li><li>Unit tests with known values</li></ul>
+<h3 class="sh3">Test Cases</h3>
+<h4 class="sh3">Mse</h4>
+<p class="prose">y_true = [1, 2, 3, 4]
+y_pred = [1.1, 2.2, 2.8, 4.1]
+Expected MSE: 0.0225</p>
+<h4 class="sh3">Bce</h4>
+<p class="prose">y_true = [1, 0, 1, 0]
+y_pred = [0.9, 0.1, 0.8, 0.2]
+Expected BCE: ~0.17</p>
+<h4 class="sh3">Cce</h4>
+<p class="prose">y_true = [[0,0,1], [0,1,0]]
+y_pred = [[0.1,0.2,0.7], [0.3,0.6,0.1]]
+Expected CCE: ~0.36</p>
+<h3 class="sh2">Exercise 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Convergence Comparison</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Advanced</p>
+<h3 class="sh3">Time</h3>
+<p class="prose">90 minutes</p>
+<h3 class="sh3">Task</h3>
+<p class="prose">Compare MSE vs Cross-Entropy for binary classification</p>
+<h3 class="sh3">Methodology</h3>
+<h4 class="sh3">1</h4>
+<p class="prose">Generate 2-class dataset (linearly separable)</p>
+<h4 class="sh3">2</h4>
+<p class="prose">Train logistic regression with MSE loss</p>
+<h4 class="sh3">3</h4>
+<p class="prose">Train logistic regression with BCE loss</p>
+<h4 class="sh3">4</h4>
+<p class="prose">Plot loss curves over epochs</p>
+<h4 class="sh3">5</h4>
+<p class="prose">Compare final accuracy and convergence speed</p>
+<h3 class="sh3">Expected Results</h3>
+<ul class="blist"><li>BCE converges faster (fewer epochs)</li><li>BCE reaches better final accuracy</li><li>MSE may get stuck (vanishing gradients)</li></ul>
+<h3 class="sh3">Analysis</h3>
+<ul class="blist"><li>Why does BCE outperform MSE?</li><li>When do gradients vanish with MSE?</li><li>Plot gradient magnitudes over training</li></ul>
+<h3 class="sh2">Exercise 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Loss Landscape Visualizer</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Advanced</p>
+<h3 class="sh3">Time</h3>
+<p class="prose">90 minutes</p>
+<h3 class="sh3">Task</h3>
+<p class="prose">Visualize 2D loss landscape for simple network</p>
+<h3 class="sh3">Implementation</h3>
+<ul class="blist"><li>Train simple 2-layer network on XOR</li><li>Select two weights to vary</li><li>Compute loss on grid of weight values</li><li>Create contour plot showing landscape</li><li>Mark training trajectory</li></ul>
+<h3 class="sh3">Extensions</h3>
+<ul class="blist"><li>Animate training process on landscape</li><li>Compare landscapes for different initializations</li><li>Show sharp vs flat minima</li></ul>
+<h3 class="sh2">Exercise 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Poisoning Detection via Loss</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Advanced</p>
+<h3 class="sh3">Time</h3>
+<p class="prose">120 minutes</p>
+<h3 class="sh3">Task</h3>
+<p class="prose">Implement loss-based poison detection</p>
+<h3 class="sh3">Steps</h3>
+<h4 class="sh3">1</h4>
+<p class="prose">Create clean MNIST dataset</p>
+<h4 class="sh3">2</h4>
+<p class="prose">Inject 5% poisoned samples (random label flips)</p>
+<h4 class="sh3">3</h4>
+<p class="prose">Train model to convergence</p>
+<h4 class="sh3">4</h4>
+<p class="prose">Compute per-sample loss</p>
+<h4 class="sh3">5</h4>
+<p class="prose">Flag top 10% high-loss samples as suspicious</p>
+<h4 class="sh3">6</h4>
+<p class="prose">Evaluate detection accuracy (precision/recall)</p>
+<h3 class="sh3">Metrics</h3>
+<h4 class="sh3">Precision</h4>
+<p class="prose">Of flagged samples, how many are actually poisoned?</p>
+<h4 class="sh3">Recall</h4>
+<p class="prose">Of poisoned samples, how many were flagged?</p>
+<h3 class="sh3">Analysis</h3>
+<ul class="blist"><li>Does method catch most poison?</li><li>How many false positives (clean flagged)?</li><li>Can you improve detection?</li></ul>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Numerical Instability</h3>
+<h3 class="sh3">Log Of Zero</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">np.log(0) → -inf, causes NaN</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Clip predictions: y_pred = np.clip(y_pred, 1e-15, 1-1e-15)</p>
+<h3 class="sh3">Overflow In Softmax</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">exp(large_number) → inf</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Subtract max before exp: exp(z - max(z))</p>
+<h3 class="sh3">Underflow In Log</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">log(very_small_number) → -large_number → numerical issues</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Use log-sum-exp tricks, PyTorch&#x27;s log_softmax</p>
+<h3 class="sh2">Wrong Loss For Task</h3>
+<h3 class="sh3">Mse For Classification</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">Using MSE loss with sigmoid/softmax output</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Vanishing gradients, slow convergence</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Use cross-entropy for classification</p>
+<h3 class="sh3">Cross Entropy Without Softmax</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">Applying cross-entropy to raw logits</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Loss values nonsensical (expects probabilities)</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Apply softmax first, or use combined loss (like PyTorch&#x27;s CrossEntropyLoss)</p>
+<h3 class="sh3">Sparse With Onehot</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">Using sparse cross-entropy with one-hot labels</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Wastes memory, incorrect computation</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Use integer labels with sparse CCE, one-hot with regular CCE</p>
+<h3 class="sh2">Gradient Errors</h3>
+<h3 class="sh3">Forgetting Mean In Gradient</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">Returning sum of gradients instead of mean</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Gradient magnitude scales with batch size</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Divide by batch size: gradient / m</p>
+<h3 class="sh3">Wrong Gradient Sign</h3>
+<h4 class="sh3">Mistake</h4>
+<p class="prose">Positive gradient instead of negative (or vice versa)</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Model diverges instead of converging</p>
+<h4 class="sh3">Fix</h4>
+<p class="prose">Check derivation, verify with numerical gradient</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Loss functions measure prediction error: L(ŷ, y) quantifies how wrong model is</li><li>Use MSE for regression, cross-entropy for classification (never mix these up!)</li><li>Cross-entropy better than MSE for classification: gradients don&#x27;t vanish when combined with sigmoid/softmax</li><li>Focal loss down-weights easy examples: critical for imbalanced datasets (fraud, anomalies)</li><li>Loss landscape is non-convex for neural networks: multiple minima, but many are good</li><li>Data poisoning manipulates loss: adversary injects samples that steer model toward wrong behavior</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Always clip predictions before taking log: avoid log(0) causing -inf and NaN</li><li>Use combined losses (e.g., BCEWithLogits): more numerically stable than separate softmax + cross-entropy</li><li>Monitor per-sample loss during training: spikes may indicate poisoned data or adversarial inputs</li><li>For imbalanced data, use focal loss or weighted cross-entropy: don&#x27;t let majority class dominate</li><li>Visualize loss landscape: understand optimization difficulty, sharp vs flat minima</li><li>Implement numerical gradient checking: verify your gradient computation is correct</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Loss manipulation is core of data poisoning: adversary&#x27;s goal is to minimize loss on poisoned data</li><li>Monitor loss distributions: anomalously high losses may indicate poisoned samples or adversarial inputs</li><li>Adversarial examples minimize loss changes: small perturbations that don&#x27;t raise alarms</li><li>Robust losses (Huber, MAE) resist outliers: less susceptible to label noise and poisoning</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Section 0205-0206: Backpropagation (computing ∂L/∂θ through chain rule)</li><li>Section 0207-0208: Optimization (using loss gradients to update parameters)</li><li>Section 0222: Adversarial robustness (exploiting loss for attacks)</li></ul>
+</article>

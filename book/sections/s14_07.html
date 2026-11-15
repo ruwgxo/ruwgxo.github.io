@@ -1,0 +1,753 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 14 · Section 7 · ~7 pages</div>
+<h1>High Availability, Circuit Breakers, and Graceful Degradation</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">High availability keeps the gateway serving through component failures: circuit breakers cut off a failing detector before it cascades, moving between closed, open, and half-open as they test recovery; graceful degradation sheds non-essential detectors under stress to keep the essential path serving; and bulkheads isolate failures so one detector cannot exhaust the shared resources the others need.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Section 14.06 decided what a single failing detector does -- fail-open or fail-closed, per
+detector and per tier -- and classified detectors as essential or droppable. It stopped
+short of one thing: preventing a detector from failing repeatedly and dragging the gateway
+down with it. A policy that fails a detector closed on every request still calls the broken
+detector on every request, paying its latency and load each time, and a detector that hangs
+rather than errors can hold shared resources until the whole gateway stalls. Deciding the
+policy is necessary but not sufficient; the gateway also needs the mechanism that contains
+failure. This section builds it. The circuit breaker recognises a persistently failing
+detector and cuts it off -- short-circuiting calls rather than retrying into a cascade --
+and moves through closed, open, and half-open states so a recovered detector is restored
+safely rather than flooded. Graceful degradation operates the essential-versus-droppable
+classification from 14.06, shedding non-essential detectors under stress in a defined order
+so the essential security path keeps serving. Bulkheads isolate each detector in its own
+resource pool so a slow or failing detector exhausts only its own threads and connections,
+not the gateway. Health checks and readiness decide when an instance should receive traffic
+at all. Together they turn a detector fault from a gateway outage into a bounded,
+recoverable event, which is what high availability means for a detection gateway.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 14.07 is the second of the two resilience sections (14.06-14.07) and the response to
+the availability concern from the 14.01 taxonomy. Where 14.06 set the failure policy, this
+section supplies the mechanism that enforces and contains it -- circuit breakers, graceful
+degradation, bulkheads, and health checks. It completes the resilience stage. With the
+gateway now fast, scalable, and resilient, the operability sections (14.08-14.09) make it
+observable, so the resilient behaviour engineered here can actually be seen, tuned, and
+trusted in production.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names availability as a concern</li><li>Section 14.06: the fail-open/fail-closed failure policy and the essential-versus-droppable classification this section operates</li><li>Section 14.04: the per-detector timeout whose repeated firing the circuit breaker cuts off</li><li>Section 14.05: the load balancing and health checks this section extends into readiness gating and failover</li><li>Chapter 13 Section 13.01: the tiers whose detectors are isolated by bulkheads and shed by graceful degradation</li><li>Working knowledge of thread pools, shared resource exhaustion, and state machines</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">From Failure Policy to Failure Containment</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Section 14.06 gave every detector a deliberate failure policy, and that closes one gap: a
+failing detector no longer takes an accidental path chosen by the bug. But it leaves
+another gap open. The policy says what to do each time a detector fails; it does not say
+what to do about a detector that fails every time. A broken detector under a fail-closed
+policy is still called on every single request, only to be failed closed after it errors
+or times out, so the gateway pays the detector cost -- its latency, its timeout wait, its
+load -- on every request for no benefit, and it does this indefinitely while the detector
+stays broken.
+
+Worse, some failures are not clean errors. A detector that hangs rather than raises does
+not return quickly to be failed by policy; it holds whatever resources it was using -- a
+thread, a connection, a slot in a pool -- for as long as it hangs. If many requests hit a
+hanging detector at once, they pile up holding resources, and those resources are often
+shared with the other detectors and the request path itself. A single hanging detector
+can in this way exhaust the resources the whole gateway needs, so one detector fault
+becomes a total stall. The failure policy has nothing to say about this, because it
+operates one request at a time and the problem is the accumulation across requests.
+
+High availability is the property of keeping the gateway serving through exactly these
+situations, and it requires mechanism, not just policy. The gateway needs to recognise a
+persistently failing detector and stop calling it; it needs to keep one detector failure
+from consuming the resources the others depend on; it needs to shed load intelligently
+when it cannot run everything; and it needs to decide when an instance is healthy enough
+to receive traffic. Those are the four mechanisms of this section -- circuit breakers,
+bulkheads, graceful degradation, and health checks -- and together they turn a detector
+fault from an outage into a bounded, recoverable event.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Circuit Breaker and Its Three States</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The circuit breaker is the primary mechanism of high availability, and it is borrowed
+directly from its electrical namesake: when something downstream keeps faulting, the
+breaker trips and cuts the circuit rather than letting the fault keep drawing current.
+For a detector, tripping means the gateway stops calling it and instead short-circuits
+the call -- resolving it immediately by policy without touching the broken detector at
+all. The broken detector is thereby cut off before its repeated failures cascade into
+the wider gateway.
+
+The breaker has three states. In the closed state -- the normal one -- calls pass through
+to the detector and the breaker simply counts failures. When consecutive failures reach
+a configured threshold, the breaker trips to the open state. In the open state the
+detector is cut off: calls short-circuit without being made, so a broken detector is no
+longer retried on every request. The breaker stays open for a configured duration, long
+enough for a transient fault to clear, and then moves to the half-open state to test
+whether the detector has recovered.
+
+The half-open state is what makes recovery safe, and it is the subtle part of the design.
+A naive breaker would slam straight from open back to closed after the timeout and
+immediately send full traffic to a detector that may still be broken, causing it to trip
+again in a flapping loop. The half-open state avoids this by allowing only a limited
+number of trial calls: if they succeed, enough to meet a success threshold, the breaker
+concludes the detector has recovered and closes; if any trial fails, the breaker
+concludes the detector is still broken and re-opens immediately without flooding it. The
+circuit breaker deliverable for this section implements exactly this cycle -- closed to
+open on repeated failure, open to half-open after the timeout, half-open to closed on
+confirmed recovery or back to open on a failed trial -- so a broken detector is isolated
+while broken and restored only once it proves healthy.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Circuit Breakers and the Failure Policy Together</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The circuit breaker does not replace the failure policy of Section 14.06; it works with
+it. The policy decides how a call resolves when the detector cannot give a verdict, and
+the breaker decides whether to call the detector at all. When the breaker is open and a
+call short-circuits, the gateway still has a request to resolve, and it resolves it by
+the same per-detector policy the failing detector already carries. An essential detector
+whose breaker is open short-circuits to a fail-closed block, because the policy for that
+detector is fail-closed and being cut off does not change what it guards. A droppable
+detector whose breaker is open short-circuits to a skip -- it is simply not run -- which
+is fail-open by policy and is exactly graceful degradation in action.
+
+This composition is why the two sections are ordered as they are. Section 14.06 had to
+establish the policy first, because the breaker needs a policy to apply when it
+short-circuits. Without a policy, an open breaker would face the same undefined-behaviour
+problem the whole of 14.06 was written to solve. With the policy in place, the breaker is
+a clean addition: it changes when the detector is called, and defers to the existing
+policy for how the resulting request is resolved.
+
+The breaker also completes the story of the timeout that ran through 14.04 and 14.06. The
+timeout bounds one slow call; the policy resolves that one timed-out call; and the
+breaker notices when a detector times out repeatedly and stops calling it, so the gateway
+is not paying the full timeout wait on every request to a detector that is reliably slow.
+A single slow call is a latency problem solved by the timeout; a detector that is always
+slow is an availability problem solved by the breaker. The three mechanisms -- timeout,
+policy, breaker -- form a layered defence against a detector that does not behave, each
+handling a different timescale of the same underlying fault.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Graceful Degradation: Shedding to the Essential Path</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Circuit breakers handle detectors that break. Graceful degradation handles a different
+situation: the gateway is under so much stress that it cannot run every detector within
+budget even though none has individually broken. When there is not enough capacity to do
+everything, the gateway must choose what to stop doing, and graceful degradation is the
+discipline of choosing deliberately -- shedding the detectors that matter least first,
+so the ones that matter most keep running.
+
+This is where the essential-versus-droppable classification from Section 14.06 becomes
+operational. That section decided which detectors are essential -- the injection
+classifier, the jailbreak classifier, the output PII scanner, the security core -- and
+which are droppable -- the audit tagger, the session scorer, the batch analytics. This
+section uses that classification to define a shed order: under stress the gateway sheds
+the droppable detectors, in a defined priority order, freeing the load they consume until
+it is back within capacity, and it never sheds an essential detector. The
+graceful-degradation deliverable encodes this as a shed-order policy: droppable detectors
+carry a shed priority and are dropped lowest-priority-first until enough load is freed,
+while the essential path is retained no matter what.
+
+The value of a defined shed order is that degradation is controlled rather than random.
+Without it, stress causes whichever detectors happen to time out or trip first to fall
+away, which might be the essential ones, leaving the gateway serving traffic with its
+security core degraded and its best-effort enrichment intact -- exactly backwards. With
+it, the gateway degrades toward its essential security detectors: as load rises it looks
+more and more like a minimal gateway running only the critical checks, and only if the
+essential path itself cannot be sustained does it fail closed. Graceful degradation is
+what lets the gateway trade completeness for survival in the right direction, keeping the
+guarantee that matters when it cannot keep all of them.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Bulkheads: Isolating Resource Exhaustion</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Circuit breakers and graceful degradation both assume that one detector failure can be
+reasoned about in isolation. Bulkheads are what make that assumption true, by preventing
+a failing detector from consuming resources that the other detectors and the request path
+depend on. The name comes from ships: a hull divided into watertight compartments so that
+a breach in one does not flood the whole vessel.
+
+The failure mode a bulkhead prevents is shared-resource exhaustion. Detectors run on
+threads, hold connections, and occupy slots in pools, and if those resources are shared
+across all detectors, a single misbehaving detector can take them all. A detector that
+hangs holds its thread and does not give it back; enough hung calls and the shared thread
+pool is empty, at which point every other detector -- including the essential ones and
+the request path itself -- is starved and stalls, waiting for a thread that will never
+come. One detector fault has become a total stall, and neither the circuit breaker nor
+graceful degradation can help, because they too need resources to run.
+
+A bulkhead prevents this by giving each detector its own bounded resource pool -- its own
+thread pool, its own concurrency cap, its own bounded queue -- rather than a shared one.
+A detector that hangs can exhaust only its own pool; once its concurrency cap is reached
+and its queue is full, further calls to it are rejected rather than allowed to consume
+resources from elsewhere. The failure is contained to the compartment of the one detector
+that caused it, and every other detector continues with its own resources untouched. The
+bulkhead configuration for this section assigns each detector an isolated pool with a
+concurrency cap and queue limit, which is what makes the isolation that circuit breakers
+and graceful degradation assume actually hold under a resource-exhausting failure.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Health Checks, Readiness, and the Complete Resilient Gateway</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The final mechanism operates at the level of the instance rather than the individual
+detector. Health checks decide whether an instance of the gateway is healthy, and there
+are two distinct questions they answer, which must not be confused. Liveness asks whether
+the process is alive at all; a failed liveness check means the process is stuck or dead
+and should be restarted. Readiness asks whether the instance should receive traffic right
+now; a failed readiness check means the instance is alive but not fit to serve, and it
+should be pulled from the load balancer without being killed.
+
+The distinction matters for a detection gateway because an instance can be alive but
+unfit. An instance whose essential detector breaker has just opened, or whose model
+artifacts are still loading, is running fine as a process but should not receive requests
+it cannot properly inspect. Restarting it would be wrong -- it is not broken, just not
+ready -- and serving traffic to it would be wrong too. Readiness gives the correct
+response: take it out of rotation until its essential breakers are closed and its
+dependencies are loaded, then return it. This is also how the redundancy and failover of
+the tiers work: with several instances behind the load balancer, an unready instance is
+simply removed and its share of the load flows to the others, so the loss of one instance
+is absorbed rather than felt.
+
+With health checks in place, the resilient gateway is complete. Circuit breakers cut off
+a persistently failing detector and test its recovery; the failure policy resolves each
+short-circuited call; graceful degradation sheds droppable detectors to keep the
+essential path serving under stress; bulkheads contain a resource-exhausting failure to
+one detector; and health checks keep traffic flowing only to instances fit to serve it. A
+detector fault is now a bounded, recoverable event rather than a gateway outage, which is
+what high availability means. The resilience stage is finished. What the gateway still
+lacks is visibility: all of this resilient behaviour is happening, but it cannot yet be
+seen. Section 14.08 opens the operability stage with observability, so that the breakers,
+degradation, and failures engineered here become metrics, logs, and traces an operator
+can actually watch.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Four Mechanisms of High Availability</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The four mechanisms this section builds, the failure each contains, and how it turns a detector fault into a bounded event. Together they keep the gateway serving through component failures.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Mechanism</li><li>Failure it contains</li><li>What it does</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Circuit breaker</li><li>A detector that fails repeatedly</li><li>Cuts off the detector after a threshold, tests recovery, restores when healthy</li></ul>
+<ul class="blist"><li>Graceful degradation</li><li>Stress that exceeds capacity</li><li>Sheds droppable detectors in order, keeps the essential path serving</li></ul>
+<ul class="blist"><li>Bulkhead</li><li>A detector exhausting shared resources</li><li>Isolates each detector in its own pool so a fault stays contained</li></ul>
+<ul class="blist"><li>Health check / readiness</li><li>An instance unfit to serve</li><li>Restarts a dead process (liveness) or pulls an unready instance from rotation</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Circuit Breaker State Machine</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The three circuit breaker states and the transitions between them. The half-open state makes recovery safe by testing with trial calls before restoring full traffic, rather than flooding a possibly still-broken detector.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>From state</li><li>Event</li><li>To state</li><li>Effect</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Closed</li><li>Consecutive failures reach threshold</li><li>Open</li><li>Trip: stop calling the detector</li></ul>
+<ul class="blist"><li>Closed</li><li>Success</li><li>Closed</li><li>Reset the consecutive-failure count</li></ul>
+<ul class="blist"><li>Open</li><li>Open duration elapsed</li><li>Half-open</li><li>Allow trial calls to test recovery</li></ul>
+<ul class="blist"><li>Open</li><li>Open duration not yet elapsed</li><li>Open</li><li>Short-circuit: the call is not made</li></ul>
+<ul class="blist"><li>Half-open</li><li>Successes reach success threshold</li><li>Closed</li><li>Recovery confirmed; resume normal calls</li></ul>
+<ul class="blist"><li>Half-open</li><li>A trial call fails</li><li>Open</li><li>Recovery failed; re-open immediately</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Graceful-Degradation Shed Order</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The order in which detectors are shed under stress, from droppable-first to the retained essential path. Graceful degradation operates the Section 14.06 essential-versus-droppable classification, degrading toward the security core rather than away from it.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Shed order</li><li>Detector</li><li>Tier</li><li>Class</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>1st (shed first)</li><li>Batch analytics job</li><li>Batch</li><li>Droppable</li></ul>
+<ul class="blist"><li>2nd</li><li>Coordinated-network analysis</li><li>Batch</li><li>Droppable</li></ul>
+<ul class="blist"><li>3rd</li><li>Session behaviour scorer</li><li>Near-real-time</li><li>Droppable</li></ul>
+<ul class="blist"><li>4th</li><li>Input PII audit tagger</li><li>Inline</li><li>Droppable</li></ul>
+<ul class="blist"><li>Never shed</li><li>Output PII scanner</li><li>Inline</li><li>Essential</li></ul>
+<ul class="blist"><li>Never shed</li><li>Jailbreak / injection classifier</li><li>Inline</li><li>Essential</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Bulkheads and Health Checks</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The bulkhead isolation per detector and the two kinds of health check. Bulkheads bound each detector to its own resource pool; liveness restarts a dead process while readiness pulls an alive-but-unfit instance from the load balancer.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Control</li><li>Kind</li><li>What it bounds or checks</li><li>Action</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Per-detector bulkhead</li><li>Isolation</li><li>Concurrency cap and bounded queue per detector</li><li>Reject calls past the cap so the fault stays in that pool</li></ul>
+<ul class="blist"><li>Process liveness</li><li>Liveness check</li><li>Whether the process is alive</li><li>Restart the instance</li></ul>
+<ul class="blist"><li>Detector readiness</li><li>Readiness check</li><li>Whether essential breakers are closed</li><li>Remove the instance from the load balancer until ready</li></ul>
+<ul class="blist"><li>Dependency readiness</li><li>Readiness check</li><li>Whether model artifacts are loaded and reachable</li><li>Do not receive traffic until ready</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Circuit Breaker with Closed/Open/Half-Open States</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">circuit_breaker.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Implements a circuit breaker with the three states and their transitions -- tripping from closed to open after a failure threshold, moving to half-open after the open duration, and closing on confirmed recovery or re-opening on a failed trial -- and integrates it with the failure policy so an essential detector short-circuits to fail-closed and a droppable one to graceful degradation.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library time and enum only, demonstrates the full closed-open-half-open-closed cycle on a broken-then-recovered detector.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># circuit_breaker.py
+# Section 14.07: Circuit Breaker with Closed/Open/Half-Open States and Graceful Degradation
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import time
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Callable, List, Optional
+
+
+class BreakerState(Enum):
+    CLOSED = &#x27;closed&#x27;        # normal: calls pass through
+    OPEN = &#x27;open&#x27;            # cut off: calls short-circuit without touching the detector
+    HALF_OPEN = &#x27;half_open&#x27;  # testing recovery: a trial call is allowed through
+
+
+@dataclass
+class BreakerConfig:
+    failure_threshold: int       # consecutive failures before opening
+    open_duration_s: float       # how long to stay open before testing recovery
+    half_open_successes: int     # successes in half-open needed to close again
+
+
+@dataclass
+class CircuitBreaker:
+    name: str
+    config: BreakerConfig
+    state: BreakerState = BreakerState.CLOSED
+    consecutive_failures: int = 0
+    half_open_success_count: int = 0
+    opened_at: Optional[float] = None
+
+    def _now(self) -&gt; float:
+        return time.monotonic()
+
+    def allow_request(self) -&gt; bool:
+        &#x27;&#x27;&#x27;Decide whether a call is allowed through, advancing open -&gt; half-open on timeout.
+
+        A closed breaker allows everything. An open breaker short-circuits until the
+        open duration elapses, then moves to half-open to test recovery. A half-open
+        breaker allows the trial call through.
+        &#x27;&#x27;&#x27;
+        if self.state is BreakerState.OPEN:
+            if self.opened_at is not None and (self._now() - self.opened_at) &gt;= self.config.open_duration_s:
+                self.state = BreakerState.HALF_OPEN
+                self.half_open_success_count = 0
+                return True
+            return False
+        return True
+
+    def record_success(self) -&gt; None:
+        if self.state is BreakerState.HALF_OPEN:
+            self.half_open_success_count += 1
+            if self.half_open_success_count &gt;= self.config.half_open_successes:
+                self.state = BreakerState.CLOSED
+                self.consecutive_failures = 0
+                self.opened_at = None
+        else:
+            self.consecutive_failures = 0
+
+    def record_failure(self) -&gt; None:
+        if self.state is BreakerState.HALF_OPEN:
+            # A failure during recovery re-opens immediately.
+            self.state = BreakerState.OPEN
+            self.opened_at = self._now()
+            return
+        self.consecutive_failures += 1
+        if self.consecutive_failures &gt;= self.config.failure_threshold:
+            self.state = BreakerState.OPEN
+            self.opened_at = self._now()
+
+
+@dataclass
+class CallResult:
+    detector: str
+    state: str
+    executed: bool
+    outcome: str
+
+
+def call_through_breaker(breaker: CircuitBreaker,
+                         detector_fn: Callable[[], bool],
+                         essential: bool) -&gt; CallResult:
+    &#x27;&#x27;&#x27;Route a detector call through its breaker, degrading gracefully when open.
+
+    When the breaker is open the detector is not called at all -- it is short-circuited.
+    An essential detector short-circuits to a fail-closed block (the 14.06 policy);
+    a droppable detector short-circuits to a fail-open skip (graceful degradation).
+    &#x27;&#x27;&#x27;
+    if not breaker.allow_request():
+        if essential:
+            return CallResult(breaker.name, breaker.state.value, False, &#x27;short-circuit -&gt; fail-closed (block)&#x27;)
+        return CallResult(breaker.name, breaker.state.value, False, &#x27;short-circuit -&gt; shed (graceful degradation)&#x27;)
+    try:
+        flagged = detector_fn()
+        breaker.record_success()
+        return CallResult(breaker.name, breaker.state.value, True, &#x27;flagged&#x27; if flagged else &#x27;clean&#x27;)
+    except Exception as exc:  # noqa: BLE001 -- contained at the breaker boundary
+        breaker.record_failure()
+        return CallResult(breaker.name, breaker.state.value, True, f&#x27;errored ({exc}); recorded failure&#x27;)
+
+
+def broken_detector() -&gt; bool:
+    raise RuntimeError(&#x27;model artifact not loaded&#x27;)
+
+
+def demo() -&gt; None:
+    print(&#x27;=&#x27; * 82)
+    print(&#x27;CIRCUIT BREAKER: CLOSED -&gt; OPEN -&gt; HALF-OPEN -&gt; CLOSED&#x27;)
+    print(&#x27;=&#x27; * 82)
+    cfg = BreakerConfig(failure_threshold=3, open_duration_s=0.05, half_open_successes=2)
+    breaker = CircuitBreaker(&#x27;Injection classifier&#x27;, cfg)
+    print(f&#x27;Config: open after {cfg.failure_threshold} failures, stay open {cfg.open_duration_s}s, &#x27;
+          f&#x27;close after {cfg.half_open_successes} half-open successes&#x27;)
+    print()
+    print(&#x27;Phase 1: detector is broken -- breaker trips after the threshold&#x27;)
+    for i in range(1, 6):
+        r = call_through_breaker(breaker, broken_detector, essential=True)
+        print(f&#x27;  call {i}: state={r.state:&lt;10} executed={r.executed} -&gt; {r.outcome}&#x27;)
+    print()
+    print(f&#x27;Breaker is now {breaker.state.value.upper()}: the broken detector is no longer called.&#x27;)
+    print(&#x27;An essential detector short-circuits to fail-closed while open.&#x27;)
+    print()
+    print(&#x27;Phase 2: wait out the open duration, then the detector recovers&#x27;)
+    time.sleep(cfg.open_duration_s + 0.01)
+    healthy = lambda: False
+    for i in range(1, 4):
+        r = call_through_breaker(breaker, healthy, essential=True)
+        print(f&#x27;  call {i}: state={r.state:&lt;10} executed={r.executed} -&gt; {r.outcome}&#x27;)
+    print()
+    print(f&#x27;Breaker is now {breaker.state.value.upper()}: recovery confirmed, calls flow normally again.&#x27;)
+    print()
+    print(&#x27;The breaker turned a broken detector from a per-request failure into a bounded,&#x27;)
+    print(&#x27;recoverable state -- cut off while broken, tested for recovery, restored when healthy.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Circuit Breaker State Machine Reference</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">circuit_breaker_state_machine.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Specifies the circuit breaker state machine as a reference: every transition with its triggering event, target state, and effect, plus the meaning of each state. Explains why the half-open state makes recovery safe by testing with trial calls before restoring full traffic.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the transition table and the meaning of each state.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># circuit_breaker_state_machine.py
+# Section 14.07: Circuit Breaker State Machine Reference
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class Transition:
+    from_state: str
+    event: str
+    to_state: str
+    effect: str
+
+
+TRANSITIONS: List[Transition] = [
+    Transition(&#x27;closed&#x27;, &#x27;failure below threshold&#x27;, &#x27;closed&#x27;, &#x27;Count the failure; keep serving calls&#x27;),
+    Transition(&#x27;closed&#x27;, &#x27;consecutive failures reach threshold&#x27;, &#x27;open&#x27;, &#x27;Trip: stop calling the detector&#x27;),
+    Transition(&#x27;closed&#x27;, &#x27;success&#x27;, &#x27;closed&#x27;, &#x27;Reset the consecutive-failure count&#x27;),
+    Transition(&#x27;open&#x27;, &#x27;open duration not yet elapsed&#x27;, &#x27;open&#x27;, &#x27;Short-circuit: call is not made&#x27;),
+    Transition(&#x27;open&#x27;, &#x27;open duration elapsed&#x27;, &#x27;half_open&#x27;, &#x27;Allow one trial call to test recovery&#x27;),
+    Transition(&#x27;half_open&#x27;, &#x27;trial success below success threshold&#x27;, &#x27;half_open&#x27;, &#x27;Count the success; allow another trial&#x27;),
+    Transition(&#x27;half_open&#x27;, &#x27;successes reach success threshold&#x27;, &#x27;closed&#x27;, &#x27;Recovery confirmed; resume normal calls&#x27;),
+    Transition(&#x27;half_open&#x27;, &#x27;trial failure&#x27;, &#x27;open&#x27;, &#x27;Recovery failed; re-open immediately&#x27;),
+]
+
+
+def print_state_machine(transitions: List[Transition]) -&gt; None:
+    print(&#x27;=&#x27; * 96)
+    print(&#x27;CIRCUIT BREAKER STATE MACHINE REFERENCE&#x27;)
+    print(&#x27;Three states -- closed, open, half-open -- and the transitions between them&#x27;)
+    print(&#x27;=&#x27; * 96)
+    header = &#x27;From&#x27;.ljust(12) + &#x27;Event&#x27;.ljust(42) + &#x27;To&#x27;.ljust(12) + &#x27;Effect&#x27;
+    print(header)
+    print(&#x27;-&#x27; * 96)
+    for t in transitions:
+        print(t.from_state.ljust(12) + t.event.ljust(42) + t.to_state.ljust(12) + t.effect)
+    print(&#x27;-&#x27; * 96)
+
+
+def state_meanings() -&gt; None:
+    print()
+    print(&#x27;=&#x27; * 96)
+    print(&#x27;WHAT EACH STATE MEANS&#x27;)
+    print(&#x27;=&#x27; * 96)
+    print(&#x27;  CLOSED    : normal operation. Calls pass through; failures are counted.&#x27;)
+    print(&#x27;  OPEN      : the detector is cut off. Calls short-circuit without touching it,&#x27;)
+    print(&#x27;              so a broken detector is not retried into a cascade.&#x27;)
+    print(&#x27;  HALF-OPEN : cautious recovery test. A limited number of trial calls are allowed;&#x27;)
+    print(&#x27;              enough successes close the breaker, any failure re-opens it.&#x27;)
+    print()
+    print(&#x27;The half-open state is what makes recovery safe: the breaker does not slam back&#x27;)
+    print(&#x27;to normal after a timeout and flood a still-broken detector -- it tests first with&#x27;)
+    print(&#x27;a trial, and only restores full traffic once the detector proves it has recovered.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_state_machine(TRANSITIONS)
+    state_meanings()</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Graceful-Degradation Shed-Order Policy</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">graceful_degradation_policy.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Defines the order in which droppable detectors are shed under stress to free load, lowest-priority-first, while the essential security path is never shed. Operates the Section 14.06 essential-versus-droppable classification so the gateway degrades toward its security core rather than away from it.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the shed order to free a target load and the retained essential path.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># graceful_degradation_policy.py
+# Section 14.07: Graceful-Degradation Shed-Order Policy
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class DegradableDetector:
+    name: str
+    tier: str
+    essential: bool
+    shed_priority: int   # lower sheds first; essential detectors are never shed
+    cost_weight: float   # relative load the detector adds, freed when shed
+
+
+# Priority 0 is shed first. Essential detectors carry no shed priority -- they are kept.
+DETECTORS: List[DegradableDetector] = [
+    DegradableDetector(&#x27;Batch analytics job&#x27;, &#x27;batch&#x27;, False, 0, 4.0),
+    DegradableDetector(&#x27;Coordinated-network analysis&#x27;, &#x27;batch&#x27;, False, 1, 3.0),
+    DegradableDetector(&#x27;Session behaviour scorer&#x27;, &#x27;near_real_time&#x27;, False, 2, 2.0),
+    DegradableDetector(&#x27;Input PII audit tagger&#x27;, &#x27;inline&#x27;, False, 3, 1.0),
+    DegradableDetector(&#x27;Output PII scanner&#x27;, &#x27;inline&#x27;, True, 99, 1.5),
+    DegradableDetector(&#x27;Jailbreak classifier&#x27;, &#x27;inline&#x27;, True, 99, 2.0),
+    DegradableDetector(&#x27;Injection classifier&#x27;, &#x27;inline&#x27;, True, 99, 2.5),
+]
+
+
+def shed_plan(detectors: List[DegradableDetector], load_to_shed: float) -&gt; None:
+    print(&#x27;=&#x27; * 88)
+    print(&#x27;GRACEFUL-DEGRADATION SHED-ORDER POLICY&#x27;)
+    print(f&#x27;Under stress, shed droppable detectors in priority order to free ~{load_to_shed:.1f} load units&#x27;)
+    print(&#x27;=&#x27; * 88)
+    droppable = sorted([d for d in detectors if not d.essential], key=lambda d: d.shed_priority)
+    essential = [d for d in detectors if d.essential]
+    print()
+    print(&#x27;SHED ORDER (droppable detectors, shed first to last):&#x27;)
+    freed = 0.0
+    shed_names: List[str] = []
+    for d in droppable:
+        if freed &gt;= load_to_shed:
+            break
+        freed += d.cost_weight
+        shed_names.append(d.name)
+        print(f&#x27;  shed #{d.shed_priority}: {d.name} [{d.tier}] frees {d.cost_weight:.1f} &#x27;
+              f&#x27;(cumulative {freed:.1f})&#x27;)
+    print()
+    print(f&#x27;Shed {len(shed_names)} detector(s) to free {freed:.1f} load units.&#x27;)
+    print()
+    print(&#x27;ESSENTIAL PATH RETAINED (never shed):&#x27;)
+    for d in essential:
+        print(f&#x27;  kept: {d.name} [{d.tier}]&#x27;)
+    print()
+    print(&#x27;Graceful degradation operates the 14.06 essential-versus-droppable classification:&#x27;)
+    print(&#x27;it sheds the droppable detectors in a defined order to relieve load, and never&#x27;)
+    print(&#x27;touches the essential security path. The gateway degrades to its core rather than&#x27;)
+    print(&#x27;failing entirely, and the shed order is deliberate, not whichever detector fails first.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    shed_plan(DETECTORS, load_to_shed=6.0)</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Bulkhead and Health-Check Configuration</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">bulkhead_health_check_config.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Configures a per-detector bulkhead -- an isolated pool with a concurrency cap and bounded queue -- so a slow or failing detector exhausts only its own resources, and defines the liveness and readiness health checks that restart a dead process versus pulling an alive-but-unfit instance from the load balancer.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the per-detector bulkhead configuration and the liveness/readiness health checks.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># bulkhead_health_check_config.py
+# Section 14.07: Bulkhead and Health-Check Configuration
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import Dict, List
+
+
+@dataclass
+class Bulkhead:
+    detector: str
+    max_concurrent: int      # cap on in-flight calls to this detector
+    thread_pool: str         # isolated pool name
+    queue_limit: int         # bounded queue before rejecting
+
+
+@dataclass
+class HealthCheck:
+    check: str
+    kind: str                # &#x27;liveness&#x27; or &#x27;readiness&#x27;
+    signal: str
+    action_on_fail: str
+
+
+BULKHEADS: List[Bulkhead] = [
+    Bulkhead(&#x27;Injection classifier&#x27;, 32, &#x27;pool_injection&#x27;, 16),
+    Bulkhead(&#x27;Jailbreak classifier&#x27;, 32, &#x27;pool_jailbreak&#x27;, 16),
+    Bulkhead(&#x27;Output PII scanner&#x27;, 24, &#x27;pool_output_pii&#x27;, 12),
+    Bulkhead(&#x27;Input PII audit tagger&#x27;, 8, &#x27;pool_audit&#x27;, 4),
+]
+
+HEALTH_CHECKS: List[HealthCheck] = [
+    HealthCheck(&#x27;Process liveness&#x27;, &#x27;liveness&#x27;, &#x27;process responds to ping&#x27;, &#x27;Restart the instance&#x27;),
+    HealthCheck(&#x27;Detector readiness&#x27;, &#x27;readiness&#x27;, &#x27;all essential breakers not open&#x27;, &#x27;Remove instance from the load balancer&#x27;),
+    HealthCheck(&#x27;Dependency readiness&#x27;, &#x27;readiness&#x27;, &#x27;model artifacts loaded and reachable&#x27;, &#x27;Do not receive traffic until ready&#x27;),
+]
+
+
+def print_bulkheads(bulkheads: List[Bulkhead]) -&gt; None:
+    print(&#x27;=&#x27; * 88)
+    print(&#x27;BULKHEAD CONFIGURATION&#x27;)
+    print(&#x27;Each detector runs in an isolated pool so one cannot exhaust the shared resources&#x27;)
+    print(&#x27;=&#x27; * 88)
+    header = &#x27;Detector&#x27;.ljust(28) + &#x27;Max concurrent&#x27;.ljust(16) + &#x27;Pool&#x27;.ljust(20) + &#x27;Queue limit&#x27;
+    print(header)
+    print(&#x27;-&#x27; * 88)
+    for b in bulkheads:
+        print(b.detector.ljust(28) + str(b.max_concurrent).ljust(16) + b.thread_pool.ljust(20) + str(b.queue_limit))
+    print(&#x27;-&#x27; * 88)
+    print()
+    print(&#x27;Without bulkheads, a slow detector holds threads from a shared pool until none&#x27;)
+    print(&#x27;remain, starving every other detector -- one fault becomes a total stall. With a&#x27;)
+    print(&#x27;bounded per-detector pool and queue, a slow detector exhausts only its own pool&#x27;)
+    print(&#x27;and is rejected past its queue limit, so the failure is contained to that detector.&#x27;)
+
+
+def print_health_checks(checks: List[HealthCheck]) -&gt; None:
+    print()
+    print(&#x27;=&#x27; * 88)
+    print(&#x27;HEALTH-CHECK AND READINESS CONFIGURATION&#x27;)
+    print(&#x27;=&#x27; * 88)
+    for c in checks:
+        print()
+        print(f&#x27;CHECK: {c.check} [{c.kind}]&#x27;)
+        print(f&#x27;  Signal        : {c.signal}&#x27;)
+        print(f&#x27;  Action on fail: {c.action_on_fail}&#x27;)
+    print()
+    print(&#x27;Liveness answers whether the process is alive -- a failed liveness check restarts&#x27;)
+    print(&#x27;the instance. Readiness answers whether the instance should receive traffic now --&#x27;)
+    print(&#x27;a failed readiness check pulls the instance from the load balancer without killing&#x27;)
+    print(&#x27;it, so an instance whose essential breaker is open stops receiving requests until&#x27;)
+    print(&#x27;it recovers.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_bulkheads(BULKHEADS)
+    print_health_checks(HEALTH_CHECKS)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Deciding a failure policy but never cutting off a persistently failing detector</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Once every detector has a fail-open or fail-closed policy, failure handling feels
+complete, and it is easy to miss that the policy resolves each failure without ever
+stopping the gateway from calling a detector that fails every time.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The broken detector is called on every request only to be failed by policy, so the gateway pays its full latency, timeout wait, and load indefinitely for no benefit, and a hanging detector accumulates held resources across requests until the gateway stalls.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Put a circuit breaker in front of each detector so a detector that fails repeatedly is cut off and its calls short-circuit, and let the existing failure policy resolve the short-circuited request rather than calling the broken detector again.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Building a circuit breaker that jumps straight from open back to closed after the timeout, with no half-open state</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Two states -- open and closed -- seem sufficient, and adding a half-open state looks like
+unnecessary complexity when a simple timeout could just reset the breaker.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">After the open duration the breaker sends full traffic straight to a detector that may still be broken, which trips it again immediately, producing a flapping loop that oscillates between open and closed and never gives the detector a controlled chance to recover.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Include the half-open state: after the open duration allow a limited number of trial calls, close only if they succeed to a threshold, and re-open on any trial failure, so recovery is tested cautiously rather than by flooding a possibly still-broken detector.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Letting stress shed whichever detectors fail first instead of following a defined essential-first shed order</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Under load, detectors that time out or trip naturally fall away on their own, so it can
+seem that degradation takes care of itself without an explicit shed policy.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The detectors that happen to fail first under stress might be the essential ones, leaving the gateway serving traffic with its security core degraded while best-effort enrichment keeps running -- degradation in exactly the wrong direction.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Define a graceful-degradation shed order from the Section 14.06 classification: shed droppable detectors first in a set priority, never shed the essential path, so the gateway degrades toward its security core rather than away from it.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Running all detectors from a shared thread or connection pool with no bulkhead isolation</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A single shared pool is simpler to configure and uses resources efficiently in normal
+operation, so per-detector pools look like wasteful over-engineering until a detector
+hangs.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A single hanging detector holds threads from the shared pool until none remain, starving every other detector and the request path itself, so one detector fault becomes a total gateway stall that the circuit breaker cannot even fix because it too needs resources.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Give each detector its own bounded pool with a concurrency cap and queue limit, so a hanging or slow detector exhausts only its own compartment and is rejected past its cap, keeping the failure contained to that one detector.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Conflating liveness and readiness, so an alive-but-unfit instance is either killed or kept serving</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Both are health checks that return healthy or unhealthy, so they are easily treated as
+one signal, and the distinction between the process being alive and the instance being
+fit to serve is subtle.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">An instance whose essential breaker just opened or whose artifacts are still loading is either restarted needlessly -- it was not broken -- or kept in rotation and served requests it cannot properly inspect, both of which are wrong responses to an alive-but-unready instance.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Separate liveness from readiness: restart the instance only on a failed liveness check when the process is stuck or dead, and on a failed readiness check pull the alive-but-unfit instance from the load balancer without killing it until its essential breakers close and its dependencies load.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">High availability keeps the gateway serving through component failures, and it requires
+mechanism rather than just the failure policy of Section 14.06: a policy fails a broken
+detector by rule but still calls it on every request, and a hanging detector can exhaust
+shared resources across requests until the gateway stalls. The circuit breaker is the
+primary mechanism -- it cuts off a detector that fails repeatedly, short-circuiting calls
+rather than retrying into a cascade, and moves through three states: closed (normal,
+counting failures), open (cut off after a failure threshold), and half-open (testing
+recovery with trial calls). The half-open state makes recovery safe, closing only on
+confirmed recovery and re-opening on a failed trial rather than flooding a still-broken
+detector. The breaker composes with the failure policy: an open essential detector
+short-circuits to fail-closed, an open droppable one to a skip, which is graceful
+degradation. Graceful degradation sheds non-essential detectors under stress in a defined
+order, operating the 14.06 essential-versus-droppable classification so the gateway
+degrades toward its security core rather than away from it. Bulkheads give each detector
+its own bounded resource pool so a slow or hanging detector exhausts only its own
+compartment, keeping one fault from starving the others. Health checks separate liveness
+(restart a dead process) from readiness (pull an alive-but-unfit instance from the load
+balancer), and readiness plus redundancy absorb the loss of an instance. Together these
+turn a detector fault from a gateway outage into a bounded, recoverable event.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>High availability keeps the gateway serving through component failures and needs mechanism, not just the failure policy, because a policy still calls a broken detector every request and cannot stop resource exhaustion across requests</li><li>The circuit breaker cuts off a repeatedly failing detector, short-circuiting calls rather than retrying into a cascade, and moves between closed, open, and half-open states</li><li>The half-open state makes recovery safe by testing with a limited number of trial calls before restoring full traffic, avoiding a flapping loop against a still-broken detector</li><li>Graceful degradation sheds non-essential detectors under stress in a defined order, operating the Section 14.06 essential-versus-droppable classification so the gateway degrades toward its security core</li><li>Bulkheads isolate each detector in its own bounded resource pool so a slow or hanging detector exhausts only its own compartment, preventing one fault from starving the whole gateway</li><li>Health checks separate liveness (restart a dead process) from readiness (pull an alive-but-unfit instance from rotation), and readiness with redundancy absorbs the loss of an instance -- turning a detector fault into a bounded, recoverable event</li></ul>
+<h2 class="sh1">Preview Section 14 08</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Observability: Metrics, Logging, and Tracing</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Sections 14.06 and 14.07 made the gateway resilient -- but all of that behaviour is
+currently invisible. Section 14.08 opens the operability stage with observability, on the
+principle that a detection system you cannot see you cannot operate or trust. It covers the
+three complementary pillars -- metrics for aggregate health (detection rates, latencies,
+error rates, throughput per detector), logging for per-event audit detail, and tracing to
+follow a request through the tiers -- defines the golden signals for a detection gateway,
+and instruments each detector without adding latency. It makes the resilient behaviour
+engineered here something an operator can actually watch, and it is the precondition for
+the tuning of Chapter 17.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names availability as a concern</li><li>Section 14.06: the fail-open/fail-closed policy and essential-versus-droppable classification this section operates</li><li>Section 14.04: the per-detector timeout whose repeated firing the circuit breaker cuts off</li><li>Section 14.05: the load balancing and health checks extended here into readiness gating and failover</li><li>Chapter 13 Section 13.01: the tiers whose detectors are isolated by bulkheads and shed by graceful degradation</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 14.08: observability -- making the circuit breaker states, degradation, and failures visible as metrics, logs, and traces</li><li>Section 14.09: monitoring dashboard -- surfacing breaker state and degraded-mode operation to operators</li><li>Section 14.11: the production gateway capstone -- circuit breakers, degradation, and bulkheads assembled into the running service</li><li>Chapter 17: tuning -- adjusting thresholds once the resilient behaviour is observable</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>high-availability</li><li>circuit-breaker</li><li>closed-open-half-open</li><li>graceful-degradation</li><li>bulkhead</li><li>resource-isolation</li><li>health-checks</li><li>liveness-readiness</li><li>redundancy-failover</li><li>cascade-prevention</li><li>essential-vs-droppable</li><li>resilience</li><li>production-deployment</li><li>part-3-chapter-4</li></ul>
+</article>

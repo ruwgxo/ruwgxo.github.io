@@ -1,0 +1,1741 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 9 · Section 9 · ~6 pages</div>
+<h1>Section 9.9: Real-World Incident</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Three documented extraction incidents -- Tramer et al. 2016 against commercial
+MLaaS APIs, Carlini et al. 2021 against GPT-2, and the Alpaca/Vicuna LLM
+distillation pattern -- demonstrate that extraction operates at production
+scale against major vendors, reveal the architectural gaps that made it
+possible, and map the specific points where the Section 9.10 through 9.12
+controls would have triggered.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Sections 9.3 through 9.8 built the attack catalogue from first principles:
+why each attack works, what budget it requires, what query patterns it produces.
+Section 9.9 grounds that catalogue in documented reality. The question
+defenders ask when evaluating whether to invest in extraction controls is
+not &quot;is this theoretically possible?&quot; but &quot;has this actually happened?&quot;
+The answer, documented in peer-reviewed publications and public disclosures,
+is yes -- at production scale, against major commercial vendors, using the
+same techniques the preceding sections described.
+
+Three incident classes are reconstructed here. The Tramer et al. 2016
+commercial MLaaS extractions established that the theoretical extraction
+bounds are achievable in practice against production APIs. The Carlini et al.
+2021 GPT-2 training data extraction demonstrated that LLMs memorise and
+leak training data verbatim through their inference API. The Alpaca and
+Vicuna LLM distillation campaigns, conducted openly as academic experiments,
+established that a few thousand dollars in API fees can produce a functional
+clone of a commercial LLM capability, with the query distribution analytically
+indistinguishable from legitimate evaluation use.
+
+The incidents share a root cause structure: no query pattern monitoring,
+no output watermarking, and no extraction-aware rate limiting. Each gap
+corresponds directly to a control that Sections 9.10 through 9.12 build.
+The detection opportunity mapping in this section shows precisely where
+each control would have triggered and what it would have revealed. The
+lessons learned become the pre-production verification checklist that
+Section 9.13 incorporates into the chapter summary.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 9.9 of 13. Bridge between the attack catalogue (Sections 9.3
+through 9.8) and the production defence sections (9.10 through 9.12).
+The root cause gaps documented here are the requirements that drive the
+Section 9.10 detection primitive design. The detection opportunity map
+is the traceability document connecting production controls to documented
+failures.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 9.3: equation-solving and path-finding extraction (Tramer et al. techniques)</li><li>Section 9.4: distillation attacks (Alpaca/Vicuna pattern; LLM distillation pipeline)</li><li>Section 9.6: membership inference (Carlini et al. perplexity-based membership signal)</li><li>Section 9.7: model inversion (Carlini et al. verbatim training data extraction mechanism)</li><li>Section 9.8: economic abuse (query budget and cost asymmetry framing for incident reconstruction)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why Documented Incidents Precede Production Defence</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The production controls in Sections 9.10 through 9.12 are expensive to
+build and maintain. Query monitoring requires persistent per-user state
+infrastructure. Output watermarking adds per-response processing. Adaptive
+rate limiting requires careful policy calibration. Every production control
+competes for engineering time against features that directly generate
+revenue. The argument for investing in extraction controls is strengthened
+considerably by evidence that the attacks they defend against have already
+occurred at production scale.
+
+Section 9.9 provides that evidence in three forms. The Tramer et al. 2016
+commercial MLaaS extractions were conducted by academic researchers against
+production APIs of major cloud providers -- not as malicious attacks but
+as disclosed research. The techniques they demonstrated -- equation-solving
+against linear classifiers, path-finding against decision trees, surrogate
+training against neural networks -- are now documented in the peer-reviewed
+literature and reproducible by anyone with an API key and a few hours of
+compute time.
+
+The Carlini et al. 2021 GPT-2 extraction was not a disclosure of a model&#x27;&#x27;s
+decision surface but of its training data: verbatim text sequences from
+the GPT-2 training corpus were recovered through systematic inference
+queries. The extraction required no special model access, no vulnerability
+exploit, and a modest query budget.
+
+The Alpaca and Vicuna projects are not adversarial incidents in the
+conventional sense -- they were openly conducted academic experiments
+with published code and results. They are incidents in the threat model
+sense: they demonstrated that a functional clone of a commercial LLM
+capability is achievable for a few thousand dollars in API fees, using
+a query distribution indistinguishable from legitimate evaluation use.
+The fact that these demonstrations were academic does not reduce their
+threat model relevance -- any adversary can replicate the methodology.
+
+The incidents share a structure: the attack vector was the documented
+technique, the enabling condition was the absence of controls the preceding
+sections build, and the detection gap was total in every case. Grounding
+the production controls in these documented failures converts the Section
+9.11 and 9.12 implementation from precautionary architecture into targeted
+remediation of demonstrated vulnerabilities.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Incident 1: Tramer et al. 2016 -- Commercial MLaaS Extraction</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The Tramer et al. 2016 paper &quot;Stealing Machine Learning Models via Prediction
+APIs&quot; targeted four commercial MLaaS platforms: Amazon ML, Microsoft Azure
+ML, BigML, and Google Prediction API. The research was conducted with the
+knowledge and cooperation of the platform vendors and published as disclosed
+security research.
+
+Against Amazon ML&#x27;&#x27;s logistic regression endpoint, equation-solving extraction
+recovered the model&#x27;&#x27;s weight vector using a query count matching the
+theoretical O(d log(1/ε)) bound. For a model with d = 100 features and
+target precision ε = 0.001, the extraction required approximately 1,000
+API calls. The extracted model&#x27;&#x27;s predictions matched the victim&#x27;&#x27;s on a
+held-out test set to within noise. The query budget was so small relative
+to Amazon ML&#x27;&#x27;s rate limits that no rate-limit monitor would have fired.
+
+Against BigML&#x27;&#x27;s decision tree endpoint, path-finding extraction recovered
+the full tree structure with exact fidelity on the target input distribution.
+The extraction required a few thousand API calls -- comparable to a developer
+running integration tests during a build pipeline. The query pattern was
+unusual (one-feature-at-a-time systematic variation) but no monitoring
+system was in place to detect it.
+
+Against Microsoft Azure ML&#x27;&#x27;s neural network endpoints, surrogate training
+on API outputs achieved substantial prediction fidelity. The authors noted
+that soft-label outputs (probability distributions rather than hard class
+labels) reduced the required query budget by an order of magnitude compared
+to hard-label-only access.
+
+The root cause across all four platforms was identical: no query pattern
+monitoring, throughput-only rate limits that the attacks never approached,
+and in some cases soft-label API designs that provided extraction subsidies
+to adversaries. The platforms&#x27;&#x27; response included reducing soft-label
+output precision in some cases, but no systematic query pattern monitoring
+was deployed. The controls that would have caught these attacks -- query
+diversity monitoring, boundary query detection, extraction-aware rate
+limits -- were not part of any of the platforms&#x27;&#x27; production security
+architecture at the time.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Incident 2: Carlini et al. 2021 -- GPT-2 Verbatim Training Data Extraction</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The Carlini et al. 2021 paper &quot;Extracting Training Data from Large Language
+Models&quot; demonstrated verbatim recovery of training data sequences from
+GPT-2 using black-box inference queries. The attack does not replicate the
+model&#x27;&#x27;s capabilities -- it reconstructs specific text sequences that the
+model memorised during training.
+
+The attack mechanism combined membership inference with targeted generation.
+The authors used the GPT-2 API (and local model weights for the white-box
+variant) to generate text sequences, then identified which generated sequences
+were memorised training data by measuring their perplexity: sequences assigned
+lower perplexity by GPT-2 than by a reference language model were candidates
+for verbatim training data. The paper reported recovering thousands of verbatim
+training data sequences, including personally identifiable information such as
+names, email addresses, phone numbers, and unique identifiers from documents
+in the GPT-2 training corpus.
+
+The query budget was modest by commercial standards. The attack required
+generating approximately 600,000 tokens of text, which at GPT-2&#x27;&#x27;s then-
+current API pricing represented a small number of dollars. The output
+monitoring that would have caught this -- detecting repetitive generation
+of unusual proper nouns, email addresses, and structured identifiers -- was
+not in place.
+
+The incident revealed three architectural gaps. First, GPT-2 was trained
+without differential privacy, meaning individual training examples could
+influence the model&#x27;&#x27;s parameters sufficiently to be verbatim extractable.
+Second, no output monitoring was in place to detect repeated generation of
+training-corpus-derived content. Third, no per-user rate limit on generated
+token volume existed that would have flagged the systematic generation
+campaign as anomalous.
+
+OpenAI&#x27;&#x27;s subsequent models incorporated training procedures intended to
+reduce memorisation, and the published research contributed to the broader
+adoption of differential privacy training and output monitoring in production
+LLM deployments. The Carlini et al. work remains the canonical demonstration
+that LLM inference APIs can leak training data verbatim.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Incident 3: Alpaca and Vicuna -- Commercial LLM Distillation at Scale</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The Alpaca and Vicuna projects, conducted openly as academic research,
+demonstrated that the LLM distillation pipeline described in Section 9.4
+is operationally feasible at a cost that makes it economically rational
+for any organisation seeking to replicate a commercial LLM capability
+without the original training cost.
+
+The Alpaca project (Stanford, 2023) fine-tuned Meta&#x27;&#x27;s LLaMA 7B model on
+52,000 instruction-following examples generated by querying GPT-3.5-turbo.
+The query cost was approximately $500 in API fees. The resulting model
+exhibited instruction-following behaviour qualitatively similar to GPT-3.5
+on common tasks. The prompts were drawn from a seed set of 175 human-authored
+instructions, expanded through the &quot;self-instruct&quot; technique that generates
+diverse variations of the seed prompts by querying the victim API itself.
+
+The Vicuna project followed a similar methodology, fine-tuning LLaMA 13B
+on approximately 70,000 conversations collected from ChatGPT user-shared
+logs and additional GPT-4 queries. The Vicuna authors reported that Vicuna
+achieved 92 percent of GPT-4&#x27;&#x27;s capability on several benchmark tasks at
+a total distillation cost under $300.
+
+Both projects are published as open-source code with detailed methodology
+documentation. Any adversary seeking to replicate a commercial LLM
+capability using the same approach can follow the published procedure
+with minimal adaptation.
+
+The detection gap in both cases was total: the query distributions -- diverse
+instruction-following prompts drawn from user-shared logs and benchmark tasks
+-- were analytically indistinguishable from legitimate evaluation use. No
+input-side monitoring would have separated a distillation campaign from a
+research team benchmarking the model&#x27;&#x27;s capabilities. The only control
+that would have provided post-hoc evidence is output watermarking: if
+GPT-3.5-turbo and GPT-4 had embedded watermarks in their outputs, those
+watermarks would have transferred into the Alpaca and Vicuna student models
+and been detectable in their outputs. Neither model had deployed output
+watermarking at the time of these experiments.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Root Cause Analysis: What the Three Incidents Share</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The three incident classes differ in technique, target, and consequence,
+but their root cause structure is remarkably consistent. Each incident
+exploited a deployment that lacked the same set of controls. The root
+cause analysis converts this consistency into a requirements document
+for the Section 9.10 through 9.12 defence architecture.
+
+Root cause 1: No query pattern monitoring. None of the affected deployments
+maintained per-user query distribution statistics across sessions. The
+Tramer et al. attacks produced distinctive query patterns -- one-feature-
+at-a-time variation for tree extraction, boundary-seeking input pairs for
+linear extraction -- that would have been detectable with the query diversity
+monitor and boundary query detector from Section 9.10. The Carlini et al.
+campaign produced repeated generation of rare token sequences. The Alpaca
+and Vicuna campaigns produced query distributions with distinctive benchmark
+topic concentration. None of these signals was monitored.
+
+Root cause 2: Throughput-only rate limits. Every affected deployment had
+rate limits, but those limits were calibrated to infrastructure capacity
+rather than extraction economics. The Tramer et al. attacks completed
+within normal usage volumes. The Carlini et al. generation campaign stayed
+within per-user token budgets that were set for product continuity, not for
+training data leakage prevention. The Alpaca and Vicuna campaigns issued
+queries at rates consistent with legitimate developer evaluation.
+
+Root cause 3: No output watermarking. The output of every affected deployment
+was unwatermarked. Surrogate models trained on these outputs inherit none
+of the victim&#x27;&#x27;s cryptographic identity. Post-hoc ownership verification is
+impossible: there is no mechanism for the operator to demonstrate that a
+deployed surrogate was trained on their outputs rather than independently.
+
+Root cause 4: Soft-label outputs without perturbation. Several Tramer et al.
+targets returned probability distributions or confidence scores, providing
+adversaries with a query budget discount of 5 to 50x. No output perturbation
+was applied to reduce the information value of these distributions.
+
+Root cause 5: No differential privacy training. The Carlini et al. extraction
+was enabled by GPT-2&#x27;&#x27;s memorisation of training data sequences. DP training
+with a reasonably tight budget would have reduced the per-sequence memorisation
+sufficient to prevent verbatim recovery. DP training was not part of the
+GPT-2 training pipeline.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Detection Opportunity Mapping: Where Controls Would Have Triggered</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The five root causes map directly to five control categories. For each
+incident, the detection opportunity map shows the earliest point at which
+a deployed control would have fired and what it would have revealed to
+the defender.
+
+For the Tramer et al. MLaaS extractions, the earliest trigger would have
+been the boundary query detector (Section 9.10) firing on the equation-
+solving input pairs: opposite-label inputs at small distances from each
+other, issued in a systematic sequence. The query diversity monitor would
+have fired on the path-finding extraction as the one-feature-at-a-time
+variation pattern accumulated across sessions. Both signals would have
+triggered within the first fifty to one hundred queries -- before more
+than a fraction of the extraction was complete.
+
+For the Carlini et al. GPT-2 extraction, the earliest trigger would have
+been the output entropy monitor (Section 9.10) detecting the repeated
+generation of low-perplexity sequences containing unusual proper nouns and
+structured identifiers. A rate limit on generated token volume per user
+per day would have slowed the extraction campaign. Neither control was
+present.
+
+For the Alpaca and Vicuna distillation campaigns, no input-side control
+would have triggered: the query distributions were legitimate by design.
+The only control that would have provided evidence is output watermarking
+(Section 9.12): had a watermark been embedded in the victim&#x27;&#x27;s outputs,
+it would have survived into the student models and been detectable in
+Alpaca&#x27;&#x27;s and Vicuna&#x27;&#x27;s responses. The watermark verification workflow
+from Section 9.12 would have produced ownership evidence enabling legal
+action against redistribution.
+
+The detection opportunity map is asymmetric across incident classes:
+input-side controls (query monitoring, rate limiting) cover the Tramer
+et al. and Carlini et al. incident patterns; output-side controls
+(watermarking) cover the Alpaca and Vicuna pattern. Neither surface
+alone provides complete coverage. This is the architectural conclusion
+that Section 9.1 previewed and that Sections 9.11 and 9.12 implement:
+complete extraction defence requires both input-side and output-side
+controls deployed together.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">7</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Operator Response Patterns: Disclosure, Remediation, and Adoption</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The three incident classes produced different operator responses, which
+reflect both the nature of the disclosure and the maturity of the operators&#x27;&#x27;
+security practices at the time.
+
+The Tramer et al. 2016 disclosures prompted the affected MLaaS platforms
+to review their output designs: Amazon ML and other providers reduced the
+precision of returned confidence scores and in some cases switched to
+hard-label-only outputs for certain model types. Rate limit adjustments
+were made at some platforms, though the adjustments were driven by
+throughput capacity concerns rather than extraction economics. No platform
+deployed systematic query pattern monitoring as an extraction-specific
+control in the immediate aftermath.
+
+The Carlini et al. 2021 disclosure prompted broader discussion of training
+data memorisation and its privacy implications. The paper contributed to
+increased adoption of differential privacy training in the LLM research
+community and to greater attention to output monitoring for memorised
+content. OpenAI and others began to incorporate memorisation reduction
+techniques into their training pipelines, though the specific techniques
+and their effectiveness remain proprietary.
+
+The Alpaca and Vicuna disclosures produced a mixed response. Meta revised
+the terms of service for LLaMA model releases to prohibit commercial use
+and training on outputs of commercial models. OpenAI&#x27;&#x27;s terms of service
+already prohibited using their API outputs to train competing models --
+a prohibition that the Alpaca and Vicuna projects technically violated, though
+the academic context complicated enforcement. The incidents accelerated
+industry interest in output watermarking as a mechanism for post-hoc
+enforcement of terms-of-service prohibitions on model distillation.
+
+The pattern across all three incident classes is instructive: operator
+response focused on policy and output design changes rather than on
+detection infrastructure. The query monitoring and watermarking controls
+that Section 9.11 and 9.12 build were not deployed as a direct response
+to these incidents by any of the affected operators, even though the
+technical case for them is clear from the incident analysis.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">8</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Lessons for Production LLM Deployments</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Eight lessons emerge from the three incident classes that translate directly
+into the pre-production verification checklist and the Section 9.13 chapter
+summary.
+
+Lesson 1: Absence of detected incidents is not evidence that incidents are
+absent. None of the three incident classes was detected in real time by the
+operator. All three were either disclosed by the researchers or publicly
+documented by the experimenters. An operator without extraction monitoring
+cannot know whether their API has been used for a distillation campaign that
+has never been published.
+
+Lesson 2: Soft-label outputs are the single most impactful architectural
+decision for extraction resistance. Removing confidence scores and probability
+distributions from API responses reduces the adversary&#x27;&#x27;s effective query
+budget by 5 to 50x. This change costs nothing in implementation and has
+minimal impact on legitimate use cases for the vast majority of deployments.
+
+Lesson 3: Rate limits must be calibrated against extraction economics, not
+infrastructure capacity. The Tramer et al. attacks never approached any
+throughput rate limit. Extraction-aware rate limits -- calibrated against
+the query budget required for the target extraction technique -- would have
+imposed meaningful cost on the adversary.
+
+Lesson 4: Output watermarking must be deployed before any extraction campaign
+to be effective. The Alpaca and Vicuna campaigns collected their training
+data before any watermarking was considered. A watermark deployed after
+the fact provides no evidence about pre-deployment collections.
+
+Lesson 5: Differential privacy training is the only control that formally
+bounds training data extraction risk. The Carlini et al. extraction was
+enabled by GPT-2&#x27;&#x27;s memorisation. DP training is the upstream intervention
+that reduces memorisation below the verbatim extraction threshold.
+
+Lesson 6: Input-side and output-side controls are not substitutes -- they
+cover different incident classes. The Tramer et al. and Carlini et al.
+patterns are catchable with input-side monitoring. The Alpaca and Vicuna
+pattern requires output-side watermarking. Both surfaces are required.
+
+Lesson 7: Detection controls must be designed against documented incident
+patterns, not against theoretical attacks. The boundary query detector catches
+the Tramer et al. pattern; the output entropy monitor catches the Carlini
+et al. pattern; watermarking catches the Alpaca pattern. Each control was
+designed for a documented failure mode, not a hypothetical one.
+
+Lesson 8: Operator response to extraction incidents consistently focuses on
+policy changes rather than detection infrastructure. Policy changes address
+the specific technique that was disclosed; detection infrastructure catches
+novel technique variants. The lessons from prior incidents are not complete
+protection against future incidents -- only monitoring catches what policy
+changes miss.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Three Incident Classes: Technical Reconstruction</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Side-by-side comparison of the three documented extraction incident classes
+across target, technique, query budget, fidelity, and root cause.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Property</li><li>Tramer et al. 2016 (MLaaS Extraction)</li><li>Carlini et al. 2021 (GPT-2 Data Extraction)</li><li>Alpaca/Vicuna 2023 (LLM Distillation)</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Property</h3>
+<p class="prose">Target</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Amazon ML, Azure ML, BigML, Google Prediction API</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">GPT-2 (OpenAI); white-box and black-box variants</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">GPT-3.5-turbo (Alpaca) and GPT-4 (Vicuna) via API</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Extraction goal</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Model functionality (decision surface replication)</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Training data (verbatim sequence recovery)</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Model functionality (instruction-following capability clone)</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Technique</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Equation-solving (linear), path-finding (tree), surrogate training (NN)</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Perplexity-based membership inference + systematic generation</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Instruction-tuning distillation on API-sourced (prompt, response) pairs</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Query budget</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">100s to low 1000s (linear/tree); 10Ks-100Ks (neural network)</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">~600K generated tokens; small dollar cost at API pricing</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">52K prompts (Alpaca, ~$500); 70K prompts (Vicuna, ~$300)</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Fidelity achieved</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Exact for linear and tree models; substantial for neural networks</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Thousands of verbatim training sequences including PII recovered</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">92% of GPT-4 benchmark performance reported for Vicuna</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Disclosure type</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Academic publication; coordinated with vendors</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Academic publication; responsible disclosure</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Open-source release; public methodology documentation</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Detection at time of incident</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">None -- no query pattern monitoring deployed</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">None -- no output monitoring for memorised content</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">None -- query distribution indistinguishable from legitimate use</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Root Cause Analysis: Five Shared Gaps Across Three Incidents</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Five root cause categories present across all three incident classes
+with the specific manifestation in each incident and the control that
+addresses it.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Root Cause</li><li>Tramer et al. Manifestation</li><li>Carlini et al. Manifestation</li><li>Alpaca/Vicuna Manifestation</li><li>Addressing Control</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No query pattern monitoring</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Boundary-seeking pairs and one-feature variation undetected</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Systematic low-perplexity generation campaign undetected</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Benchmark topic concentration invisible to all monitors</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">query_monitor.py (Section 9.11) -- boundary, diversity, entropy tracks</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">Throughput-only rate limits</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Extraction completed well within normal API usage rates</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Token generation campaign within per-user product limits</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Prompt submission rate identical to legitimate developer evaluation</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">rate_limiter.py (Section 9.11) -- extraction-aware multi-dimensional policy</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No output watermarking</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Extracted surrogates unidentifiable as derivatives</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Not applicable (training data extraction, not model cloning)</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Alpaca and Vicuna carry no victim identity; terms-of-service unenforceable</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">output_watermarker.py (Section 9.12) -- token-level watermark</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">Soft-label outputs without perturbation</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Probability outputs provided 5-50x extraction budget discount</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Log-probability access enabled perplexity-based membership inference</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Full response text provided maximum distillation information per query</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">output_perturbator.py (Section 9.12) -- calibrated output noise</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No differential privacy training</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Not applicable (decision surface extraction, not training data)</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">GPT-2 memorised training sequences verbatim; DP would have bounded this</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Not applicable (model capability, not training data extraction)</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">DP training (Section 8.13) -- formal bound on per-example memorisation</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Detection Opportunity Map: Control-to-Incident Phase Alignment</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Maps each Section 9.10 through 9.12 control to the earliest attack phase
+at which it would have triggered in each incident, and the signal it would
+have produced.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Control</li><li>Tramer et al. -- Trigger Phase and Signal</li><li>Carlini et al. -- Trigger Phase and Signal</li><li>Alpaca/Vicuna -- Trigger Phase and Signal</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Control</h3>
+<p class="prose">Boundary query detector (Section 9.10)</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Phase 1 (first 50 queries): opposite-label near-boundary pairs detected</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">No trigger: generation campaign does not produce boundary-seeking pairs</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">No trigger: instruction prompts are not near classification boundaries</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">Query diversity monitor (Section 9.10)</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Phase 1 (first 100 queries): one-feature-at-a-time variation pattern</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Phase 1: systematic generation from fixed prefixes detected</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">No trigger: benchmark prompts are genuinely diverse</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">Output entropy monitor (Section 9.10)</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Phase 1: soft-label near-boundary responses with low entropy detected</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Phase 1: low-perplexity outputs with unusual identifiers flagged</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">No trigger: response quality is high and entropy is normal</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">Adaptive rate limiter (Section 9.11)</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Phase 1: extraction-aware limit based on query budget economics</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Phase 1: per-user daily token generation cap triggers</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">No trigger below extraction-aware thresholds at 52K-70K total queries</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">Output watermarker (Section 9.12)</p>
+<h3 class="sh3">Tramer</h3>
+<p class="prose">Post-hoc: victim signature detectable in extracted surrogates</p>
+<h3 class="sh3">Carlini</h3>
+<p class="prose">Not applicable to training data extraction</p>
+<h3 class="sh3">Alpaca</h3>
+<p class="prose">Post-hoc: victim signature detectable in Alpaca/Vicuna student outputs</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Lessons Learned Checklist: Pre-Production Verification Items</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Eight pre-production verification items derived from the three incident
+classes. Each item maps to a root cause and a specific control.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Item</li><li>Verification Question</li><li>Root Cause Addressed</li><li>Control Reference</li><li>Priority</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Item</h3>
+<p class="prose">L1</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Is query pattern monitoring deployed with per-user state tracking across sessions?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No query pattern monitoring</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">query_monitor.py (Section 9.11)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">Critical</p>
+<h3 class="sh3">Item</h3>
+<p class="prose">L2</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Are rate limits calibrated against extraction query budgets, not just infrastructure throughput?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">Throughput-only rate limits</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">rate_limiter.py (Section 9.11)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">Critical</p>
+<h3 class="sh3">Item</h3>
+<p class="prose">L3</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Is output watermarking deployed and the watermark embedded in all production responses?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No output watermarking</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">output_watermarker.py (Section 9.12)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">High</p>
+<h3 class="sh3">Item</h3>
+<p class="prose">L4</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Does the API return hard labels only unless soft labels are required by the product?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">Soft-label outputs without perturbation</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">Output design review; output_perturbator.py (Section 9.12)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">High</p>
+<h3 class="sh3">Item</h3>
+<p class="prose">L5</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Was the model trained with differential privacy if the training data contains PII?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No differential privacy training</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">DP training pipeline (Section 8.13)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">Critical for PII training data</p>
+<h3 class="sh3">Item</h3>
+<p class="prose">L6</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Is there a cross-user collusion detector monitoring distributed query campaigns?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No query pattern monitoring (distributed variant)</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">cross_user_correlator.py (Section 9.11)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">High</p>
+<h3 class="sh3">Item</h3>
+<p class="prose">L7</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Is a watermark verification workflow in place for detecting victim signature in suspected surrogates?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">No output watermarking (post-hoc detection)</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">watermark_detector.py (Section 9.12)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">High</p>
+<h3 class="sh3">Item</h3>
+<p class="prose">L8</p>
+<h3 class="sh3">Question</h3>
+<p class="prose">Are extraction monitoring alerts routed to a security team, not just an infrastructure operations team?</p>
+<h3 class="sh3">Cause</h3>
+<p class="prose">Operator response pattern: policy not detection</p>
+<h3 class="sh3">Control</h3>
+<p class="prose">Alert routing configuration (Section 9.11 deployment checklist)</p>
+<h3 class="sh3">Priority</h3>
+<p class="prose">Medium</p>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">incident_timeline.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the three documented extraction incident classes as structured
+timeline data. Provides a renderer that produces a formatted incident
+timeline report suitable for inclusion in a security briefing or post-
+incident review. The data structure follows the standard incident format:
+summary, timeline phases, attack vector, fidelity achieved, and root
+cause categories.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Incident data is schema-free: IncidentRecord and TimelinePhase dataclasses
+drive all rendering. No hardcoded per-incident formatting.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># incident_timeline.py
+# Chapter 9 Section 9.9 -- Extraction Incident Timeline
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class TimelinePhase:
+    phase_id: str
+    title: str
+    description: str
+    query_count_range: str
+    adversary_cost_usd: Optional[str]
+    operator_visibility: str  # &#x27;none&#x27;, &#x27;partial&#x27;, &#x27;full&#x27;
+
+
+@dataclass
+class IncidentRecord:
+    incident_id: str
+    name: str
+    year: int
+    target: str
+    extraction_goal: str
+    technique: str
+    total_query_budget: str
+    fidelity_achieved: str
+    disclosure_type: str
+    root_causes: List[str]
+    phases: List[TimelinePhase]
+    reference: str
+
+
+INCIDENT_TRAMER_2016 = IncidentRecord(
+    incident_id=&#x27;INC-2016-TRAMER&#x27;,
+    name=&#x27;Commercial MLaaS Extraction (Tramer et al. 2016)&#x27;,
+    year=2016,
+    target=&#x27;Amazon ML, Azure ML, BigML, Google Prediction API&#x27;,
+    extraction_goal=&#x27;Model functionality (decision surface replication)&#x27;,
+    technique=&#x27;Equation-solving (linear); path-finding (tree); surrogate training (NN)&#x27;,
+    total_query_budget=&#x27;100s-1000s for linear/tree; 10K-100K for neural networks&#x27;,
+    fidelity_achieved=&#x27;Exact for linear and tree models; substantial for neural networks&#x27;,
+    disclosure_type=&#x27;Academic publication; coordinated disclosure with vendors&#x27;,
+    root_causes=[
+        &#x27;no_query_pattern_monitoring&#x27;,
+        &#x27;throughput_only_rate_limits&#x27;,
+        &#x27;soft_label_outputs_without_perturbation&#x27;,
+    ],
+    phases=[
+        TimelinePhase(
+            phase_id=&#x27;P1&#x27;,
+            title=&#x27;Seed pair collection&#x27;,
+            description=&#x27;Random inputs submitted to identify opposite-label pairs straddling the decision boundary.&#x27;,
+            query_count_range=&#x27;10-50 queries&#x27;,
+            adversary_cost_usd=&#x27;&lt;$0.01&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P2&#x27;,
+            title=&#x27;Boundary refinement&#x27;,
+            description=&#x27;Binary search between opposite-label pairs to locate near-boundary points.&#x27;,
+            query_count_range=&#x27;50-500 queries (linear); 1K-5K (tree)&#x27;,
+            adversary_cost_usd=&#x27;&lt;$0.50&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P3&#x27;,
+            title=&#x27;Weight vector recovery&#x27;,
+            description=&#x27;Linear system solved from d+1 boundary points; tree structure path-mapped from threshold probing.&#x27;,
+            query_count_range=&#x27;No additional queries (offline computation)&#x27;,
+            adversary_cost_usd=&#x27;$0&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P4&#x27;,
+            title=&#x27;Surrogate validation&#x27;,
+            description=&#x27;Extracted model validated on held-out inputs; fidelity measured against victim predictions.&#x27;,
+            query_count_range=&#x27;100-500 validation queries&#x27;,
+            adversary_cost_usd=&#x27;&lt;$0.10&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+    ],
+    reference=&#x27;Tramer et al. 2016. Stealing Machine Learning Models via Prediction APIs. USENIX Security.&#x27;,
+)
+
+INCIDENT_CARLINI_2021 = IncidentRecord(
+    incident_id=&#x27;INC-2021-CARLINI&#x27;,
+    name=&#x27;GPT-2 Training Data Extraction (Carlini et al. 2021)&#x27;,
+    year=2021,
+    target=&#x27;GPT-2 (OpenAI); black-box and white-box variants&#x27;,
+    extraction_goal=&#x27;Training data (verbatim sequence recovery including PII)&#x27;,
+    technique=&#x27;Perplexity-based membership inference; systematic generation from fixed prefixes&#x27;,
+    total_query_budget=&#x27;~600K generated tokens; estimated $10-50 at contemporary API pricing&#x27;,
+    fidelity_achieved=&#x27;Thousands of verbatim training sequences recovered; includes names, emails, phone numbers&#x27;,
+    disclosure_type=&#x27;Academic publication; responsible disclosure to OpenAI&#x27;,
+    root_causes=[
+        &#x27;no_differential_privacy_training&#x27;,
+        &#x27;no_output_monitoring_for_memorised_content&#x27;,
+        &#x27;throughput_only_rate_limits&#x27;,
+    ],
+    phases=[
+        TimelinePhase(
+            phase_id=&#x27;P1&#x27;,
+            title=&#x27;Candidate generation&#x27;,
+            description=&#x27;Text generated from diverse fixed prefixes using top-k sampling to produce candidate memorised sequences.&#x27;,
+            query_count_range=&#x27;~500K generated tokens&#x27;,
+            adversary_cost_usd=&#x27;~$5-25&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P2&#x27;,
+            title=&#x27;Membership scoring&#x27;,
+            description=&#x27;Generated sequences scored by perplexity differential between GPT-2 and a reference language model.&#x27;,
+            query_count_range=&#x27;~100K additional perplexity queries&#x27;,
+            adversary_cost_usd=&#x27;~$5-25&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P3&#x27;,
+            title=&#x27;Memorised sequence identification&#x27;,
+            description=&#x27;High-scoring sequences manually reviewed; thousands confirmed as verbatim training data.&#x27;,
+            query_count_range=&#x27;No additional API queries (offline review)&#x27;,
+            adversary_cost_usd=&#x27;$0&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+    ],
+    reference=&#x27;Carlini et al. 2021. Extracting Training Data from Large Language Models. USENIX Security.&#x27;,
+)
+
+INCIDENT_ALPACA_VICUNA_2023 = IncidentRecord(
+    incident_id=&#x27;INC-2023-ALPACA-VICUNA&#x27;,
+    name=&#x27;Commercial LLM Distillation (Alpaca and Vicuna)&#x27;,
+    year=2023,
+    target=&#x27;GPT-3.5-turbo (Alpaca); GPT-4 (Vicuna)&#x27;,
+    extraction_goal=&#x27;Model functionality (instruction-following capability clone)&#x27;,
+    technique=&#x27;Instruction-tuning distillation on API-sourced (prompt, response) pairs&#x27;,
+    total_query_budget=&#x27;52K prompts ~$500 (Alpaca); 70K prompts ~$300 (Vicuna)&#x27;,
+    fidelity_achieved=&#x27;Alpaca: qualitative GPT-3.5 parity on common tasks; Vicuna: 92% of GPT-4 on benchmarks&#x27;,
+    disclosure_type=&#x27;Open-source release with public methodology and code&#x27;,
+    root_causes=[
+        &#x27;no_output_watermarking&#x27;,
+        &#x27;no_cross_user_collusion_detection&#x27;,
+        &#x27;query_distribution_indistinguishable_from_legitimate&#x27;,
+    ],
+    phases=[
+        TimelinePhase(
+            phase_id=&#x27;P1&#x27;,
+            title=&#x27;Prompt set assembly&#x27;,
+            description=&#x27;Seed instructions authored or sourced; self-instruct expansion via victim API generates diverse prompt set.&#x27;,
+            query_count_range=&#x27;0-5K seed queries for self-instruct expansion&#x27;,
+            adversary_cost_usd=&#x27;&lt;$50&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P2&#x27;,
+            title=&#x27;Victim API data collection&#x27;,
+            description=&#x27;Full prompt set submitted to victim API; responses collected as (prompt, response) pairs.&#x27;,
+            query_count_range=&#x27;52K (Alpaca) to 70K (Vicuna) queries&#x27;,
+            adversary_cost_usd=&#x27;$300-500&#x27;,
+            operator_visibility=&#x27;none -- query distribution matches legitimate evaluation&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P3&#x27;,
+            title=&#x27;Student fine-tuning&#x27;,
+            description=&#x27;Open-weight base model (LLaMA) fine-tuned on collected pairs using instruction-tuning procedure.&#x27;,
+            query_count_range=&#x27;No API queries (local compute)&#x27;,
+            adversary_cost_usd=&#x27;$100-200 (GPU compute)&#x27;,
+            operator_visibility=&#x27;none&#x27;,
+        ),
+        TimelinePhase(
+            phase_id=&#x27;P4&#x27;,
+            title=&#x27;Surrogate deployment&#x27;,
+            description=&#x27;Fine-tuned student released as open-source; capability benchmarks published.&#x27;,
+            query_count_range=&#x27;No API queries&#x27;,
+            adversary_cost_usd=&#x27;$0&#x27;,
+            operator_visibility=&#x27;none -- no watermark present to enable detection&#x27;,
+        ),
+    ],
+    reference=&#x27;Taori et al. 2023 (Alpaca); Chiang et al. 2023 (Vicuna). Open-source releases.&#x27;,
+)
+
+DOCUMENTED_INCIDENTS: List[IncidentRecord] = [
+    INCIDENT_TRAMER_2016,
+    INCIDENT_CARLINI_2021,
+    INCIDENT_ALPACA_VICUNA_2023,
+]
+
+
+def render_incident_timeline(incident: IncidentRecord) -&gt; None:
+    print(f&#x27;INCIDENT: {incident.name}&#x27;)
+    print(f&#x27;ID: {incident.incident_id}  |  Year: {incident.year}&#x27;)
+    print(f&#x27;Target:    {incident.target}&#x27;)
+    print(f&#x27;Goal:      {incident.extraction_goal}&#x27;)
+    print(f&#x27;Technique: {incident.technique}&#x27;)
+    print(f&#x27;Budget:    {incident.total_query_budget}&#x27;)
+    print(f&#x27;Fidelity:  {incident.fidelity_achieved}&#x27;)
+    print(&#x27;Root causes: &#x27; + &#x27;, &#x27;.join(incident.root_causes))
+    print(f&#x27;Reference: {incident.reference}&#x27;)
+    print(f&#x27;\nTimeline:&#x27;)
+    for phase in incident.phases:
+        visibility_str = f&#x27;[operator_visibility: {phase.operator_visibility}]&#x27;
+        cost_str = f&#x27;  Adversary cost: {phase.adversary_cost_usd}&#x27; if phase.adversary_cost_usd else &#x27;&#x27;
+        print(f&#x27;  {phase.phase_id}: {phase.title}&#x27;)
+        print(f&#x27;       {phase.description}&#x27;)
+        print(f&#x27;       Queries: {phase.query_count_range}{cost_str}  {visibility_str}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;EXTRACTION INCIDENT TIMELINES -- Chapter 9 Section 9.9&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for incident in DOCUMENTED_INCIDENTS:
+        print()
+        render_incident_timeline(incident)
+        print()</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">root_cause_analyser.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Generates root cause analysis documents for extraction incidents in standard
+RCA format (summary, attack vector, root causes, impact, detection gaps,
+remediation). Provides a gap_score() function that quantifies the fraction
+of root causes addressed by a given set of deployed controls, enabling
+defenders to measure their remediation coverage against documented incidents.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+RCA format is data-driven via RCADocument dataclass. Root cause to control
+mapping is schema-free. Gap scoring is computed from the intersection of
+incident root causes and deployed controls.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># root_cause_analyser.py
+# Chapter 9 Section 9.9 -- Extraction Incident Root Cause Analyser
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Set, Tuple
+
+from incident_timeline import DOCUMENTED_INCIDENTS, IncidentRecord
+
+
+ROOT_CAUSE_TO_CONTROL: Dict[str, List[str]] = {
+    &#x27;no_query_pattern_monitoring&#x27;: [&#x27;query_monitor&#x27;, &#x27;boundary_query_detector&#x27;, &#x27;query_diversity_monitor&#x27;],
+    &#x27;throughput_only_rate_limits&#x27;: [&#x27;rate_limiter_extraction_aware&#x27;],
+    &#x27;soft_label_outputs_without_perturbation&#x27;: [&#x27;output_perturbator&#x27;, &#x27;hard_label_api_design&#x27;],
+    &#x27;no_output_watermarking&#x27;: [&#x27;output_watermarker&#x27;, &#x27;watermark_detector&#x27;],
+    &#x27;no_differential_privacy_training&#x27;: [&#x27;dp_training_pipeline&#x27;],
+    &#x27;no_output_monitoring_for_memorised_content&#x27;: [&#x27;output_entropy_monitor&#x27;, &#x27;memorisation_detector&#x27;],
+    &#x27;no_cross_user_collusion_detection&#x27;: [&#x27;cross_user_correlator&#x27;],
+    &#x27;query_distribution_indistinguishable_from_legitimate&#x27;: [&#x27;output_watermarker&#x27;],
+}
+
+
+@dataclass
+class RCADocument:
+    incident_id: str
+    incident_name: str
+    summary: str
+    attack_vector: str
+    root_causes: List[str]
+    impact: str
+    detection_gaps: List[str]
+    remediation_controls: List[str]
+    residual_risk: str
+
+
+def generate_rca(incident: IncidentRecord) -&gt; RCADocument:
+    all_controls: List[str] = []
+    for cause in incident.root_causes:
+        all_controls.extend(ROOT_CAUSE_TO_CONTROL.get(cause, []))
+    unique_controls = sorted(set(all_controls))
+    detection_gaps = [
+        f&#x27;Root cause [{c}] was not covered by any deployed detection control&#x27;
+        for c in incident.root_causes
+    ]
+    return RCADocument(
+        incident_id=incident.incident_id,
+        incident_name=incident.name,
+        summary=(
+            f&#x27;{incident.technique} applied against {incident.target}. &#x27;
+            f&#x27;Query budget: {incident.total_query_budget}. &#x27;
+            f&#x27;Fidelity: {incident.fidelity_achieved}.&#x27;
+        ),
+        attack_vector=incident.technique,
+        root_causes=incident.root_causes,
+        impact=f&#x27;Extraction fidelity: {incident.fidelity_achieved}. Disclosure type: {incident.disclosure_type}.&#x27;,
+        detection_gaps=detection_gaps,
+        remediation_controls=unique_controls,
+        residual_risk=(
+            &#x27;Residual risk remains for distributed campaigns below per-user thresholds &#x27;
+            &#x27;and for novel technique variants not covered by existing detection signatures.&#x27;
+        ),
+    )
+
+
+def gap_score(
+    incident: IncidentRecord,
+    deployed_controls: List[str],
+) -&gt; Tuple[float, List[str], List[str]]:
+    &#x27;&#x27;&#x27;
+    Compute the fraction of incident root causes addressed by deployed controls.
+    Returns (score, covered_causes, uncovered_causes).
+    score = covered_cause_count / total_cause_count.
+    &#x27;&#x27;&#x27;
+    deployed_set: Set[str] = set(deployed_controls)
+    covered: List[str] = []
+    uncovered: List[str] = []
+    for cause in incident.root_causes:
+        controls_for_cause = ROOT_CAUSE_TO_CONTROL.get(cause, [])
+        if any(c in deployed_set for c in controls_for_cause):
+            covered.append(cause)
+        else:
+            uncovered.append(cause)
+    score = round(len(covered) / max(len(incident.root_causes), 1), 3)
+    return score, covered, uncovered
+
+
+def render_rca(doc: RCADocument) -&gt; None:
+    print(f&#x27;ROOT CAUSE ANALYSIS: {doc.incident_name}&#x27;)
+    print(f&#x27;ID: {doc.incident_id}&#x27;)
+    print(f&#x27;\nSummary:&#x27;)
+    print(f&#x27;  {doc.summary}&#x27;)
+    print(f&#x27;\nAttack Vector:&#x27;)
+    print(f&#x27;  {doc.attack_vector}&#x27;)
+    print(f&#x27;\nRoot Causes:&#x27;)
+    for c in doc.root_causes:
+        print(f&#x27;  - {c}&#x27;)
+    print(f&#x27;\nImpact:&#x27;)
+    print(f&#x27;  {doc.impact}&#x27;)
+    print(f&#x27;\nDetection Gaps:&#x27;)
+    for g in doc.detection_gaps:
+        print(f&#x27;  - {g}&#x27;)
+    print(f&#x27;\nRemediation Controls:&#x27;)
+    for ctrl in doc.remediation_controls:
+        print(f&#x27;  - {ctrl}&#x27;)
+    print(f&#x27;\nResidual Risk:&#x27;)
+    print(f&#x27;  {doc.residual_risk}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    example_deployed = [
+        &#x27;query_monitor&#x27;, &#x27;boundary_query_detector&#x27;,
+        &#x27;rate_limiter_extraction_aware&#x27;, &#x27;output_watermarker&#x27;,
+    ]
+    print(&#x27;ROOT CAUSE ANALYSIS REPORT -- Chapter 9 Section 9.9&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for incident in DOCUMENTED_INCIDENTS:
+        doc = generate_rca(incident)
+        render_rca(doc)
+        score, covered, uncovered = gap_score(incident, example_deployed)
+        print(f&#x27;\nGap Score with example deployed controls: {score:.1%}&#x27;)
+        print(f&#x27;  Covered:   {covered}&#x27;)
+        print(f&#x27;  Uncovered: {uncovered}&#x27;)
+        print()</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">detection_opportunity_mapper.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Maps each Section 9.10 through 9.12 detection control to the attack phase
+and signal it would have produced in each documented incident. Produces
+a detection opportunity report showing which controls would have triggered
+earliest and what the operator would have seen. Provides a coverage_matrix()
+function returning the full control-to-incident coverage grid.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Mapping is data-driven via DetectionOpportunity dataclass list keyed by
+(control_name, incident_id). Coverage matrix is built from this list
+with no hardcoded per-control or per-incident logic.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># detection_opportunity_mapper.py
+# Chapter 9 Section 9.9 -- Detection Opportunity Mapper
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class DetectionOpportunity:
+    control_name: str
+    incident_id: str
+    would_trigger: bool
+    trigger_phase: Optional[str]
+    earliest_query_count: Optional[str]
+    signal_produced: str
+    section_reference: str
+
+
+DETECTION_OPPORTUNITIES: List[DetectionOpportunity] = [
+    DetectionOpportunity(
+        control_name=&#x27;boundary_query_detector&#x27;,
+        incident_id=&#x27;INC-2016-TRAMER&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;P1-P2&#x27;,
+        earliest_query_count=&#x27;50-100 queries&#x27;,
+        signal_produced=&#x27;Opposite-label near-boundary pairs; systematic boundary seeking pattern&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;boundary_query_detector&#x27;,
+        incident_id=&#x27;INC-2021-CARLINI&#x27;,
+        would_trigger=False,
+        trigger_phase=None,
+        earliest_query_count=None,
+        signal_produced=&#x27;No boundary-seeking pairs in generation campaign&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;boundary_query_detector&#x27;,
+        incident_id=&#x27;INC-2023-ALPACA-VICUNA&#x27;,
+        would_trigger=False,
+        trigger_phase=None,
+        earliest_query_count=None,
+        signal_produced=&#x27;Instruction prompts not near classification boundaries&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;query_diversity_monitor&#x27;,
+        incident_id=&#x27;INC-2016-TRAMER&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;P1-P2&#x27;,
+        earliest_query_count=&#x27;50-100 queries&#x27;,
+        signal_produced=&#x27;One-feature-at-a-time variation; low semantic diversity per session&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;query_diversity_monitor&#x27;,
+        incident_id=&#x27;INC-2021-CARLINI&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;P1&#x27;,
+        earliest_query_count=&#x27;~1000 generation queries&#x27;,
+        signal_produced=&#x27;Repeated prefix-seeded generation pattern; low unique-prompt diversity&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;query_diversity_monitor&#x27;,
+        incident_id=&#x27;INC-2023-ALPACA-VICUNA&#x27;,
+        would_trigger=False,
+        trigger_phase=None,
+        earliest_query_count=None,
+        signal_produced=&#x27;Benchmark prompts are genuinely diverse; no anomaly&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;output_entropy_monitor&#x27;,
+        incident_id=&#x27;INC-2016-TRAMER&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;P1-P2&#x27;,
+        earliest_query_count=&#x27;50 queries&#x27;,
+        signal_produced=&#x27;Near-boundary responses with near-uniform confidence distributions&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;output_entropy_monitor&#x27;,
+        incident_id=&#x27;INC-2021-CARLINI&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;P1&#x27;,
+        earliest_query_count=&#x27;~500 generation queries&#x27;,
+        signal_produced=&#x27;Low-perplexity outputs containing unusual proper nouns and structured identifiers&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;output_entropy_monitor&#x27;,
+        incident_id=&#x27;INC-2023-ALPACA-VICUNA&#x27;,
+        would_trigger=False,
+        trigger_phase=None,
+        earliest_query_count=None,
+        signal_produced=&#x27;Response quality and entropy normal for instruction-following&#x27;,
+        section_reference=&#x27;Section 9.10&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;output_watermarker&#x27;,
+        incident_id=&#x27;INC-2016-TRAMER&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;Post-hoc&#x27;,
+        earliest_query_count=&#x27;Post-deployment detection only&#x27;,
+        signal_produced=&#x27;Victim signature detectable in extracted surrogate outputs&#x27;,
+        section_reference=&#x27;Section 9.12&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;output_watermarker&#x27;,
+        incident_id=&#x27;INC-2021-CARLINI&#x27;,
+        would_trigger=False,
+        trigger_phase=None,
+        earliest_query_count=None,
+        signal_produced=&#x27;Not applicable to training data extraction (no surrogate model)&#x27;,
+        section_reference=&#x27;Section 9.12&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;output_watermarker&#x27;,
+        incident_id=&#x27;INC-2023-ALPACA-VICUNA&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;Post-hoc&#x27;,
+        earliest_query_count=&#x27;Post-deployment detection only&#x27;,
+        signal_produced=&#x27;Victim watermark detectable in Alpaca and Vicuna student model outputs&#x27;,
+        section_reference=&#x27;Section 9.12&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;rate_limiter_extraction_aware&#x27;,
+        incident_id=&#x27;INC-2016-TRAMER&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;P1-P2&#x27;,
+        earliest_query_count=&#x27;100-200 queries&#x27;,
+        signal_produced=&#x27;Extraction-aware query budget limit reached; campaign rate-limited&#x27;,
+        section_reference=&#x27;Section 9.11&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;rate_limiter_extraction_aware&#x27;,
+        incident_id=&#x27;INC-2021-CARLINI&#x27;,
+        would_trigger=True,
+        trigger_phase=&#x27;P1&#x27;,
+        earliest_query_count=&#x27;~10K-50K tokens&#x27;,
+        signal_produced=&#x27;Per-user daily token generation cap triggered&#x27;,
+        section_reference=&#x27;Section 9.11&#x27;,
+    ),
+    DetectionOpportunity(
+        control_name=&#x27;rate_limiter_extraction_aware&#x27;,
+        incident_id=&#x27;INC-2023-ALPACA-VICUNA&#x27;,
+        would_trigger=False,
+        trigger_phase=None,
+        earliest_query_count=None,
+        signal_produced=&#x27;52K-70K prompts over days; below extraction-aware per-user campaign thresholds&#x27;,
+        section_reference=&#x27;Section 9.11&#x27;,
+    ),
+]
+
+
+def coverage_matrix() -&gt; Dict[str, Dict[str, bool]]:
+    &#x27;&#x27;&#x27;Return {control: {incident_id: would_trigger}} coverage matrix.&#x27;&#x27;&#x27;
+    matrix: Dict[str, Dict[str, bool]] = {}
+    for opp in DETECTION_OPPORTUNITIES:
+        matrix.setdefault(opp.control_name, {})[opp.incident_id] = opp.would_trigger
+    return matrix
+
+
+def render_opportunity_report() -&gt; None:
+    print(&#x27;DETECTION OPPORTUNITY MAP -- Chapter 9 Section 9.9&#x27;)
+    print(&#x27;=&#x27; * 70)
+    incident_ids = [&#x27;INC-2016-TRAMER&#x27;, &#x27;INC-2021-CARLINI&#x27;, &#x27;INC-2023-ALPACA-VICUNA&#x27;]
+    short_names = {
+        &#x27;INC-2016-TRAMER&#x27;: &#x27;Tramer2016&#x27;,
+        &#x27;INC-2021-CARLINI&#x27;: &#x27;Carlini2021&#x27;,
+        &#x27;INC-2023-ALPACA-VICUNA&#x27;: &#x27;Alpaca2023&#x27;,
+    }
+    matrix = coverage_matrix()
+    header = &#x27;%-35s &#x27; % &#x27;Control&#x27;
+    for iid in incident_ids:
+        header += &#x27;%-14s&#x27; % short_names[iid]
+    print(header)
+    print(&#x27;-&#x27; * 70)
+    for ctrl, incident_map in sorted(matrix.items()):
+        row = &#x27;%-35s &#x27; % ctrl
+        for iid in incident_ids:
+            triggers = incident_map.get(iid, False)
+            row += &#x27;%-14s&#x27; % (&#x27;YES&#x27; if triggers else &#x27;No&#x27;)
+        print(row)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_opportunity_report()
+    print()
+    # Show trigger details for one control
+    target_ctrl = &#x27;output_watermarker&#x27;
+    print(f&#x27;Trigger details for: {target_ctrl}&#x27;)
+    for opp in DETECTION_OPPORTUNITIES:
+        if opp.control_name == target_ctrl:
+            trigger_str = &#x27;TRIGGERS&#x27; if opp.would_trigger else &#x27;No trigger&#x27;
+            print(f&#x27;  {opp.incident_id}: {trigger_str}&#x27;)
+            if opp.would_trigger:
+                print(f&#x27;    Phase: {opp.trigger_phase} | Queries: {opp.earliest_query_count}&#x27;)
+                print(f&#x27;    Signal: {opp.signal_produced}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">architectural_remediation.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Compares the undefended deployment architecture (as it existed during each
+documented incident) with the defended architecture produced by Sections
+9.10 through 9.12 controls. Produces a before/after architectural comparison
+showing which incident vectors each control layer closes and the residual
+risk remaining after full deployment of Chapter 9 controls.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Architectural comparison is data-driven via ArchitectureLayer dataclass
+list. Before/after state is encoded per-layer. Residual risk enumeration
+is explicitly documented rather than assumed to be zero.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># architectural_remediation.py
+# Chapter 9 Section 9.9 -- Architectural Remediation Comparison
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class ArchitectureLayer:
+    layer_name: str
+    position: str  # &#x27;input_side&#x27; or &#x27;output_side&#x27; or &#x27;training_time&#x27;
+    undefended_state: str
+    defended_state: str
+    incidents_closed: List[str]
+    residual_risk: str
+    section_reference: str
+
+
+ARCHITECTURE_LAYERS: List[ArchitectureLayer] = [
+    ArchitectureLayer(
+        layer_name=&#x27;Query pattern monitor&#x27;,
+        position=&#x27;input_side&#x27;,
+        undefended_state=&#x27;Absent. No per-user query distribution tracking. Only infrastructure-level request logging.&#x27;,
+        defended_state=&#x27;Per-user state store tracking boundary proximity, diversity, entropy, and prompt extraction signals across sessions.&#x27;,
+        incidents_closed=[&#x27;INC-2016-TRAMER (boundary and diversity signals)&#x27;, &#x27;INC-2021-CARLINI (diversity and entropy signals)&#x27;],
+        residual_risk=&#x27;Distributed campaigns below per-user thresholds; benchmark-distribution distillation (INC-2023-ALPACA-VICUNA) not catchable.&#x27;,
+        section_reference=&#x27;query_monitor.py (Section 9.11)&#x27;,
+    ),
+    ArchitectureLayer(
+        layer_name=&#x27;Adaptive rate limiter&#x27;,
+        position=&#x27;input_side&#x27;,
+        undefended_state=&#x27;Throughput-only rate limits calibrated to infrastructure capacity. No extraction-aware policy dimensions.&#x27;,
+        defended_state=&#x27;Multi-dimensional: requests/min, tokens/min, cost/hour, input-tokens/request. Policy calibrated to extraction budget economics.&#x27;,
+        incidents_closed=[&#x27;INC-2016-TRAMER (extraction budget limit)&#x27;, &#x27;INC-2021-CARLINI (token generation cap)&#x27;],
+        residual_risk=&#x27;Patient adversaries at rates below extraction-aware thresholds. Distributed campaigns.&#x27;,
+        section_reference=&#x27;rate_limiter.py (Section 9.11)&#x27;,
+    ),
+    ArchitectureLayer(
+        layer_name=&#x27;Cross-user collusion detector&#x27;,
+        position=&#x27;input_side&#x27;,
+        undefended_state=&#x27;Absent. No cross-account correlation. Per-user limits only.&#x27;,
+        defended_state=&#x27;Semantic query correlation across accounts within time windows. Coordinated campaign detection.&#x27;,
+        incidents_closed=[&#x27;INC-2023-ALPACA-VICUNA (partial: coordinated collection across accounts)&#x27;],
+        residual_risk=&#x27;Campaigns distributed across accounts with no semantic overlap in query timing windows.&#x27;,
+        section_reference=&#x27;cross_user_correlator.py (Section 9.11)&#x27;,
+    ),
+    ArchitectureLayer(
+        layer_name=&#x27;Output watermarker&#x27;,
+        position=&#x27;output_side&#x27;,
+        undefended_state=&#x27;Absent. Model outputs carry no cryptographic identity. Post-hoc ownership verification impossible.&#x27;,
+        defended_state=&#x27;Token-level watermark embedded in all production responses. Statistical detection test identifies victim signature in suspect surrogates.&#x27;,
+        incidents_closed=[&#x27;INC-2016-TRAMER (post-hoc surrogate detection)&#x27;, &#x27;INC-2023-ALPACA-VICUNA (post-hoc Alpaca/Vicuna detection)&#x27;],
+        residual_risk=&#x27;Watermark may degrade under strong paraphrasing or adversarial watermark removal. Provides evidence, not prevention.&#x27;,
+        section_reference=&#x27;output_watermarker.py + watermark_detector.py (Section 9.12)&#x27;,
+    ),
+    ArchitectureLayer(
+        layer_name=&#x27;Output perturbator&#x27;,
+        position=&#x27;output_side&#x27;,
+        undefended_state=&#x27;Absent. Full precision confidence scores and probability distributions returned. No noise added to outputs.&#x27;,
+        defended_state=&#x27;Calibrated noise applied to outputs. Confidence scores perturbed. Prompt-derived phrases generified.&#x27;,
+        incidents_closed=[&#x27;INC-2016-TRAMER (reduces soft-label extraction discount)&#x27;, &#x27;INC-2021-CARLINI (reduces per-query memorisation signal)&#x27;],
+        residual_risk=&#x27;Perturbation-averaging: patient adversary with many queries can average out perturbation. Not a formal bound.&#x27;,
+        section_reference=&#x27;output_perturbator.py (Section 9.12)&#x27;,
+    ),
+    ArchitectureLayer(
+        layer_name=&#x27;Differential privacy training&#x27;,
+        position=&#x27;training_time&#x27;,
+        undefended_state=&#x27;Absent. Standard training maximises prediction accuracy with no bound on per-example influence.&#x27;,
+        defended_state=&#x27;DP-SGD with privacy budget epsilon. Formal bound on per-example information leakage. Reduces memorisation below verbatim extraction threshold.&#x27;,
+        incidents_closed=[&#x27;INC-2021-CARLINI (bounds verbatim training data recovery)&#x27;],
+        residual_risk=&#x27;Utility-privacy tradeoff: strong DP (low epsilon) degrades model accuracy. Moderate DP leaves some memorisation risk.&#x27;,
+        section_reference=&#x27;DP training pipeline (Section 8.13)&#x27;,
+    ),
+]
+
+
+def render_architectural_comparison() -&gt; None:
+    print(&#x27;ARCHITECTURAL REMEDIATION COMPARISON -- Chapter 9 Section 9.9&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for layer in ARCHITECTURE_LAYERS:
+        print(f&#x27;\nLayer: {layer.layer_name}  [{layer.position}]&#x27;)
+        print(f&#x27;  Reference: {layer.section_reference}&#x27;)
+        print(f&#x27;  BEFORE (undefended):&#x27;)
+        print(f&#x27;    {layer.undefended_state}&#x27;)
+        print(f&#x27;  AFTER (defended):&#x27;)
+        print(f&#x27;    {layer.defended_state}&#x27;)
+        print(f&#x27;  Incidents closed:&#x27;)
+        for inc in layer.incidents_closed:
+            print(f&#x27;    - {inc}&#x27;)
+        print(f&#x27;  Residual risk:&#x27;)
+        print(f&#x27;    {layer.residual_risk}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_architectural_comparison()
+    print()
+    # Coverage summary
+    all_incidents = {&#x27;INC-2016-TRAMER&#x27;, &#x27;INC-2021-CARLINI&#x27;, &#x27;INC-2023-ALPACA-VICUNA&#x27;}
+    closed_by_layer: dict = {}
+    for layer in ARCHITECTURE_LAYERS:
+        for inc_ref in layer.incidents_closed:
+            for inc_id in all_incidents:
+                if inc_id in inc_ref:
+                    closed_by_layer.setdefault(inc_id, set()).add(layer.layer_name)
+    print(&#x27;Coverage summary per incident:&#x27;)
+    for inc_id in sorted(all_incidents):
+        layers = closed_by_layer.get(inc_id, set())
+        print(f&#x27;  {inc_id}: covered by {len(layers)} layer(s): {sorted(layers)}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">lessons_learned_checklist.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Generates the pre-production verification checklist derived from the three
+documented incident classes. Each checklist item maps to a root cause,
+a specific control, and a verification method. Provides an assess_deployment()
+function that takes a list of deployed controls and returns a coverage score
+with gap identification.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Checklist items are data-driven via ChecklistItem dataclass list.
+Assessment logic is generic: no hardcoded per-item pass/fail conditions.
+Priority ranking is data-driven from the incident root cause severity scores.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># lessons_learned_checklist.py
+# Chapter 9 Section 9.9 -- Pre-Production Extraction Defence Checklist
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Set, Tuple
+
+
+@dataclass
+class ChecklistItem:
+    item_id: str
+    lesson_source: str
+    verification_question: str
+    root_cause_addressed: str
+    required_controls: List[str]
+    verification_method: str
+    priority: str  # &#x27;critical&#x27;, &#x27;high&#x27;, &#x27;medium&#x27;
+    incident_evidence: str
+
+
+CHECKLIST: List[ChecklistItem] = [
+    ChecklistItem(
+        item_id=&#x27;L1&#x27;,
+        lesson_source=&#x27;All three incidents&#x27;,
+        verification_question=&#x27;Is query pattern monitoring deployed with per-user state tracking across sessions?&#x27;,
+        root_cause_addressed=&#x27;no_query_pattern_monitoring&#x27;,
+        required_controls=[&#x27;query_monitor&#x27;, &#x27;boundary_query_detector&#x27;, &#x27;query_diversity_monitor&#x27;],
+        verification_method=&#x27;Issue a known boundary-seeking query pair; verify alert fires within 100 queries.&#x27;,
+        priority=&#x27;critical&#x27;,
+        incident_evidence=&#x27;Tramer et al. boundary probing was entirely undetected across all four platforms.&#x27;,
+    ),
+    ChecklistItem(
+        item_id=&#x27;L2&#x27;,
+        lesson_source=&#x27;Tramer et al. 2016, Carlini et al. 2021&#x27;,
+        verification_question=&#x27;Are rate limits calibrated against extraction query budgets, not just infrastructure throughput?&#x27;,
+        root_cause_addressed=&#x27;throughput_only_rate_limits&#x27;,
+        required_controls=[&#x27;rate_limiter_extraction_aware&#x27;],
+        verification_method=&#x27;Compute the query budget for equation-solving extraction at d=100; verify rate limit blocks this within one session.&#x27;,
+        priority=&#x27;critical&#x27;,
+        incident_evidence=&#x27;Tramer et al. attacks completed entirely within normal API usage volumes on all four platforms.&#x27;,
+    ),
+    ChecklistItem(
+        item_id=&#x27;L3&#x27;,
+        lesson_source=&#x27;Tramer et al. 2016, Alpaca/Vicuna 2023&#x27;,
+        verification_question=&#x27;Is output watermarking deployed and the watermark embedded in all production responses?&#x27;,
+        root_cause_addressed=&#x27;no_output_watermarking&#x27;,
+        required_controls=[&#x27;output_watermarker&#x27;, &#x27;watermark_detector&#x27;],
+        verification_method=&#x27;Query the API and run the watermark detector on the response; verify detection within statistical threshold.&#x27;,
+        priority=&#x27;high&#x27;,
+        incident_evidence=&#x27;Alpaca and Vicuna surrogates carry no victim identity; terms-of-service unenforced without watermark.&#x27;,
+    ),
+    ChecklistItem(
+        item_id=&#x27;L4&#x27;,
+        lesson_source=&#x27;Tramer et al. 2016&#x27;,
+        verification_question=&#x27;Does the API return hard labels only unless soft labels are required by the product?&#x27;,
+        root_cause_addressed=&#x27;soft_label_outputs_without_perturbation&#x27;,
+        required_controls=[&#x27;hard_label_api_design&#x27;, &#x27;output_perturbator&#x27;],
+        verification_method=&#x27;Inspect API response schema; confirm no probability vectors or confidence scores in default response.&#x27;,
+        priority=&#x27;high&#x27;,
+        incident_evidence=&#x27;Soft-label outputs on Azure ML and others provided 5-50x extraction budget discount to Tramer et al.&#x27;,
+    ),
+    ChecklistItem(
+        item_id=&#x27;L5&#x27;,
+        lesson_source=&#x27;Carlini et al. 2021&#x27;,
+        verification_question=&#x27;Was the model trained with differential privacy if the training data contains PII?&#x27;,
+        root_cause_addressed=&#x27;no_differential_privacy_training&#x27;,
+        required_controls=[&#x27;dp_training_pipeline&#x27;],
+        verification_method=&#x27;Review training pipeline configuration; confirm DP-SGD with documented epsilon budget is active for PII-containing datasets.&#x27;,
+        priority=&#x27;critical&#x27;,
+        incident_evidence=&#x27;GPT-2 memorised verbatim training sequences including names, emails, and phone numbers; DP training would have bounded this.&#x27;,
+    ),
+    ChecklistItem(
+        item_id=&#x27;L6&#x27;,
+        lesson_source=&#x27;Alpaca/Vicuna 2023&#x27;,
+        verification_question=&#x27;Is there a cross-user collusion detector for distributed query campaigns?&#x27;,
+        root_cause_addressed=&#x27;no_cross_user_collusion_detection&#x27;,
+        required_controls=[&#x27;cross_user_correlator&#x27;],
+        verification_method=&#x27;Simulate a two-account campaign with coordinated prompts; verify collusion signal fires within the detection window.&#x27;,
+        priority=&#x27;high&#x27;,
+        incident_evidence=&#x27;Alpaca/Vicuna query distribution was indistinguishable from legitimate evaluation at per-account level.&#x27;,
+    ),
+    ChecklistItem(
+        item_id=&#x27;L7&#x27;,
+        lesson_source=&#x27;All three incidents&#x27;,
+        verification_question=&#x27;Is absence of detected incidents treated as evidence that detection is working, not that attacks are absent?&#x27;,
+        root_cause_addressed=&#x27;no_query_pattern_monitoring&#x27;,
+        required_controls=[&#x27;query_monitor&#x27;, &#x27;red_team_exercise&#x27;],
+        verification_method=&#x27;Run a quarterly red team extraction exercise; verify detection fires before extraction is complete.&#x27;,
+        priority=&#x27;medium&#x27;,
+        incident_evidence=&#x27;None of the three incident classes was detected in real time by the operator.&#x27;,
+    ),
+    ChecklistItem(
+        item_id=&#x27;L8&#x27;,
+        lesson_source=&#x27;All three incidents&#x27;,
+        verification_question=&#x27;Are extraction monitoring alerts routed to the security team with a defined incident response playbook?&#x27;,
+        root_cause_addressed=&#x27;throughput_only_rate_limits&#x27;,
+        required_controls=[&#x27;alert_routing_security_team&#x27;, &#x27;incident_response_playbook&#x27;],
+        verification_method=&#x27;Trigger a test alert; verify routing to security team within defined SLA.&#x27;,
+        priority=&#x27;medium&#x27;,
+        incident_evidence=&#x27;Operator responses to all three incidents focused on policy changes after disclosure, not detection during the incident.&#x27;,
+    ),
+]
+
+
+def assess_deployment(deployed_controls: List[str]) -&gt; Tuple[float, List[ChecklistItem], List[ChecklistItem]]:
+    &#x27;&#x27;&#x27;
+    Assess a deployment against the lessons learned checklist.
+    Returns (coverage_score, passed_items, failed_items).
+    coverage_score = fraction of checklist items with all required controls deployed.
+    &#x27;&#x27;&#x27;
+    deployed_set: Set[str] = set(deployed_controls)
+    passed: List[ChecklistItem] = []
+    failed: List[ChecklistItem] = []
+    for item in CHECKLIST:
+        if all(c in deployed_set for c in item.required_controls):
+            passed.append(item)
+        else:
+            failed.append(item)
+    score = round(len(passed) / max(len(CHECKLIST), 1), 3)
+    return score, passed, failed
+
+
+def render_checklist(deployed_controls: List[str]) -&gt; None:
+    score, passed, failed = assess_deployment(deployed_controls)
+    print(&#x27;PRE-PRODUCTION EXTRACTION DEFENCE CHECKLIST -- Chapter 9 Section 9.9&#x27;)
+    print(&#x27;=&#x27; * 70)
+    print(f&#x27;Controls deployed: {deployed_controls}&#x27;)
+    print(f&#x27;Checklist coverage: {score:.1%} ({len(passed)}/{len(CHECKLIST)} items passed)\n&#x27;)
+    priority_order = [&#x27;critical&#x27;, &#x27;high&#x27;, &#x27;medium&#x27;]
+    for priority in priority_order:
+        items = [item for item in CHECKLIST if item.priority == priority]
+        print(f&#x27;--- {priority.upper()} PRIORITY ---&#x27;)
+        for item in items:
+            status = &#x27;PASS&#x27; if item in passed else &#x27;FAIL&#x27;
+            print(f&#x27;  [{status}] {item.item_id}: {item.verification_question}&#x27;)
+            if item not in passed:
+                missing = [c for c in item.required_controls if c not in set(deployed_controls)]
+                print(f&#x27;         Missing controls: {missing}&#x27;)
+                print(f&#x27;         Evidence: {item.incident_evidence}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    example_deployed = [
+        &#x27;query_monitor&#x27;, &#x27;boundary_query_detector&#x27;, &#x27;query_diversity_monitor&#x27;,
+        &#x27;rate_limiter_extraction_aware&#x27;, &#x27;output_watermarker&#x27;,
+    ]
+    render_checklist(example_deployed)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating the Tramer et al. 2016 results as historical artefacts that no longer apply to current APIs</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The Tramer et al. 2016 paper targeted MLaaS platforms from the mid-2010s.
+Defenders assume the affected platforms have since mitigated the specific
+vulnerabilities and that current deployments are fundamentally different.
+The paper&#x27;&#x27;s age is mistaken for obsolescence.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The underlying mechanism -- that linear classifiers extract in O(d) queries
+and that every API query reveals boundary information -- is architecture-
+independent and time-independent. Current deployments of linear or tree-based
+classifiers via prediction APIs are as vulnerable to equation-solving and
+path-finding extraction as the 2016 targets were. The specific API endpoints
+have evolved; the attack surface has not.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Apply the Tramer et al. threat model to any current deployment of a
+classifier via a prediction API. Audit the API output format, the model
+architecture, and the rate limit policy against the extraction budget
+estimates documented in Section 9.3. The pre-production checklist
+(Deliverable 5) includes explicit verification steps that apply regardless
+of the deployment year.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Concluding that terms-of-service prohibitions on model distillation make output watermarking unnecessary</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The Alpaca and Vicuna projects violated OpenAI&#x27;&#x27;s terms of service by
+using API outputs to train competing models. Legal terms exist; the
+argument goes that legal recourse is available without technical controls.
+Output watermarking seems redundant when the behaviour is already prohibited.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Terms-of-service enforcement requires evidence that the violation occurred.
+Without a watermark, there is no mechanism to demonstrate that a suspect
+surrogate model was trained on the operator&#x27;&#x27;s outputs rather than
+independently trained. Legal recourse requires technical evidence; terms
+of service create the right to that evidence but not the evidence itself.
+The Alpaca and Vicuna releases were never legally challenged because the
+operators lacked the forensic mechanism to attribute the surrogates to
+their API outputs.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Watermarking is the technical foundation that makes terms-of-service
+enforcement feasible. Terms of service create the legal right; watermarking
+creates the technical evidence. Both are required for actionable enforcement.
+Deploy output watermarking before any distillation campaign occurs --
+not as a response to a discovered violation.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Using the Alpaca and Vicuna query budgets (50K-70K) as the extraction detection threshold</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The documented incidents provide concrete numbers. 52,000 queries for Alpaca,
+70,000 for Vicuna. Setting a detection threshold at, say, 30,000 queries
+per user over 30 days seems to catch these campaigns before completion.
+The incident documentation is mistaken for a threshold specification.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">A patient adversary who knows the threshold spreads their campaign over more
+accounts or longer time windows to stay below 30,000 queries per account.
+The documented campaigns were not optimised for detection evasion -- they
+were openly conducted academic experiments. A covert campaign would be
+designed to evade any threshold derived from published work. Thresholds
+derived from documented incidents are known to adversaries.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Design detection thresholds from extraction economics, not from documented
+incident query counts. The query budget required for a target fidelity level
+is the threshold target, not the query count from a specific published
+experiment. The budget-fidelity models in Sections 9.2 and 9.4 provide
+the economically grounded threshold inputs.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating the output watermark as a prevention control rather than a post-hoc evidence control</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Watermarking &quot;catches&quot; extraction in the sense that it enables detection
+of the surrogate after deployment. Defenders sometimes interpret &quot;catches
+the attack&quot; as &quot;prevents the attack&quot; and reduce investment in input-side
+prevention controls (query monitoring, rate limiting) on the assumption
+that watermarking makes prevention unnecessary.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The extraction campaign completes, the surrogate is deployed, and the
+watermark enables post-hoc identification. But the model has been stolen.
+The operator has evidence but not the model back. Prevention is the goal;
+watermarking provides evidence of theft after the fact, not prevention of
+it. Reducing input-side controls because watermarking exists increases the
+operator&#x27;&#x27;s exposure to completed extraction campaigns.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Watermarking and query monitoring are complementary, not substitutable.
+Query monitoring prevents campaigns that produce detectable input patterns.
+Watermarking provides evidence for campaigns that evade input-side detection.
+The Alpaca and Vicuna campaigns would have evaded query monitoring; watermarking
+would have caught the surrogates. The Tramer et al. campaign would have been
+caught by query monitoring before completion. Both controls are required.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Reading the incident RCA as a complete list of all controls needed and stopping at the documented gaps</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The root cause analysis identifies five gaps: no query monitoring, throughput-
+only rate limits, no watermarking, soft-label outputs, no DP training. These
+are the five documented gaps in three documented incidents. A defender who
+closes all five concludes that their deployment is fully protected.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The five root causes are the documented gaps in documented incidents -- not
+a complete enumeration of all possible extraction attack vectors. Novel
+technique variants, improved active learning strategies, and future attack
+classes that combine extraction with other threat vectors may exploit gaps
+not present in the 2016 or 2021 or 2023 incidents. A defence optimised only
+against documented incidents is brittle against future variation.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">The incident RCA closes known gaps. Red team exercises test the defence
+against novel variants beyond documented techniques. The pre-production
+checklist (Deliverable 5, item L7) explicitly requires a quarterly red team
+extraction exercise precisely because absence of detected incidents is not
+evidence that attacks are absent or that future attacks will match
+documented patterns.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Three documented incident classes demonstrate that model extraction operates
+at production scale against major commercial vendors. The Tramer et al. 2016
+MLaaS extractions achieved exact fidelity against linear and tree classifiers
+and substantial fidelity against neural networks in query counts that no
+throughput-based rate limit would have flagged. The Carlini et al. 2021 GPT-2
+extraction recovered thousands of verbatim training sequences including PII
+through perplexity-based membership inference, with no output monitoring in
+place. The Alpaca and Vicuna distillation campaigns produced functional
+clones of GPT-3.5 and GPT-4 capabilities for $300 to $500 in API fees,
+with query distributions analytically indistinguishable from legitimate
+evaluation use. All three incidents share five root causes: no query pattern
+monitoring, throughput-only rate limits, no output watermarking, soft-label
+outputs without perturbation, and no differential privacy training. Input-
+side controls (query monitor, rate limiter) cover the Tramer et al. and
+Carlini et al. incident patterns. Output-side watermarking covers the Alpaca
+and Vicuna pattern. No single control surface covers all three. The eight
+lessons from the incidents drive the pre-production verification checklist
+and the Section 9.13 chapter summary.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Extraction is documented, reproducible, and achievable for hundreds of dollars -- not a theoretical threat</li><li>None of the three incident classes was detected in real time; absence of detection is not absence of attack</li><li>Input-side monitoring catches Tramer et al. and Carlini et al. patterns; watermarking catches Alpaca/Vicuna; both are required</li><li>The Alpaca/Vicuna query distribution is indistinguishable from legitimate evaluation -- only output watermarking closes this gap</li><li>Terms-of-service prohibitions require technical watermark evidence to be actionable; legal rights without forensic evidence are unenforceable</li><li>Detection thresholds derived from documented incident query counts are known to adversaries; calibrate from extraction economics instead</li></ul>
+<h2 class="sh1">Preview Section 10</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 9.10: Detection Primitives -- Query Pattern Analysis, OOD Detection, Output Entropy, Watermarking Signals</p>
+<h3 class="sh2">Preview</h3>
+<p class="prose">Sections 9.3 through 9.9 built the full attack catalogue and grounded it in
+documented incidents. Section 9.10 builds the detection primitive library
+that covers every attack class in the catalogue. Five primitives split across
+input-side and output-side: query pattern analyser (distributional anomaly
+detection for user query streams), OOD detector (out-of-distribution query
+identification), output entropy monitor (low-information extraction query
+detection), user concentration analyser (per-user query pattern analysis),
+and watermarking detection signal (cryptographic ownership evidence). The
+implementation connects the mechanistic attack understanding from Sections
+9.3 through 9.7 -- boundary clustering, query diversity patterns, output
+leakage signals -- to the detection logic that Section 9.11 wires into the
+production query monitor.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.3: equation-solving and path-finding extraction techniques</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Tramer et al. incident reconstruction in prose Parts 2 and 5</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.4: LLM distillation pipeline</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Alpaca/Vicuna incident reconstruction in prose Parts 4 and 5</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.6: perplexity-based membership inference</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Carlini et al. incident mechanism in prose Part 3</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.7: model inversion and verbatim training data extraction</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Carlini et al. incident mechanism complementary to Section 9.6</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.8: economic abuse and cost asymmetry</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Query budget and cost framing for incident timeline economic analysis</p>
+<h3 class="sh2">Forward References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.10: Detection Primitives</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Root cause gaps documented in this section drive the five primitive design requirements</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.11: Production Query Monitor and Rate Limiter</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Eight checklist items (Deliverable 5) map directly to Section 9.11 deployment verification</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.12: Output Watermarking and Perturbation</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Alpaca/Vicuna gap (no watermarking) is the primary motivation for Section 9.12</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.13: Chapter Summary</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Lessons learned checklist (Deliverable 5) feeds directly into Section 9.13 cross-cutting threads</p>
+</article>

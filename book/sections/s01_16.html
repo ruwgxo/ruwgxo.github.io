@@ -1,0 +1,790 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 16 · ~7 pages</div>
+<h1>Decision Trees and Random Forests</h1>
+<div class="tags"><span class="tag">decision-trees</span><span class="tag">random-forests</span><span class="tag">ensemble-methods</span><span class="tag">gini-impurity</span><span class="tag">information-gain</span><span class="tag">interpretability</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Decision trees are one of the most intuitive and interpretable machine learning 
+algorithms. They make predictions by asking a series of yes/no questions about 
+features, forming a flowchart-like structure. &quot;Is file entropy &gt; 7.5?&quot; → Yes → 
+&quot;Does it make suspicious API calls?&quot; → Yes → &quot;Predict: Malicious&quot;
+
+While single trees are simple and interpretable, they tend to overfit. Random 
+forests solve this by combining hundreds of trees (ensemble), each seeing slightly 
+different data. The forest votes on predictions, dramatically improving accuracy 
+and robustness while maintaining many of trees&#x27; benefits.
+
+This section covers:
+- Decision tree construction (splitting criteria, recursion)
+- Preventing overfitting (max depth, min samples, pruning)
+- Random forests (bagging, feature randomness)
+- Feature importance (which features matter most)
+- Advantages and limitations for security
+
+For security, trees and forests are popular because:
+1. Interpretable: Can explain exact decision path
+2. Handle mixed data: Categorical + numerical features
+3. Non-linear: Capture complex attack patterns
+4. Fast: Real-time inference (&lt;1ms per prediction)
+5. Robust: Forests hard to evade (adversary must fool ensemble)</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security context:
+- Malware detection: Trees learn rules like &quot;if entropy &gt; 7.5 AND API_calls_count 
+  &gt; 10 → malicious&quot;
+- Intrusion detection: Decision paths show exact attack indicators
+- Fraud detection: Random forests handle high-dimensional transaction features
+- Explainability: Can show analyst exact reason for alert
+
+Real-world usage:
+- Random forests power many production security systems
+- Top competitor in malware detection competitions
+- Used by Cylance, CrowdStrike, Microsoft Defender
+- Balance: Good accuracy + interpretability + speed
+
+Why this section matters:
+- Most practical algorithm for security (actually deployed!)
+- Foundation for gradient boosting (XGBoost, LightGBM - covered later)
+- Ensemble concept applies to all ML
+- Feature importance crucial for security analysis</p>
+<h2 class="sh1">Decision Tree Basics</h2>
+<h3 class="sh2">What Is Decision Tree</h3>
+<p class="prose">Decision tree: Series of if-then-else rules organized hierarchically
+
+Structure:
+- Root node: First decision (top of tree)
+- Internal nodes: Intermediate decisions
+- Leaf nodes: Final predictions (bottom of tree)
+- Branches: Outcomes of decisions (yes/no paths)</p>
+<h3 class="sh2">Example Malware Detection</h3>
+<p class="prose">Root: Is file_entropy &gt; 7.5?
+├─ No → Is file_size &gt; 1MB?
+│  ├─ No → Predict: BENIGN
+│  └─ Yes → Is packed?
+│     ├─ No → Predict: BENIGN
+│     └─ Yes → Predict: MALICIOUS
+└─ Yes → Is suspicious_api_count &gt; 5?
+   ├─ No → Predict: BENIGN
+   └─ Yes → Predict: MALICIOUS
+
+To classify new file:
+1. Start at root
+2. Answer questions
+3. Follow branches
+4. Reach leaf → prediction</p>
+<h3 class="sh2">Terminology</h3>
+<h3 class="sh3">Splitting</h3>
+<p class="prose">Dividing node into sub-nodes based on feature threshold</p>
+<h3 class="sh3">Split Point</h3>
+<p class="prose">Feature and threshold used for splitting</p>
+<h3 class="sh3">Depth</h3>
+<p class="prose">Number of edges from root to leaf (max = tree depth)</p>
+<h3 class="sh3">Pure Node</h3>
+<p class="prose">All samples in node have same label</p>
+<h3 class="sh3">Impure Node</h3>
+<p class="prose">Mixed labels in node</p>
+<h3 class="sh2">Mathematical Notation</h3>
+<p class="prose">Tree T: Collection of nodes and edges
+Node n: Contains samples S = {(x₁, y₁), ..., (xₖ, yₖ)}
+Split: Feature j, threshold t
+
+Left child: Samples where xⱼ ≤ t
+Right child: Samples where xⱼ &gt; t
+
+Prediction: Majority class in leaf node</p>
+<h2 class="sh1">Tree Construction</h2>
+<h3 class="sh2">Recursive Algorithm</h3>
+<p class="prose">Build tree recursively using greedy algorithm:
+
+function BuildTree(samples):
+    # Base cases (stop splitting)
+    if all samples same class:
+        return LeafNode(majority_class)
+    if reached max_depth:
+        return LeafNode(majority_class)
+    if too few samples:
+        return LeafNode(majority_class)
+    
+    # Find best split
+    best_feature, best_threshold = FindBestSplit(samples)
+    
+    # Split samples
+    left_samples = samples where feature ≤ threshold
+    right_samples = samples where feature &gt; threshold
+    
+    # Recursively build subtrees
+    left_subtree = BuildTree(left_samples)
+    right_subtree = BuildTree(right_samples)
+    
+    return InternalNode(best_feature, best_threshold, 
+                      left_subtree, right_subtree)</p>
+<h3 class="sh2">Finding Best Split</h3>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Find feature and threshold that best separates classes</p>
+<h3 class="sh3">Approach</h3>
+<p class="prose">For each feature:
+  For each possible threshold:
+    Split samples into left and right
+    Compute impurity of split
+
+Pick split with lowest impurity (or highest information gain)</p>
+<h3 class="sh3">Exhaustive Search</h3>
+<p class="prose">For numerical features:
+- Try all unique values as thresholds
+- O(n log n) per feature (sort samples)
+
+For categorical features:
+- Try all possible subsets
+- Can be expensive (combinatorial)</p>
+<h3 class="sh2">Splitting Criteria</h3>
+<h3 class="sh3">Gini Impurity</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Gini(S) = 1 - Σᵢ pᵢ²</p>
+<h4 class="sh3">Where</h4>
+<h4 class="sh3">S</h4>
+<p class="prose">Set of samples</p>
+<h4 class="sh3">Pᵢ</h4>
+<p class="prose">Proportion of class i in S</p>
+<h4 class="sh3">Intuition</h4>
+<p class="prose">Measures impurity (mixture) of classes
+
+Pure node (all class 0): Gini = 1 - 1² = 0
+Pure node (all class 1): Gini = 1 - 1² = 0
+50/50 split: Gini = 1 - (0.5² + 0.5²) = 0.5
+
+Lower Gini = purer = better</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Node with 100 samples:
+- 80 benign, 20 malicious
+
+p_benign = 80/100 = 0.8
+p_malicious = 20/100 = 0.2
+
+Gini = 1 - (0.8² + 0.2²)
+     = 1 - (0.64 + 0.04)
+     = 1 - 0.68
+     = 0.32</p>
+<h4 class="sh3">Weighted Gini After Split</h4>
+<p class="prose">Split creates left and right nodes
+
+Weighted Gini = (n_left/n_total) × Gini(left) + 
+               (n_right/n_total) × Gini(right)
+
+Information gain = Gini(parent) - Weighted Gini
+
+Pick split with highest information gain</p>
+<h3 class="sh3">Entropy Information Gain</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Entropy(S) = -Σᵢ pᵢ log₂(pᵢ)</p>
+<h4 class="sh3">Intuition</h4>
+<p class="prose">Measures uncertainty/randomness
+
+Pure node: Entropy = 0 (no uncertainty)
+50/50 split: Entropy = 1 (maximum uncertainty)</p>
+<h4 class="sh3">Information Gain</h4>
+<p class="prose">IG = Entropy(parent) - Weighted Entropy(children)
+
+Pick split with highest information gain
+
+Equivalent to Gini impurity (usually same splits)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>import numpy as np
+
+def gini_impurity(y):
+    &quot;&quot;&quot;Compute Gini impurity&quot;&quot;&quot;
+    if len(y) == 0:
+        return 0
+    
+    # Class probabilities
+    classes, counts = np.unique(y, return_counts=True)
+    probabilities = counts / len(y)
+    
+    # Gini = 1 - Σp²
+    gini = 1 - np.sum(probabilities ** 2)
+    return gini
+
+def entropy(y):
+    &quot;&quot;&quot;Compute entropy&quot;&quot;&quot;
+    if len(y) == 0:
+        return 0
+    
+    classes, counts = np.unique(y, return_counts=True)
+    probabilities = counts / len(y)
+    
+    # Entropy = -Σp log₂(p)
+    entropy = -np.sum(probabilities * np.log2(probabilities + 1e-10))
+    return entropy
+
+def information_gain(y, left_y, right_y, criterion=&#x27;gini&#x27;):
+    &quot;&quot;&quot;Compute information gain from split&quot;&quot;&quot;
+    if criterion == &#x27;gini&#x27;:
+        parent_impurity = gini_impurity(y)
+        left_impurity = gini_impurity(left_y)
+        right_impurity = gini_impurity(right_y)
+    else:  # entropy
+        parent_impurity = entropy(y)
+        left_impurity = entropy(left_y)
+        right_impurity = entropy(right_y)
+    
+    # Weighted average of children
+    n = len(y)
+    n_left = len(left_y)
+    n_right = len(right_y)
+    
+    weighted_child_impurity = (n_left/n * left_impurity + 
+                              n_right/n * right_impurity)
+    
+    # Information gain
+    gain = parent_impurity - weighted_child_impurity
+    return gain
+
+# Example
+y = np.array([0, 0, 0, 0, 1, 1, 1, 1, 1, 1])  # 4 benign, 6 malicious
+print(f&quot;Gini impurity: {gini_impurity(y):.4f}&quot;)
+print(f&quot;Entropy: {entropy(y):.4f}&quot;)
+
+# After split: [0,0,0,0] and [1,1,1,1,1,1]
+left_y = np.array([0, 0, 0, 0])
+right_y = np.array([1, 1, 1, 1, 1, 1])
+gain = information_gain(y, left_y, right_y, criterion=&#x27;gini&#x27;)
+print(f&quot;Information gain: {gain:.4f}&quot;)</code></pre>
+<h2 class="sh1">Preventing Overfitting</h2>
+<h3 class="sh2">Problem With Unpruned Trees</h3>
+<p class="prose">Without constraints, tree grows until each leaf has 1 sample
+
+Result:
+- 100% training accuracy (perfect memorization!)
+- Poor test accuracy (doesn&#x27;t generalize)
+- Overfitting
+
+Example:
+Training: 1000 samples → 1000 leaf nodes
+Each leaf predicts its single training sample&#x27;s class
+New sample: Won&#x27;t match any training sample exactly → poor prediction</p>
+<h3 class="sh2">Stopping Criteria</h3>
+<h3 class="sh3">Max Depth</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Maximum number of splits from root to leaf</p>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">3-10 for simple problems, 10-30 for complex</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">max_depth=1: Shallow tree (underfits)
+max_depth=10: Medium tree (good balance)
+max_depth=None: Infinite depth (overfits)</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">Deeper trees memorize exact attack signatures, miss variants</p>
+<h3 class="sh3">Min Samples Split</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Minimum samples required to split node</p>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">2-20</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">min_samples_split=2: Split aggressively (may overfit)
+min_samples_split=20: Only split large nodes (prevents small splits)</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Prevents splitting on outliers or rare samples</p>
+<h3 class="sh3">Min Samples Leaf</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Minimum samples required in each leaf</p>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">1-10</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">min_samples_leaf=1: Allows single-sample leaves (overfits)
+min_samples_leaf=10: Forces leaves to have at least 10 samples</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Ensures predictions based on multiple samples, not single outlier</p>
+<h3 class="sh3">Max Features</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Number of features to consider for each split</p>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">sqrt(n_features) or log2(n_features)</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Introduces randomness, important for random forests</p>
+<h3 class="sh2">Pruning</h3>
+<h3 class="sh3">Post Pruning</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">1. Grow full tree (no constraints)
+2. Remove branches that don&#x27;t improve validation performance
+3. Bottom-up: Start at leaves, work toward root</p>
+<h4 class="sh3">Cost Complexity Pruning</h4>
+<p class="prose">For each subtree:
+- Compute accuracy on validation set
+- Compute complexity (number of nodes)
+
+Trade-off:
+- Keep subtree if accuracy gain &gt; complexity cost
+- Remove if not worth the complexity</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Automatically finds optimal tree size</p>
+<h3 class="sh3">Pre Pruning</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Stop growing tree early using stopping criteria</p>
+<h4 class="sh3">Simpler</h4>
+<p class="prose">Easier to implement than post-pruning</p>
+<h4 class="sh3">Standard Approach</h4>
+<p class="prose">Use max_depth, min_samples_split, min_samples_leaf</p>
+<h2 class="sh1">Complete Implementation</h2>
+<pre class="code"><code>import numpy as np
+
+class DecisionTree:
+    &quot;&quot;&quot;Decision tree classifier from scratch&quot;&quot;&quot;
+    
+    def __init__(self, max_depth=10, min_samples_split=2, min_samples_leaf=1):
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.root = None
+    
+    def fit(self, X, y):
+        &quot;&quot;&quot;Build decision tree&quot;&quot;&quot;
+        self.root = self._build_tree(X, y, depth=0)
+        return self
+    
+    def _build_tree(self, X, y, depth):
+        &quot;&quot;&quot;Recursively build tree&quot;&quot;&quot;
+        n_samples, n_features = X.shape
+        n_classes = len(np.unique(y))
+        
+        # Stopping criteria
+        if (depth &gt;= self.max_depth or 
+            n_classes == 1 or 
+            n_samples &lt; self.min_samples_split):
+            return self._create_leaf(y)
+        
+        # Find best split
+        best_feature, best_threshold, best_gain = self._find_best_split(X, y)
+        
+        # If no good split found
+        if best_gain == 0:
+            return self._create_leaf(y)
+        
+        # Split samples
+        left_mask = X[:, best_feature] &lt;= best_threshold
+        right_mask = ~left_mask
+        
+        # Check min_samples_leaf
+        if (np.sum(left_mask) &lt; self.min_samples_leaf or 
+            np.sum(right_mask) &lt; self.min_samples_leaf):
+            return self._create_leaf(y)
+        
+        # Recursively build subtrees
+        left_subtree = self._build_tree(X[left_mask], y[left_mask], depth + 1)
+        right_subtree = self._build_tree(X[right_mask], y[right_mask], depth + 1)
+        
+        return {
+            &#x27;feature&#x27;: best_feature,
+            &#x27;threshold&#x27;: best_threshold,
+            &#x27;left&#x27;: left_subtree,
+            &#x27;right&#x27;: right_subtree
+        }
+    
+    def _find_best_split(self, X, y):
+        &quot;&quot;&quot;Find best feature and threshold&quot;&quot;&quot;
+        best_gain = 0
+        best_feature = None
+        best_threshold = None
+        
+        parent_impurity = self._gini(y)
+        
+        n_features = X.shape[1]
+        
+        # Try each feature
+        for feature in range(n_features):
+            # Get unique values as potential thresholds
+            thresholds = np.unique(X[:, feature])
+            
+            # Try each threshold
+            for threshold in thresholds:
+                # Split
+                left_mask = X[:, feature] &lt;= threshold
+                right_mask = ~left_mask
+                
+                if np.sum(left_mask) == 0 or np.sum(right_mask) == 0:
+                    continue
+                
+                # Compute information gain
+                n = len(y)
+                n_left = np.sum(left_mask)
+                n_right = np.sum(right_mask)
+                
+                left_impurity = self._gini(y[left_mask])
+                right_impurity = self._gini(y[right_mask])
+                
+                weighted_impurity = (n_left/n * left_impurity + 
+                                    n_right/n * right_impurity)
+                
+                gain = parent_impurity - weighted_impurity
+                
+                # Update best
+                if gain &gt; best_gain:
+                    best_gain = gain
+                    best_feature = feature
+                    best_threshold = threshold
+        
+        return best_feature, best_threshold, best_gain
+    
+    def _gini(self, y):
+        &quot;&quot;&quot;Compute Gini impurity&quot;&quot;&quot;
+        classes, counts = np.unique(y, return_counts=True)
+        probabilities = counts / len(y)
+        return 1 - np.sum(probabilities ** 2)
+    
+    def _create_leaf(self, y):
+        &quot;&quot;&quot;Create leaf node with majority class&quot;&quot;&quot;
+        classes, counts = np.unique(y, return_counts=True)
+        majority_class = classes[np.argmax(counts)]
+        return {&#x27;class&#x27;: majority_class}
+    
+    def predict(self, X):
+        &quot;&quot;&quot;Predict class for samples&quot;&quot;&quot;
+        return np.array([self._predict_sample(x, self.root) for x in X])
+    
+    def _predict_sample(self, x, node):
+        &quot;&quot;&quot;Predict single sample&quot;&quot;&quot;
+        # Leaf node
+        if &#x27;class&#x27; in node:
+            return node[&#x27;class&#x27;]
+        
+        # Internal node - traverse
+        if x[node[&#x27;feature&#x27;]] &lt;= node[&#x27;threshold&#x27;]:
+            return self._predict_sample(x, node[&#x27;left&#x27;])
+        else:
+            return self._predict_sample(x, node[&#x27;right&#x27;])
+    
+    def print_tree(self, node=None, depth=0):
+        &quot;&quot;&quot;Print tree structure&quot;&quot;&quot;
+        if node is None:
+            node = self.root
+        
+        indent = &quot;  &quot; * depth
+        
+        if &#x27;class&#x27; in node:
+            print(f&quot;{indent}Predict: {node[&#x27;class&#x27;]}&quot;)
+        else:
+            print(f&quot;{indent}Feature {node[&#x27;feature&#x27;]} &lt;= {node[&#x27;threshold&#x27;]:.2f}?&quot;)
+            print(f&quot;{indent}  Yes:&quot;)
+            self.print_tree(node[&#x27;left&#x27;], depth + 2)
+            print(f&quot;{indent}  No:&quot;)
+            self.print_tree(node[&#x27;right&#x27;], depth + 2)
+
+# ========================================================================
+# USAGE EXAMPLE
+# ========================================================================
+
+# Generate synthetic malware data
+np.random.seed(42)
+n_samples = 1000
+
+# Features: entropy, api_calls, file_size
+X = np.random.randn(n_samples, 3)
+
+# Simple decision rule: malicious if entropy &gt; 0.5 OR api_calls &gt; 0.5
+y = ((X[:, 0] &gt; 0.5) | (X[:, 1] &gt; 0.5)).astype(int)
+
+# Train/test split
+split = int(0.8 * n_samples)
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
+
+# Train decision tree
+tree = DecisionTree(max_depth=5, min_samples_split=20, min_samples_leaf=10)
+tree.fit(X_train, y_train)
+
+# Evaluate
+train_preds = tree.predict(X_train)
+test_preds = tree.predict(X_test)
+
+train_acc = np.mean(train_preds == y_train)
+test_acc = np.mean(test_preds == y_test)
+
+print(f&quot;Training accuracy: {train_acc:.2%}&quot;)
+print(f&quot;Test accuracy: {test_acc:.2%}&quot;)
+
+# Print tree structure
+print(&quot;\nDecision tree structure:&quot;)
+tree.print_tree()</code></pre>
+<h2 class="sh1">Random Forests</h2>
+<h3 class="sh2">Motivation</h3>
+<p class="prose">Single decision tree problems:
+- High variance (different training data → very different trees)
+- Prone to overfitting
+- Unstable (small data change → large tree change)
+
+Solution: Ensemble of trees (random forest)</p>
+<h3 class="sh2">How Random Forests Work</h3>
+<p class="prose">Random forest = Collection of decision trees
+
+Training:
+1. For each tree (typically 100-500 trees):
+   a. Sample training data WITH replacement (bootstrap sample)
+   b. At each split, consider only random subset of features
+   c. Build tree on this bootstrapped, feature-reduced data
+
+Prediction:
+1. Each tree makes prediction
+2. Classification: Majority vote
+3. Regression: Average predictions
+
+Key insight: Diversity + averaging reduces overfitting</p>
+<h3 class="sh2">Bagging</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Bootstrap Aggregating</p>
+<h3 class="sh3">Bootstrap Sampling</h3>
+<p class="prose">Create training set for each tree by sampling WITH replacement
+
+Original dataset: 1000 samples
+Bootstrap sample: Randomly pick 1000 samples (with replacement)
+
+Result: ~63% unique samples, ~37% duplicates
+Out-of-bag: ~37% not in bootstrap (used for validation)</p>
+<h3 class="sh3">Effect</h3>
+<p class="prose">Each tree sees different data → diverse trees</p>
+<h3 class="sh2">Feature Randomness</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">At each split, consider only random subset of features</p>
+<h3 class="sh3">Typical Subset Size</h3>
+<p class="prose">Classification: sqrt(n_features)
+Regression: n_features / 3
+
+Example: 100 features
+Each split considers only sqrt(100) = 10 random features</p>
+<h3 class="sh3">Effect</h3>
+<p class="prose">Forces trees to be different
+Prevents all trees from using same strong features
+Reduces correlation between trees → better ensemble</p>
+<h3 class="sh2">Why Randomness Helps</h3>
+<p class="prose">Problem: All trees might split on same feature (strongest predictor)
+Result: Trees highly correlated → ensemble doesn&#x27;t help much
+
+Solution: Feature randomness
+Result: Trees use different features → diverse ensemble → better predictions</p>
+<h3 class="sh2">Out Of Bag Error</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">For each tree, ~37% of samples not in bootstrap sample
+Use these &quot;out-of-bag&quot; samples for validation
+
+Benefit: Free validation set (no need for separate val set)</p>
+<h3 class="sh3">Computation</h3>
+<p class="prose">For each sample:
+- Find trees that didn&#x27;t see it during training
+- Get predictions from those trees
+- Compare to true label
+
+OOB error = Average error on OOB samples</p>
+<h3 class="sh3">Advantage</h3>
+<p class="prose">Honest estimate of performance without separate validation set</p>
+<h3 class="sh2">Numpy Implementation</h3>
+<pre class="code"><code>class RandomForest:
+    &quot;&quot;&quot;Random forest classifier from scratch&quot;&quot;&quot;
+    
+    def __init__(self, n_trees=100, max_depth=10, 
+                min_samples_split=2, max_features=&#x27;sqrt&#x27;):
+        self.n_trees = n_trees
+        self.max_depth = max_depth
+        self.min_samples_split = min_samples_split
+        self.max_features = max_features
+        self.trees = []
+    
+    def fit(self, X, y):
+        &quot;&quot;&quot;Train random forest&quot;&quot;&quot;
+        n_samples, n_features = X.shape
+        
+        # Determine max_features
+        if self.max_features == &#x27;sqrt&#x27;:
+            max_feat = int(np.sqrt(n_features))
+        elif self.max_features == &#x27;log2&#x27;:
+            max_feat = int(np.log2(n_features))
+        else:
+            max_feat = n_features
+        
+        self.trees = []
+        
+        for i in range(self.n_trees):
+            # Bootstrap sample
+            indices = np.random.choice(n_samples, size=n_samples, replace=True)
+            X_bootstrap = X[indices]
+            y_bootstrap = y[indices]
+            
+            # Train tree with feature randomness
+            tree = DecisionTreeRandomFeatures(
+                max_depth=self.max_depth,
+                min_samples_split=self.min_samples_split,
+                max_features=max_feat
+            )
+            tree.fit(X_bootstrap, y_bootstrap)
+            
+            self.trees.append(tree)
+            
+            if (i + 1) % 10 == 0:
+                print(f&quot;Trained {i+1}/{self.n_trees} trees&quot;)
+        
+        return self
+    
+    def predict(self, X):
+        &quot;&quot;&quot;Predict by majority vote&quot;&quot;&quot;
+        # Get predictions from all trees
+        tree_predictions = np.array([tree.predict(X) for tree in self.trees])
+        
+        # Majority vote
+        predictions = np.array([
+            np.bincount(tree_predictions[:, i]).argmax()
+            for i in range(X.shape[0])
+        ])
+        
+        return predictions
+    
+    def predict_proba(self, X):
+        &quot;&quot;&quot;Predict probabilities&quot;&quot;&quot;
+        # Get predictions from all trees
+        tree_predictions = np.array([tree.predict(X) for tree in self.trees])
+        
+        # Fraction of trees voting for class 1
+        proba = np.mean(tree_predictions, axis=0)
+        
+        return proba
+
+# Usage
+rf = RandomForest(n_trees=100, max_depth=10, max_features=&#x27;sqrt&#x27;)
+rf.fit(X_train, y_train)
+
+predictions = rf.predict(X_test)
+accuracy = np.mean(predictions == y_test)
+print(f&quot;Random forest accuracy: {accuracy:.2%}&quot;)</code></pre>
+<h3 class="sh2">Advantages Of Random Forests</h3>
+<ul class="blist"><li>Much more accurate than single tree</li><li>Reduces overfitting dramatically</li><li>Stable (less variance)</li><li>Handles high-dimensional data</li><li>Provides feature importance</li><li>OOB error for free validation</li></ul>
+<h3 class="sh2">Disadvantages</h3>
+<ul class="blist"><li>Less interpretable than single tree</li><li>Slower training (100+ trees)</li><li>Slower inference (predict with all trees)</li><li>More memory (store all trees)</li></ul>
+<h2 class="sh1">Feature Importance</h2>
+<h3 class="sh2">Why Feature Importance Matters</h3>
+<p class="prose">Security questions:
+- Which features drive detection decisions?
+- Are we relying on robust indicators or brittle features?
+- Can adversary easily manipulate important features?
+
+Feature importance answers these questions</p>
+<h3 class="sh2">Computing Importance</h3>
+<h3 class="sh3">Method 1 Gini Importance</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">For each feature, sum information gain across all splits using that feature
+
+Higher gain = more important feature</p>
+<h4 class="sh3">Algorithm</h4>
+<p class="prose">For each tree:
+  For each node that splits on feature j:
+    importance[j] += weighted_information_gain
+
+Normalize across all features</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Built into random forest training (free!)</p>
+<h3 class="sh3">Method 2 Permutation Importance</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Measure accuracy drop when feature is randomly shuffled
+
+More drop = more important feature</p>
+<h4 class="sh3">Algorithm</h4>
+<p class="prose">baseline_accuracy = accuracy on validation set
+
+For each feature j:
+  Shuffle feature j in validation set
+  permuted_accuracy = accuracy with shuffled feature
+  importance[j] = baseline_accuracy - permuted_accuracy</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">More reliable than Gini importance (especially for high-cardinality features)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def compute_feature_importance(forest, X_val, y_val):
+    &quot;&quot;&quot;Compute permutation feature importance&quot;&quot;&quot;
+    baseline_acc = np.mean(forest.predict(X_val) == y_val)
+    
+    n_features = X_val.shape[1]
+    importances = np.zeros(n_features)
+    
+    for feature in range(n_features):
+        # Permute feature
+        X_permuted = X_val.copy()
+        X_permuted[:, feature] = np.random.permutation(X_permuted[:, feature])
+        
+        # Measure accuracy drop
+        permuted_acc = np.mean(forest.predict(X_permuted) == y_val)
+        importances[feature] = baseline_acc - permuted_acc
+    
+    # Normalize
+    importances = importances / importances.sum()
+    
+    return importances
+
+# Example
+importances = compute_feature_importance(rf, X_val, y_val)
+
+feature_names = [&#x27;entropy&#x27;, &#x27;api_calls&#x27;, &#x27;file_size&#x27;]
+for i, name in enumerate(feature_names):
+    print(f&quot;{name}: {importances[i]:.2%}&quot;)</code></pre>
+<h3 class="sh2">Security Interpretation</h3>
+<p class="prose">Example malware detector feature importance:
+
+1. Entropy: 35% ← High importance, hard to manipulate
+2. API calls: 30% ← Behavioral, robust indicator
+3. File size: 15% ← Medium importance
+4. String patterns: 10% ← Easy to evade (obfuscate strings)
+5. File name: 10% ← Very easy to evade (rename file)
+
+Analysis:
+- Top features (entropy, API calls) are robust
+- Low importance features (string patterns, filename) can be removed
+- Adversary must manipulate multiple high-importance features to evade</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Interpretability For Analysts</h3>
+<h3 class="sh3">Single Tree Benefit</h3>
+<p class="prose">Can show exact decision path:
+
+&quot;Alert triggered because:
+ 1. File entropy = 7.8 (&gt; 7.5 threshold)
+ 2. Suspicious API calls = 12 (&gt; 10 threshold)
+ 3. Packed = Yes
+ → Classified as malicious&quot;
+
+Analyst can verify each condition</p>
+<h3 class="sh3">Random Forest Challenge</h3>
+<p class="prose">100 trees each with different decision paths
+Can&#x27;t show all 100 paths
+
+Solution: Show feature importance + average path</p>
+<h3 class="sh2">Adversarial Evasion</h3>
+<h3 class="sh3">Single Tree Vulnerability</h3>
+<p class="prose">Adversary can reverse-engineer exact thresholds
+Craft input just below threshold
+
+Example:
+Tree splits on entropy &gt; 7.5
+Adversary pads file to reduce entropy to 7.4
+Evades detection</p>
+<h3 class="sh3">Random Forest Robustness</h3>
+<p class="prose">Each tree has different threshold
+Tree 1: entropy &gt; 7.5
+Tree 2: entropy &gt; 7.2
+Tree 3: entropy &gt; 7.8
+...
+
+Adversary must evade majority of trees (hard!)
+More robust to adversarial manipulation</p>
+<h3 class="sh2">Feature Manipulation</h3>
+<h3 class="sh3">Attack Strategy</h3>
+<p class="prose">1. Identify important features (via importance scores or probing)
+2. Manipulate features to cross decision boundaries
+3. Evade detection</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">- Use behavioral features (hard to manipulate)
+- Monitor for suspicious feature combinations
+- Ensemble diversity (different trees use different features)
+- Adversarial training (train on manipulated samples)</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Decision trees: Series of if-then-else rules forming flowchart</li><li>Splitting: Find feature and threshold that best separates classes</li><li>Gini impurity: Measures class mixture (lower = purer)</li><li>Overfitting prevented by: max_depth, min_samples_split, min_samples_leaf</li><li>Random forests: Ensemble of trees with bootstrap + feature randomness</li><li>Feature importance: Which features drive predictions</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement decision tree from scratch with Gini impurity</li><li>Build random forest with bootstrap sampling</li><li>Compute feature importance (Gini and permutation)</li><li>Tune max_depth to prevent overfitting</li><li>Interpret decision paths for explainability</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Single trees interpretable but vulnerable to evasion</li><li>Random forests robust (adversary must fool ensemble)</li><li>Feature importance identifies reliable vs brittle indicators</li><li>Use behavioral features (hard to manipulate)</li><li>Trees popular in production security systems (speed + accuracy)</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Single tree overfits, random forest doesn&#x27;t</li><li>Tune max_depth (5-15 good range)</li><li>Random forests = bagging + feature randomness</li><li>Feature importance guides feature engineering</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: k-Nearest Neighbors and distance metrics</li><li>You now understand most popular algorithm for security!</li><li>Foundation for gradient boosting (XGBoost) in advanced sections</li></ul>
+</article>

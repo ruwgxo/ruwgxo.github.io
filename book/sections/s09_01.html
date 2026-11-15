@@ -1,0 +1,1209 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 9 · Section 1 · ~6 pages</div>
+<h1>Section 9.1: Inference-Time Extraction Threat Model</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Chapter 9 returns to the real-time gateway architecture of Chapters 6 and 7,
+facing a new threat actor -- the API consumer who reconstructs model behaviour
+without training access -- and frames the two-surface defence that closes
+OWASP LLM10.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapter 8 retrained your instincts toward batch jobs, CI/CD gates, and offline
+auditing pipelines. Section 9.1 reverses that shift before it becomes a
+liability. The threat actor in Chapter 9 is not a data pipeline contributor
+with training access; it is an API consumer with a query budget and no model
+internals. The attack surface is the deployed model&#x27;&#x27;s inference API. The
+detection architecture is real-time and per-request, not batch and asynchronous.
+
+Without this reset, the rest of Chapter 9 makes no architectural sense: you
+would design batch auditors for a threat that operates at inference time, miss
+the query budget constraint that defines extraction economics, and build
+defences that detect the wrong signals at the wrong latency tier.
+
+Section 9.1 establishes the threat model so Sections 9.2 through 9.12 build
+the right architecture. It also introduces the OWASP LLM10 (Model Theft)
+framework and the three ATLAS sub-techniques that Chapter 9 covers, giving
+the reader a compliance and taxonomy anchor before the attack sections begin.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 9.1 of 13. Threat model foundation for the full chapter. All attack
+sections (9.2 through 9.9) and all defence sections (9.10 through 9.12)
+inherit the threat model, adversary access ladder, and architectural framing
+established here.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 6 Section 6.2: system prompt extraction (inference-time gateway architecture introduced)</li><li>Chapter 6 Section 6.17: production injection classifier (gateway pattern established)</li><li>Chapter 7 Section 7.14: jailbreak detection ensemble (parallel-track gateway extended)</li><li>Chapter 8 Section 8.15: production auditing pipeline (offline architecture to contrast)</li><li>Chapter 8 Section 8.16: cross-cutting threads framework (extended in Chapter 9 summary)</li><li>Chapter 5 Section 5.4: OWASP LLM10 framework overview (Chapter 9 operationalises it)</li><li>Chapter 5 Section 5.8: AML Sigma stub pattern (reused for AML.T0040/T0024 in Section 9.11)</li><li>Chapter 4 Section 4.8: API architecture and security (prerequisite for adversary access ladder)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Threat Actor Has Changed</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 8 placed you inside the data pipeline. The threat actor was a
+contributor -- a researcher who could influence training batches, a vendor
+whose dataset appeared in a supply chain audit, an insider with write access
+to the preprocessing stage. The attack surface was the training run itself:
+offline, asynchronous, auditable in CI/CD. The detection architecture
+matched: a batch auditing pipeline that ran before model deployment, flagging
+poisoned samples before they could influence production weights.
+
+Chapter 9 removes that access entirely. The threat actor cannot touch the
+training pipeline. The model is already deployed. Weights are fixed. The
+only interface the adversary has is the same interface every legitimate user
+has: the inference API.
+
+This is not a relaxed threat model -- it is a different one. The adversary
+in Chapter 9 has no training-time leverage but has something Chapter 8&#x27;&#x27;s
+threat actor typically lacked: an operational budget and patience. An
+attacker who can issue a thousand queries a day, sustained across weeks,
+can reconstruct what a model knows without ever touching its weights. The
+training-time defender had a window: poison the data before the run, and
+the attack persists in the deployed model. The inference-time adversary has
+no such window -- every attack is a series of queries, and every query costs
+money and leaves a trace. That trace is the detection surface.
+
+The practical consequence for defenders: stop thinking in batch jobs. The
+detection architecture returns to the real-time per-request pattern
+Chapters 6 and 7 established. Latency budgets matter again. The classifier
+must run within the request lifecycle, not in a nightly CI pipeline.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Inference-Time Threat Model</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The inference-time threat model has five defining properties that Chapter 8
+did not require.
+
+Fixed model. The production model is deployed and its weights do not change
+during the attack. The adversary cannot influence what the model has learned.
+Every response the model gives is a deterministic or stochastically bounded
+function of its fixed weights and the adversary&#x27;&#x27;s input. This is what makes
+extraction possible: the model&#x27;&#x27;s behaviour is stable across queries, so
+systematic querying can map that behaviour.
+
+Real-time per-request analysis. Detection must operate on each request as it
+arrives, within the latency budget of a synchronous API call. Chapter 8&#x27;&#x27;s
+auditing pipeline had minutes to hours to process a training batch.
+Chapter 9&#x27;&#x27;s gateway classifier has milliseconds. The Chapter 6 and Chapter 7
+ensemble ran at P99 latency under 100ms -- Chapter 9 extends that ensemble
+with query monitoring as a sixth parallel track, within the same budget.
+
+Query sequence visibility. A single query reveals little. It is the sequence
+-- the distribution of queries over time, their positions relative to each
+other in input space, their concentration around decision boundaries -- that
+signals extraction. The detection architecture must be stateful across
+requests, not memoryless per request.
+
+Query budget as the binding constraint. Every extraction attack has a
+query budget: the number of API calls an adversary can afford before cost
+or rate limits stop them. Budget determines fidelity. A defender who doubles
+the query budget required for a given fidelity level has halved the attack&#x27;&#x27;s
+economics. This reframing -- defending against budget rather than against
+existence -- is the central insight of Chapter 9 detection design.
+
+Blast radius asymmetry. A successful injection or jailbreak affects one
+conversation. A successful extraction attack produces a deployable clone:
+a model the adversary can query at their own infrastructure, sell, or use
+to generate adversarial examples against the original. The blast radius of
+extraction is the full downstream deployment of the surrogate -- orders of
+magnitude larger than a single-conversation injection.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Adversary Access Ladder</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 9 threat actors occupy one of three rungs on an adversary access
+ladder. The rung determines what the adversary can observe, which extraction
+technique is most efficient, and how many queries are needed.
+
+Black-box access. The adversary sees only the model&#x27;&#x27;s outputs: final
+predictions, generated text, classification labels. No probability
+distributions. No logits. No gradients. This is the realistic commercial
+API scenario: the model returns a response string or a top-1 class label.
+Black-box extraction requires more queries than the alternatives but is
+the most common real-world adversary position. Section 9.3 establishes the
+fundamental black-box extraction primitive; Sections 9.4 and 9.5 extend it
+to distillation and prompt extraction.
+
+Grey-box access. The adversary sees the model&#x27;&#x27;s output distribution --
+soft labels, logit vectors, or top-k class probabilities. Many commercial
+ML APIs return confidence scores or probability distributions alongside
+predictions. This is a common production configuration that significantly
+reduces extraction query budget. Soft-label distillation (Section 9.4)
+exploits grey-box access: a probability vector over classes contains
+exponentially more information about the model&#x27;&#x27;s decision boundary than
+a single class label. The consequence for defenders: output design is a
+security decision. Returning probability distributions when a hard label
+suffices leaks extraction information unnecessarily.
+
+White-box access. The adversary has full model access: weights, architecture,
+and gradients. This access level is relevant in Chapter 9 for model inversion
+(Section 9.7) -- gradient-based inversion reconstructs training data from
+weights -- and as a threat model for open-weight models deployed with
+restricted fine-tuning licences. White-box extraction is the most powerful
+but the least common real-world scenario against commercial deployments.
+
+Budget implications by rung: black-box extraction of a classifier typically
+requires O(d) to O(d log d) queries for linear models where d is the feature
+dimension, far more for neural networks. Grey-box access reduces budget by
+5 to 50x because each query returns a full probability vector rather than a
+single bit of decision boundary information. White-box access eliminates the
+query budget constraint entirely for model structure -- the adversary already
+has the model.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Detection Architecture: Gateway vs Auditing Pipeline</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The two detection architectures in this book -- the real-time gateway
+classifier (Chapters 6 and 7) and the offline auditing pipeline (Chapter 8)
+-- are not competing designs. They address different attack surfaces at
+different latency tiers. The mistake is applying the wrong architecture to
+a threat.
+
+Chapter 8&#x27;&#x27;s auditing pipeline operated offline. It received training batches
+as asynchronous inputs, ran multi-pass statistical tests and provenance checks
+across the full batch, and gated model deployment at the end of the CI/CD
+pipeline. Latency budget: minutes to hours. Detection unit: a training batch
+or dataset. State: the pipeline maintained cross-batch history to detect
+distributed poisoning across multiple uploads.
+
+The Chapter 6 and 7 gateway classifier operated in real time. It received
+each user request as a synchronous input, ran five parallel detection tracks
+(injection classifier, OOD detector, semantic consistency checker, pattern
+analyser, jailbreak ensemble), and returned a routing decision within 50ms
+P99. Detection unit: a single request, though jailbreak detection in Chapter
+7 introduced limited session-level context. State: minimal per-session context.
+
+Chapter 9&#x27;&#x27;s detection architecture extends the gateway pattern, not the
+auditing pipeline. The attack surface is inference-time; the detection unit
+is the query sequence; the latency budget is synchronous. Chapter 9 adds a
+sixth parallel track to the Chapter 6/7 ensemble: query monitoring with
+per-user state tracking. This is the one architectural extension relative
+to Chapters 6 and 7: the state is now persistent per-user across many
+requests, not just per-session. The rate limiter (Section 9.11) acts on
+that state to turn detection into prevention.
+
+The output-side defence (Section 9.12) is architecturally novel: it operates
+post-inference, on the model&#x27;&#x27;s response before it is returned to the user.
+Neither the Chapter 6/7 gateway nor the Chapter 8 auditing pipeline had an
+output-side stage. This is the structural extension Chapter 9 contributes
+to the book&#x27;&#x27;s overall defensive architecture.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">OWASP LLM10 and ATLAS Taxonomy Anchors</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">OWASP LLM10 -- Model Theft -- defines the framework Chapter 9 operationalises.
+The framework covers intentional copying of a model&#x27;&#x27;s functionality via API
+queries, reconstruction of model behaviour through systematic querying,
+direct theft of model weights, and extraction of proprietary system prompts
+and operational configuration. Chapter 9 builds complete detection coverage
+for each of these in the attack sections (9.2 through 9.9) and deploys
+production controls in the capstone sections (9.11 and 9.12).
+
+OWASP LLM10 closure with Chapter 9 mirrors the pattern established for
+LLM01 (injection and jailbreak, closed in Chapter 7) and LLM03 (training
+data poisoning, closed in Chapter 8). Each OWASP category receives a full
+attack catalogue followed by production detection. Chapter 9 completes the
+three-category coverage arc across Part 2 of the book.
+
+MITRE ATLAS provides sub-technique granularity. Three ATLAS techniques
+anchor Chapter 9.
+
+AML.T0040 -- ML Model Inference API Access. The adversary uses the inference
+API to query the model systematically. This is the foundational technique for
+all extraction attacks: every extraction begins with AML.T0040. Query
+monitoring (Section 9.11) is the principal detection control.
+
+AML.T0044 -- Full ML Model Access. The adversary obtains weights or
+architecture directly, either through white-box model access or by
+successfully completing a functional extraction that produces a deployable
+surrogate. AML.T0044 describes the outcome of a successful extraction
+campaign, not just the access method. Output watermarking (Section 9.12)
+provides post-hoc evidence of AML.T0044 by detecting the victim model&#x27;&#x27;s
+signature in a suspected surrogate.
+
+AML.T0024 -- Exfiltration via ML Inference API. The adversary exfiltrates
+model intellectual property -- weights, decision boundaries, system prompts
+-- through the inference API as the exfiltration channel. AML.T0024 combines
+the access method of AML.T0040 with an exfiltration goal. The Sigma rule
+completed in Section 9.11 targets AML.T0040 and AML.T0024 together: the
+same query pattern that indicates inference API abuse also indicates
+exfiltration in progress.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why Extraction Defences Differ from Injection and Jailbreak Defences</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">The Chapter 6 injection classifier and Chapter 7 jailbreak ensemble both
+operate on single-request intent: a request either contains an injection
+payload or it does not; a request either attempts a jailbreak or it does
+not. The classifier reads one request and makes a binary decision. Session
+context in Chapter 7 extended this slightly -- carry-over instructions
+across turns -- but the fundamental detection unit remained the request.
+
+Extraction defences cannot operate this way. A single extraction query is
+indistinguishable from a benign query. An adversary issuing boundary-probing
+queries at one query per minute -- well within legitimate API usage -- produces
+individually normal-looking requests. The extraction signal lives in the
+distribution of queries over time: their clustering in input space, their
+concentration near decision boundaries, their entropy relative to benign
+queries, the convergence of the adversary&#x27;&#x27;s query distribution toward the
+model&#x27;&#x27;s decision surface.
+
+This has three architectural consequences. First, extraction detection requires
+persistent per-user state across requests -- the state store that Section 9.11
+builds is not optional. Second, the detection signal is statistical rather
+than deterministic: extraction is detected when the query distribution crosses
+an anomaly threshold, not when any single query crosses a content threshold.
+Third, rate limiting is a security control, not just an operational one: it
+is the actuator that turns a statistical detection into a prevention response.
+
+The practical difference in implementation: Chapter 6 and 7 classifiers have
+near-zero memory of prior requests from the same user. Chapter 9&#x27;&#x27;s query
+monitor maintains a rolling window of query statistics per user, updated on
+every request, compared against extraction-profile baselines. The
+computational cost of this memory is the primary engineering challenge of
+the Section 9.11 implementation.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Threat Model Contrast: Training-Time (Chapter 8) vs Inference-Time Extraction (Chapter 9)</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Eight-dimension comparison establishing the architectural and threat framing shift</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Dimension</li><li>Chapter 8 Training-Time</li><li>Chapter 9 Inference-Time Extraction</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Threat Actor</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Data pipeline contributor with training access</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">API consumer with query budget; no training access</p>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Attack Surface</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Training data, preprocessing pipeline, model update path</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">Deployed model inference API</p>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Attack Timing</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Before or during training; effect persists in weights</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">After deployment; weights are fixed throughout attack</p>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Detection Unit</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Training batch or dataset; asynchronous</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">Query sequence over time; synchronous per request</p>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Detection Architecture</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Offline auditing pipeline; CI/CD gate; minutes-to-hours latency</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">Real-time gateway; parallel detection tracks; sub-100ms P99</p>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Adversary Observable</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Model behaviour shift post-training</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">Per-query outputs; soft or hard labels depending on API design</p>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Primary Constraint</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Training access and data provenance visibility</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">Query budget; cost per query; rate limits</p>
+<h3 class="sh3">Dimension</h3>
+<p class="prose">Blast Radius</p>
+<h3 class="sh3">Chapter 8</h3>
+<p class="prose">Persistent model behaviour corruption across all users</p>
+<h3 class="sh3">Chapter 9</h3>
+<p class="prose">Deployable surrogate model for attacker-controlled use</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Adversary Access Ladder</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Three access levels with observable information, optimal extraction technique, and budget implications</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Access Level</li><li>Adversary Observables</li><li>Optimal Extraction Technique</li><li>Relative Query Budget</li><li>Defensive Implication</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Level</h3>
+<p class="prose">Black-Box</p>
+<h3 class="sh3">Observables</h3>
+<p class="prose">Hard labels; generated text; top-1 predictions only</p>
+<h3 class="sh3">Technique</h3>
+<p class="prose">Decision boundary probing (Section 9.3); hard-label distillation (Section 9.4)</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">Baseline (1x); O(d) to O(d log d) for linear models</p>
+<h3 class="sh3">Defensive Implication</h3>
+<p class="prose">Query pattern monitoring (Section 9.11) is the primary control</p>
+<h3 class="sh3">Level</h3>
+<p class="prose">Grey-Box</p>
+<h3 class="sh3">Observables</h3>
+<p class="prose">Soft labels; probability vectors; logit scores; top-k distributions</p>
+<h3 class="sh3">Technique</h3>
+<p class="prose">Soft-label distillation (Section 9.4); active distillation</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">Reduced 5-50x; each query returns full probability distribution</p>
+<h3 class="sh3">Defensive Implication</h3>
+<p class="prose">Return hard labels unless soft labels are required by the product; output design is a security decision</p>
+<h3 class="sh3">Level</h3>
+<p class="prose">White-Box</p>
+<h3 class="sh3">Observables</h3>
+<p class="prose">Full weights; architecture; gradients; activations</p>
+<h3 class="sh3">Technique</h3>
+<p class="prose">Gradient-based inversion (Section 9.7); direct parameter analysis</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">Effectively zero for model structure; extraction is immediate</p>
+<h3 class="sh3">Defensive Implication</h3>
+<p class="prose">Weight protection and output watermarking (Section 9.12) are the primary controls</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ATLAS Technique Mapping: Chapter 9 Coverage</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Three MITRE ATLAS sub-techniques covered in Chapter 9 with detection control references</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>ATLAS Sub-Technique</li><li>Name</li><li>Description</li><li>Chapter 9 Sections</li><li>Primary Detection Control</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Technique</h3>
+<p class="prose">AML.T0040</p>
+<h3 class="sh3">Name</h3>
+<p class="prose">ML Model Inference API Access</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Adversary uses inference API to query the model systematically for extraction or privacy attacks</p>
+<h3 class="sh3">Sections</h3>
+<p class="prose">9.1, 9.3, 9.4, 9.5, 9.6, 9.8, 9.9, 9.10, 9.11</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Query pattern monitor (Section 9.11); adaptive rate limiter (Section 9.11)</p>
+<h3 class="sh3">Sigma Rule</h3>
+<p class="prose">aml_t0040_t0024_inference_extraction.yml (Section 9.11)</p>
+<h3 class="sh3">Technique</h3>
+<p class="prose">AML.T0044</p>
+<h3 class="sh3">Name</h3>
+<p class="prose">Full ML Model Access</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Adversary obtains model weights or a functional surrogate; outcome of a successful extraction campaign</p>
+<h3 class="sh3">Sections</h3>
+<p class="prose">9.1, 9.4, 9.7, 9.9, 9.12</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Output watermarking and detection test (Section 9.12); post-hoc ownership verification</p>
+<h3 class="sh3">Sigma Rule</h3>
+<p class="prose">N/A -- post-hoc detection, not real-time signal</p>
+<h3 class="sh3">Technique</h3>
+<p class="prose">AML.T0024</p>
+<h3 class="sh3">Name</h3>
+<p class="prose">Exfiltration via ML Inference API</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Model IP -- weights, decision boundaries, system prompts -- exfiltrated through the inference API channel</p>
+<h3 class="sh3">Sections</h3>
+<p class="prose">9.1, 9.5, 9.9, 9.11</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Query pattern monitor (Section 9.11); AML.T0040/T0024 Sigma rule (Section 9.11)</p>
+<h3 class="sh3">Sigma Rule</h3>
+<p class="prose">aml_t0040_t0024_inference_extraction.yml (Section 9.11)</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Detection Architecture Comparison</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Structural properties of the offline auditing pipeline versus the real-time gateway classifier</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Property</li><li>Offline Auditing Pipeline (Chapter 8)</li><li>Real-Time Gateway Classifier (Chapters 6/7/9)</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Property</h3>
+<p class="prose">Detection timing</p>
+<h3 class="sh3">Ch8</h3>
+<p class="prose">Pre-deployment; offline batch processing</p>
+<h3 class="sh3">Ch679</h3>
+<p class="prose">In-request; synchronous per API call</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Latency budget</p>
+<h3 class="sh3">Ch8</h3>
+<p class="prose">Minutes to hours per batch</p>
+<h3 class="sh3">Ch679</h3>
+<p class="prose">Sub-100ms P99 across all parallel tracks</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Detection unit</p>
+<h3 class="sh3">Ch8</h3>
+<p class="prose">Training batch or full dataset</p>
+<h3 class="sh3">Ch679</h3>
+<p class="prose">Individual request; stateful across request sequence (Chapter 9)</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">State model</p>
+<h3 class="sh3">Ch8</h3>
+<p class="prose">Cross-batch history for distributed poisoning detection</p>
+<h3 class="sh3">Ch679</h3>
+<p class="prose">Per-user query history for extraction pattern detection (Chapter 9)</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Output</p>
+<h3 class="sh3">Ch8</h3>
+<p class="prose">Go/no-go deployment gate; poisoning alert</p>
+<h3 class="sh3">Ch679</h3>
+<p class="prose">Route/block/rate-limit decision; extraction alert</p>
+<h3 class="sh3">Property</h3>
+<p class="prose">Chapter 9 extension</p>
+<h3 class="sh3">Ch8</h3>
+<p class="prose">Not extended in Chapter 9</p>
+<h3 class="sh3">Ch679</h3>
+<p class="prose">Track 6 (query monitoring) added; output-side stage (watermarking and perturbation) added</p>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">threat_model_contrast.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the eight-dimension training-time vs inference-time threat model
+contrast as a structured data object and renders a formatted console report.
+Intended as a quick-reference tool for architects evaluating which detection
+architecture applies to a given threat scenario.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies beyond
+stdlib. No hardcoded schemas -- contrast dimensions are data-driven via the
+ContrastDimension dataclass list.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># threat_model_contrast.py
+# Chapter 9 Section 9.1 -- Training-Time vs Inference-Time Threat Model Contrast
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class ContrastDimension:
+    dimension: str
+    training_time: str
+    inference_time: str
+
+
+CONTRAST_DIMENSIONS: List[ContrastDimension] = [
+    ContrastDimension(
+        dimension=&#x27;Threat Actor&#x27;,
+        training_time=&#x27;Data pipeline contributor with training access&#x27;,
+        inference_time=&#x27;API consumer with query budget; no training access&#x27;,
+    ),
+    ContrastDimension(
+        dimension=&#x27;Attack Surface&#x27;,
+        training_time=&#x27;Training data, preprocessing pipeline, model update path&#x27;,
+        inference_time=&#x27;Deployed model inference API&#x27;,
+    ),
+    ContrastDimension(
+        dimension=&#x27;Attack Timing&#x27;,
+        training_time=&#x27;Before or during training; effect persists in weights&#x27;,
+        inference_time=&#x27;After deployment; weights fixed throughout attack&#x27;,
+    ),
+    ContrastDimension(
+        dimension=&#x27;Detection Unit&#x27;,
+        training_time=&#x27;Training batch or dataset; asynchronous&#x27;,
+        inference_time=&#x27;Query sequence over time; synchronous per request&#x27;,
+    ),
+    ContrastDimension(
+        dimension=&#x27;Detection Architecture&#x27;,
+        training_time=&#x27;Offline auditing pipeline; CI/CD gate; minutes-to-hours latency&#x27;,
+        inference_time=&#x27;Real-time gateway; parallel detection tracks; sub-100ms P99&#x27;,
+    ),
+    ContrastDimension(
+        dimension=&#x27;Adversary Observable&#x27;,
+        training_time=&#x27;Model behaviour shift post-training&#x27;,
+        inference_time=&#x27;Per-query outputs; soft or hard labels per API design&#x27;,
+    ),
+    ContrastDimension(
+        dimension=&#x27;Primary Constraint&#x27;,
+        training_time=&#x27;Training access and data provenance visibility&#x27;,
+        inference_time=&#x27;Query budget; cost per query; rate limits&#x27;,
+    ),
+    ContrastDimension(
+        dimension=&#x27;Blast Radius&#x27;,
+        training_time=&#x27;Persistent model behaviour corruption across all users&#x27;,
+        inference_time=&#x27;Deployable surrogate model for attacker-controlled use&#x27;,
+    ),
+]
+
+
+def _wrap(text: str, width: int) -&gt; List[str]:
+    words = text.split()
+    lines: List[str] = []
+    current = &#x27;&#x27;
+    for word in words:
+        if len(current) + len(word) + 1 &lt;= width:
+            current = f&#x27;{current} {word}&#x27;.strip()
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [&#x27;&#x27;]
+
+
+def render_contrast_report(dimensions: List[ContrastDimension]) -&gt; None:
+    col_width = 38
+    header = (
+        f&#x27;{&quot;Dimension&quot;:&lt;22} &#x27;
+        f&#x27;{&quot;Training-Time (Ch8)&quot;:&lt;{col_width}} &#x27;
+        f&#x27;{&quot;Inference-Time (Ch9)&quot;:&lt;{col_width}}&#x27;
+    )
+    separator = &#x27;-&#x27; * len(header)
+    print(separator)
+    print(&#x27;THREAT MODEL CONTRAST: Chapter 8 vs Chapter 9&#x27;)
+    print(separator)
+    print(header)
+    print(separator)
+    for dim in dimensions:
+        t_lines = _wrap(dim.training_time, col_width)
+        i_lines = _wrap(dim.inference_time, col_width)
+        max_lines = max(len(t_lines), len(i_lines))
+        t_lines += [&#x27;&#x27;] * (max_lines - len(t_lines))
+        i_lines += [&#x27;&#x27;] * (max_lines - len(i_lines))
+        for idx, (t_line, i_line) in enumerate(zip(t_lines, i_lines)):
+            label = dim.dimension if idx == 0 else &#x27;&#x27;
+            print(f&#x27;{label:&lt;22} {t_line:&lt;{col_width}} {i_line:&lt;{col_width}}&#x27;)
+        print()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_contrast_report(CONTRAST_DIMENSIONS)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">adversary_access_ladder.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the three-rung adversary access ladder as a structured data object
+with budget multipliers and defensive implication mapping. Provides a
+classify_api_design() function that takes an API configuration dictionary
+and returns the adversary access level the configuration exposes.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Access level selection is data-driven -- no hardcoded conditionals per
+access level; conditions are evaluated against the config dict generically.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># adversary_access_ladder.py
+# Chapter 9 Section 9.1 -- Adversary Access Ladder
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+
+@dataclass
+class AccessLevel:
+    name: str
+    observables: List[str]
+    optimal_technique: str
+    budget_multiplier: float
+    budget_note: str
+    defensive_implication: str
+    atlas_relevance: List[str]
+    # config_signals: API config keys that indicate this access level
+    config_signals: List[str] = field(default_factory=list)
+
+
+ACCESS_LADDER: List[AccessLevel] = [
+    AccessLevel(
+        name=&#x27;white_box&#x27;,
+        observables=[&#x27;model_weights&#x27;, &#x27;architecture&#x27;, &#x27;gradients&#x27;, &#x27;activations&#x27;],
+        optimal_technique=&#x27;gradient_based_inversion or direct_parameter_analysis&#x27;,
+        budget_multiplier=0.0,
+        budget_note=&#x27;Query budget effectively zero for model structure. Extraction is immediate.&#x27;,
+        defensive_implication=&#x27;Weight protection and output watermarking (Section 9.12) are the primary controls.&#x27;,
+        atlas_relevance=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;, &#x27;AML.T0024&#x27;],
+        config_signals=[&#x27;weights_accessible&#x27;, &#x27;gradients_accessible&#x27;],
+    ),
+    AccessLevel(
+        name=&#x27;grey_box&#x27;,
+        observables=[&#x27;soft_labels&#x27;, &#x27;probability_vectors&#x27;, &#x27;logit_scores&#x27;, &#x27;top_k_distributions&#x27;],
+        optimal_technique=&#x27;soft_label_distillation or active_distillation&#x27;,
+        budget_multiplier=0.05,
+        budget_note=&#x27;5-50x budget reduction. Each query returns full probability distribution.&#x27;,
+        defensive_implication=&#x27;Return hard labels unless soft labels are required by the product.&#x27;,
+        atlas_relevance=[&#x27;AML.T0040&#x27;, &#x27;AML.T0024&#x27;],
+        config_signals=[&#x27;returns_probabilities&#x27;, &#x27;returns_logits&#x27;, &#x27;returns_top_k&#x27;],
+    ),
+    AccessLevel(
+        name=&#x27;black_box&#x27;,
+        observables=[&#x27;hard_labels&#x27;, &#x27;generated_text&#x27;, &#x27;top_1_prediction&#x27;],
+        optimal_technique=&#x27;decision_boundary_probing or hard_label_distillation&#x27;,
+        budget_multiplier=1.0,
+        budget_note=&#x27;Baseline. O(d) to O(d log d) queries for linear models.&#x27;,
+        defensive_implication=&#x27;Query pattern monitoring (Section 9.11) is the primary control.&#x27;,
+        atlas_relevance=[&#x27;AML.T0040&#x27;, &#x27;AML.T0024&#x27;],
+        config_signals=[],
+    ),
+]
+
+
+def classify_api_design(api_config: Dict[str, bool]) -&gt; AccessLevel:
+    &#x27;&#x27;&#x27;
+    Classify an API configuration into the adversary access level it exposes.
+    Evaluated in descending severity order: white_box &gt; grey_box &gt; black_box.
+
+    api_config keys:
+        returns_probabilities (bool): API returns soft-label probability vectors
+        returns_logits (bool):        API returns raw logit scores
+        returns_top_k (bool):         API returns top-k predictions with scores
+        weights_accessible (bool):    Model weights are accessible
+        gradients_accessible (bool):  Gradient access is available
+    &#x27;&#x27;&#x27;
+    for level in ACCESS_LADDER:
+        if any(api_config.get(signal, False) for signal in level.config_signals):
+            return level
+    # No elevated signals -- black_box is the fallback (last in list)
+    return ACCESS_LADDER[-1]
+
+
+def render_access_ladder() -&gt; None:
+    print(&#x27;ADVERSARY ACCESS LADDER -- Chapter 9 Section 9.1&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for i, level in enumerate(ACCESS_LADDER, 1):
+        print(f&#x27;\nRung {i}: {level.name.upper()}&#x27;)
+        print(f&#x27;  Observables:    {&quot;, &quot;.join(level.observables)}&#x27;)
+        print(f&#x27;  Best technique: {level.optimal_technique}&#x27;)
+        print(f&#x27;  Budget:         {level.budget_note}&#x27;)
+        print(f&#x27;  Defence:        {level.defensive_implication}&#x27;)
+        print(f&#x27;  ATLAS:          {&quot;, &quot;.join(level.atlas_relevance)}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_access_ladder()
+    print()
+    example_config = {
+        &#x27;returns_probabilities&#x27;: False,
+        &#x27;returns_logits&#x27;: False,
+        &#x27;returns_top_k&#x27;: True,
+        &#x27;weights_accessible&#x27;: False,
+        &#x27;gradients_accessible&#x27;: False,
+    }
+    level = classify_api_design(example_config)
+    print(f&#x27;Example API classification: {level.name}&#x27;)
+    print(f&#x27;Defensive implication: {level.defensive_implication}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">atlas_technique_mapper.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the AML.T0040/T0044/T0024 ATLAS technique mapping as structured data.
+Provides a map_observable_to_technique() function that takes a list of
+observed adversary behaviour signals and returns the matching ATLAS
+sub-techniques ranked by signal overlap count.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Technique data is schema-free -- fields are driven by the AtlasTechnique
+dataclass, not hardcoded per technique. Optional imported at top level.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># atlas_technique_mapper.py
+# Chapter 9 Section 9.1 -- ATLAS Technique Mapper
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import List, Optional, Set, Tuple
+
+
+@dataclass
+class AtlasTechnique:
+    technique_id: str
+    name: str
+    description: str
+    observable_signals: List[str]
+    chapter_sections: List[str]
+    primary_detection_control: str
+    sigma_rule_reference: Optional[str] = None
+
+
+CHAPTER_9_TECHNIQUES: List[AtlasTechnique] = [
+    AtlasTechnique(
+        technique_id=&#x27;AML.T0040&#x27;,
+        name=&#x27;ML Model Inference API Access&#x27;,
+        description=&#x27;Adversary uses inference API to query the model systematically for extraction or privacy attacks.&#x27;,
+        observable_signals=[
+            &#x27;high_query_volume_single_user&#x27;,
+            &#x27;query_distribution_near_decision_boundary&#x27;,
+            &#x27;systematic_input_variation&#x27;,
+            &#x27;out_of_distribution_query_clustering&#x27;,
+            &#x27;low_output_entropy_queries&#x27;,
+        ],
+        chapter_sections=[&#x27;9.1&#x27;, &#x27;9.3&#x27;, &#x27;9.4&#x27;, &#x27;9.5&#x27;, &#x27;9.6&#x27;, &#x27;9.8&#x27;, &#x27;9.9&#x27;, &#x27;9.10&#x27;, &#x27;9.11&#x27;],
+        primary_detection_control=&#x27;Query pattern monitor (Section 9.11); adaptive rate limiter (Section 9.11)&#x27;,
+        sigma_rule_reference=&#x27;aml_t0040_t0024_inference_extraction.yml (Section 9.11)&#x27;,
+    ),
+    AtlasTechnique(
+        technique_id=&#x27;AML.T0044&#x27;,
+        name=&#x27;Full ML Model Access&#x27;,
+        description=&#x27;Adversary obtains model weights or a functional surrogate; outcome of a successful extraction campaign.&#x27;,
+        observable_signals=[
+            &#x27;surrogate_model_detected_in_market&#x27;,
+            &#x27;watermark_present_in_third_party_model&#x27;,
+            &#x27;capability_duplication_without_training_evidence&#x27;,
+        ],
+        chapter_sections=[&#x27;9.1&#x27;, &#x27;9.4&#x27;, &#x27;9.7&#x27;, &#x27;9.9&#x27;, &#x27;9.12&#x27;],
+        primary_detection_control=&#x27;Output watermarking and detection test (Section 9.12); post-hoc ownership verification&#x27;,
+        sigma_rule_reference=None,
+    ),
+    AtlasTechnique(
+        technique_id=&#x27;AML.T0024&#x27;,
+        name=&#x27;Exfiltration via ML Inference API&#x27;,
+        description=&#x27;Model IP -- weights, decision boundaries, system prompts -- exfiltrated through the inference API channel.&#x27;,
+        observable_signals=[
+            &#x27;high_query_volume_single_user&#x27;,
+            &#x27;systematic_prompt_reconstruction_queries&#x27;,
+            &#x27;cross_user_coordinated_query_patterns&#x27;,
+            &#x27;boundary_probing_sequence&#x27;,
+        ],
+        chapter_sections=[&#x27;9.1&#x27;, &#x27;9.5&#x27;, &#x27;9.9&#x27;, &#x27;9.11&#x27;],
+        primary_detection_control=&#x27;Query pattern monitor (Section 9.11); AML.T0040/T0024 Sigma rule (Section 9.11)&#x27;,
+        sigma_rule_reference=&#x27;aml_t0040_t0024_inference_extraction.yml (Section 9.11)&#x27;,
+    ),
+]
+
+
+def map_observable_to_technique(observables: List[str]) -&gt; List[AtlasTechnique]:
+    &#x27;&#x27;&#x27;
+    Given a list of observed adversary behaviour signals, return matching ATLAS
+    sub-techniques sorted by number of matching signals (descending).
+    Techniques with zero matches are excluded.
+    &#x27;&#x27;&#x27;
+    observed_set: Set[str] = set(observables)
+    scored: List[Tuple[int, AtlasTechnique]] = []
+    for technique in CHAPTER_9_TECHNIQUES:
+        matches = observed_set.intersection(set(technique.observable_signals))
+        if matches:
+            scored.append((len(matches), technique))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [technique for _, technique in scored]
+
+
+def render_technique_mapping() -&gt; None:
+    print(&#x27;ATLAS TECHNIQUE MAPPING -- Chapter 9&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for technique in CHAPTER_9_TECHNIQUES:
+        print(f&#x27;\n{technique.technique_id}: {technique.name}&#x27;)
+        print(f&#x27;  Description: {technique.description}&#x27;)
+        print(f&#x27;  Observable signals:&#x27;)
+        for sig in technique.observable_signals:
+            print(f&#x27;    - {sig}&#x27;)
+        print(f&#x27;  Sections: {&quot;, &quot;.join(technique.chapter_sections)}&#x27;)
+        print(f&#x27;  Detection: {technique.primary_detection_control}&#x27;)
+        if technique.sigma_rule_reference:
+            print(f&#x27;  Sigma rule: {technique.sigma_rule_reference}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_technique_mapping()
+    print()
+    example_observables = [
+        &#x27;high_query_volume_single_user&#x27;,
+        &#x27;query_distribution_near_decision_boundary&#x27;,
+        &#x27;systematic_input_variation&#x27;,
+    ]
+    matched = map_observable_to_technique(example_observables)
+    print(&#x27;Observable signals mapped to techniques:&#x27;)
+    for t in matched:
+        print(f&#x27;  {t.technique_id}: {t.name}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">owasp_llm10_scope.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the OWASP LLM10 (Model Theft) sub-risks and Chapter 9 coverage
+mapping as structured data. Provides a gap_analysis() function that takes
+a list of deployed controls and identifies which LLM10 sub-risks remain
+uncovered.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Sub-risk data is schema-driven via LLM10SubRisk dataclass. gap_analysis()
+is purely data-driven -- no hardcoded per-risk conditionals.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># owasp_llm10_scope.py
+# Chapter 9 Section 9.1 -- OWASP LLM10 Scope and Chapter 9 Coverage
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass
+from typing import Dict, List, Set
+
+
+@dataclass
+class LLM10SubRisk:
+    risk_id: str
+    description: str
+    attack_sections: List[str]
+    detection_sections: List[str]
+    required_controls: List[str]
+
+
+LLM10_SUB_RISKS: List[LLM10SubRisk] = [
+    LLM10SubRisk(
+        risk_id=&#x27;LLM10.1&#x27;,
+        description=&#x27;Intentional copying of model functionality via API queries&#x27;,
+        attack_sections=[&#x27;9.3&#x27;, &#x27;9.4&#x27;],
+        detection_sections=[&#x27;9.10&#x27;, &#x27;9.11&#x27;],
+        required_controls=[&#x27;query_pattern_monitor&#x27;, &#x27;adaptive_rate_limiter&#x27;],
+    ),
+    LLM10SubRisk(
+        risk_id=&#x27;LLM10.2&#x27;,
+        description=&#x27;Extraction of system prompts and operational configuration&#x27;,
+        attack_sections=[&#x27;9.5&#x27;],
+        detection_sections=[&#x27;9.10&#x27;, &#x27;9.11&#x27;, &#x27;9.12&#x27;],
+        required_controls=[&#x27;query_pattern_monitor&#x27;, &#x27;output_perturbator&#x27;],
+    ),
+    LLM10SubRisk(
+        risk_id=&#x27;LLM10.3&#x27;,
+        description=&#x27;Training data reconstruction via membership inference and model inversion&#x27;,
+        attack_sections=[&#x27;9.6&#x27;, &#x27;9.7&#x27;],
+        detection_sections=[&#x27;9.10&#x27;, &#x27;9.12&#x27;],
+        required_controls=[&#x27;output_perturbator&#x27;, &#x27;differential_privacy_training&#x27;],
+    ),
+    LLM10SubRisk(
+        risk_id=&#x27;LLM10.4&#x27;,
+        description=&#x27;API economic abuse: denial-of-wallet and rate-limit exhaustion&#x27;,
+        attack_sections=[&#x27;9.8&#x27;],
+        detection_sections=[&#x27;9.11&#x27;],
+        required_controls=[&#x27;adaptive_rate_limiter&#x27;, &#x27;cost_monitor&#x27;],
+    ),
+    LLM10SubRisk(
+        risk_id=&#x27;LLM10.5&#x27;,
+        description=&#x27;Surrogate model deployment post-extraction (ownership dispute)&#x27;,
+        attack_sections=[&#x27;9.4&#x27;, &#x27;9.9&#x27;],
+        detection_sections=[&#x27;9.12&#x27;],
+        required_controls=[&#x27;output_watermarker&#x27;, &#x27;watermark_detector&#x27;],
+    ),
+]
+
+
+def gap_analysis(deployed_controls: List[str]) -&gt; Dict[str, List[str]]:
+    &#x27;&#x27;&#x27;
+    Given a list of deployed control names, return per-sub-risk coverage gaps.
+    Returns a dict mapping risk_id to list of missing required controls.
+    Sub-risks with full coverage are excluded from the result.
+    &#x27;&#x27;&#x27;
+    deployed_set: Set[str] = set(deployed_controls)
+    gaps: Dict[str, List[str]] = {}
+    for sub_risk in LLM10_SUB_RISKS:
+        missing = [c for c in sub_risk.required_controls if c not in deployed_set]
+        if missing:
+            gaps[sub_risk.risk_id] = missing
+    return gaps
+
+
+def render_scope() -&gt; None:
+    print(&#x27;OWASP LLM10 (MODEL THEFT) -- Chapter 9 Coverage&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for sub_risk in LLM10_SUB_RISKS:
+        print(f&#x27;\n{sub_risk.risk_id}&#x27;)
+        print(f&#x27;  Risk:      {sub_risk.description}&#x27;)
+        print(f&#x27;  Attacks:   Sections {&quot;, &quot;.join(sub_risk.attack_sections)}&#x27;)
+        print(f&#x27;  Detection: Sections {&quot;, &quot;.join(sub_risk.detection_sections)}&#x27;)
+        print(f&#x27;  Controls:  {&quot;, &quot;.join(sub_risk.required_controls)}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_scope()
+    print()
+    example_deployed = [&#x27;query_pattern_monitor&#x27;, &#x27;adaptive_rate_limiter&#x27;]
+    gaps = gap_analysis(example_deployed)
+    print(&#x27;Gap analysis for partially deployed controls:&#x27;)
+    for risk_id, missing in gaps.items():
+        print(f&#x27;  {risk_id}: missing -- {&quot;, &quot;.join(missing)}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">architecture_selector.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Implements a decision function that takes a threat scenario and returns the
+correct detection architecture (gateway classifier vs offline auditing pipeline)
+with rationale and chapter references. Encodes the eight-property contrast
+from Table 1 as a data-driven scoring function.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Architecture selection is data-driven -- ARCHITECTURE_RULES list drives
+scoring with no hardcoded if/else per scenario type. Highest-scoring rule
+wins; ties broken by list order (most-specific first).</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># architecture_selector.py
+# Chapter 9 Section 9.1 -- Detection Architecture Selector
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple
+
+
+@dataclass
+class ThreatScenario:
+    name: str
+    attack_surface: str       # &#x27;training_pipeline&#x27; or &#x27;inference_api&#x27;
+    detection_timing: str     # &#x27;pre_deployment&#x27; or &#x27;runtime&#x27;
+    latency_requirement: str  # &#x27;batch&#x27; or &#x27;realtime&#x27;
+    state_requirement: str    # &#x27;stateless&#x27; or &#x27;stateful&#x27;
+
+
+@dataclass
+class ArchitectureRecommendation:
+    architecture: str
+    rationale: str
+    chapter_reference: str
+    extension_notes: str
+
+
+@dataclass
+class ArchitectureRule:
+    name: str
+    conditions: Dict[str, str]
+    recommendation: ArchitectureRecommendation
+
+
+ARCHITECTURE_RULES: List[ArchitectureRule] = [
+    ArchitectureRule(
+        name=&#x27;offline_auditing_pipeline&#x27;,
+        conditions={
+            &#x27;attack_surface&#x27;: &#x27;training_pipeline&#x27;,
+            &#x27;detection_timing&#x27;: &#x27;pre_deployment&#x27;,
+            &#x27;latency_requirement&#x27;: &#x27;batch&#x27;,
+        },
+        recommendation=ArchitectureRecommendation(
+            architecture=&#x27;offline_auditing_pipeline&#x27;,
+            rationale=&#x27;Training-time attack surface requires pre-deployment batch auditing. Real-time gateway adds no coverage for this threat class.&#x27;,
+            chapter_reference=&#x27;Chapter 8 Section 8.15&#x27;,
+            extension_notes=&#x27;No Chapter 9 extension applicable. Use Chapter 8 auditing pipeline.&#x27;,
+        ),
+    ),
+    ArchitectureRule(
+        name=&#x27;gateway_classifier_with_query_monitoring&#x27;,
+        conditions={
+            &#x27;attack_surface&#x27;: &#x27;inference_api&#x27;,
+            &#x27;detection_timing&#x27;: &#x27;runtime&#x27;,
+            &#x27;latency_requirement&#x27;: &#x27;realtime&#x27;,
+        },
+        recommendation=ArchitectureRecommendation(
+            architecture=&#x27;gateway_classifier_with_query_monitoring&#x27;,
+            rationale=&#x27;Inference-time attack surface requires real-time per-request analysis. Extend Chapter 6/7 gateway with Chapter 9 query monitoring (Track 6) and output-side watermarking and perturbation.&#x27;,
+            chapter_reference=&#x27;Chapter 6 Section 6.17, Chapter 7 Section 7.14, Chapter 9 Sections 9.11 and 9.12&#x27;,
+            extension_notes=&#x27;Add per-user state store. Add Track 6 (query monitor). Add output-side stage (watermarker and perturbator). Maintain sub-100ms P99 across all tracks.&#x27;,
+        ),
+    ),
+]
+
+
+def select_architecture(scenario: ThreatScenario) -&gt; ArchitectureRecommendation:
+    &#x27;&#x27;&#x27;
+    Select the correct detection architecture for a given threat scenario.
+    Scores each rule by number of matching conditions. Returns the highest-
+    scoring recommendation. Returns an undetermined result if no rule matches.
+    &#x27;&#x27;&#x27;
+    scored: List[Tuple[int, ArchitectureRecommendation]] = []
+    for rule in ARCHITECTURE_RULES:
+        score = sum(
+            1 for field_name, expected in rule.conditions.items()
+            if getattr(scenario, field_name, None) == expected
+        )
+        scored.append((score, rule.recommendation))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    best_score, best_rec = scored[0]
+    if best_score == 0:
+        return ArchitectureRecommendation(
+            architecture=&#x27;undetermined&#x27;,
+            rationale=&#x27;Scenario does not match known architecture patterns. Manual review required.&#x27;,
+            chapter_reference=&#x27;Chapter 9 Section 9.1&#x27;,
+            extension_notes=&#x27;Review attack surface and detection timing requirements against Table 4.&#x27;,
+        )
+    return best_rec
+
+
+if __name__ == &#x27;__main__&#x27;:
+    extraction_scenario = ThreatScenario(
+        name=&#x27;model_extraction_via_api&#x27;,
+        attack_surface=&#x27;inference_api&#x27;,
+        detection_timing=&#x27;runtime&#x27;,
+        latency_requirement=&#x27;realtime&#x27;,
+        state_requirement=&#x27;stateful&#x27;,
+    )
+    rec = select_architecture(extraction_scenario)
+    print(f&#x27;Scenario:   {extraction_scenario.name}&#x27;)
+    print(f&#x27;Architecture: {rec.architecture}&#x27;)
+    print(f&#x27;Rationale:  {rec.rationale}&#x27;)
+    print(f&#x27;Reference:  {rec.chapter_reference}&#x27;)
+    print(f&#x27;Extension:  {rec.extension_notes}&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Applying the Chapter 8 offline auditing architecture to inference-time extraction threats</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Chapter 8 trained readers to think in batch jobs and CI/CD gates. After building
+a well-functioning auditing pipeline, it is natural to reach for the same
+architecture when a new threat appears. Extraction looks like a data exfiltration
+problem -- and data exfiltration is often addressed by audit logs and batch analysis.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Batch auditors run too late to prevent extraction in progress. By the time a
+nightly audit flags anomalous query patterns, the adversary has completed the
+extraction campaign and the surrogate is already training. The defender discovers
+the theft after it has happened, with no opportunity to intervene.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Inference-time threats require real-time gateway detection. Use the Chapter 6/7
+gateway pattern extended with query monitoring (Section 9.11). Batch audit logs
+are valuable for post-hoc forensics and incident reconstruction (Section 9.9),
+not for real-time extraction prevention.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating individual extraction queries as the detection unit</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Injection and jailbreak detection (Chapters 6 and 7) operated on single requests.
+Readers carry that habit into Chapter 9 and build classifiers that evaluate each
+query in isolation for extraction intent. A single boundary-probing query looks
+benign in isolation -- the classifier always returns false.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The detector has zero detection power. Every extraction query that is not
+obviously malformed passes the single-request classifier. The adversary issues
+ten thousand individually-benign queries and extracts the model undetected.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">The detection unit for extraction is the query sequence, not the query. Build
+per-user state that accumulates query distribution statistics across requests.
+Detection fires when the distribution crosses an anomaly threshold, not when
+any individual query crosses a content threshold. See Section 9.11.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating rate limits as operational controls rather than security controls</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Rate limits are traditionally set by engineering or product teams to protect
+infrastructure from overload. The limit reflects throughput capacity, not
+extraction threat modelling. Security teams inherit the limit without
+questioning its security properties.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">A throughput-based rate limit may be set high enough to permit a complete
+extraction campaign within one billing period. An adversary who stays below
+the throughput limit while systematically probing decision boundaries extracts
+the model within the rate limit&#x27;&#x27;s budget.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Rate limits against extraction must be extraction-aware: they enforce query
+budget constraints against systematic boundary probing, not just peak
+throughput. Section 9.11 builds an adaptive rate limiter with extraction-aware
+policy dimensions including OOD query rate, per-user cumulative extraction
+signal, and cross-user collusion scoring.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Returning soft-label probability vectors when hard labels suffice</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">API designers default to returning full model output distributions because they
+are more informative and provide better user experience in legitimate use cases.
+Confidence scores and probability vectors are seen as a feature, not a risk.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Grey-box access reduces the adversary&#x27;&#x27;s query budget by 5 to 50x compared
+to hard-label-only APIs. An extraction that would require 100,000 queries
+against a hard-label API completes in 2,000 to 20,000 queries against a
+soft-label API. The API has granted the adversary a substantial budget discount
+without any business requirement to do so.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Audit every output field in the API response. Return probability distributions
+only when the use case genuinely requires them. For classification APIs where
+the product only needs a decision, return the hard label. See Section 9.12
+for output perturbation as a further defence when soft labels cannot be removed.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Assuming watermarking prevents extraction rather than providing post-hoc evidence</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Output watermarking (Section 9.12) sounds like it prevents the theft: if the
+output is marked, the adversary cannot use it without revealing the mark.
+Readers conflate the detection function (watermark proves ownership) with the
+prevention function (watermark blocks extraction).</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Deploying watermarking as the sole extraction control provides no real-time
+prevention. The adversary extracts the model successfully; the watermark
+transfers to the surrogate but does not stop the extraction. The defender has
+ownership evidence but the model has already been stolen.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Watermarking is a post-hoc ownership and attribution control, not a prevention
+control. It is complementary to, not a replacement for, input-side query
+monitoring and rate limiting (Section 9.11). Combine both surfaces: prevent
+where possible with query monitoring and adaptive rate limiting; detect
+post-hoc with watermarking when prevention fails.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Chapter 9 returns to inference-time gateway detection after Chapter 8&#x27;&#x27;s
+training-time auditing pipeline. The threat actor is now an API consumer with
+a query budget rather than a pipeline contributor with training access. The
+attack surface is the deployed model&#x27;&#x27;s inference API; the attack goal is
+reconstructing what the model knows or how it behaves without the cost of
+training from scratch. Detection requires stateful per-user query pattern
+analysis -- not single-request intent classification -- because individual
+extraction queries are indistinguishable from benign queries. The detection
+architecture extends the Chapter 6/7 real-time gateway with a sixth parallel
+track (query monitoring) and a new output-side stage (watermarking and
+perturbation). The chapter closes OWASP LLM10 (Model Theft) and maps to
+three ATLAS sub-techniques: AML.T0040 (inference API access), AML.T0044
+(full model access), and AML.T0024 (exfiltration via inference API).</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>The threat actor has changed from pipeline contributor to API consumer; the detection architecture must change with it</li><li>Query budget is the primary economic constraint -- defend by increasing required budget, not by trying to block existence of the attack</li><li>Extraction detection is statistical and cross-request; it cannot be reduced to single-request intent classification</li><li>Grey-box APIs give adversaries a 5-50x query budget discount; output design is a security decision</li><li>Watermarking provides post-hoc evidence of extraction; it does not prevent extraction in progress</li><li>OWASP LLM10 closes with Chapter 9 via two defensive surfaces: input-side query monitoring and output-side watermarking and perturbation</li></ul>
+<h2 class="sh1">Preview Section 02</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 9.2: Extraction Taxonomy -- Functionality, Fidelity, Decision-Boundary, Prompt Extraction</p>
+<h3 class="sh2">Preview</h3>
+<p class="prose">Section 9.1 established the threat model and adversary access ladder. Section
+9.2 builds the taxonomy that organises the rest of the chapter&#x27;&#x27;s attack
+sections. Four extraction goals -- functionality, fidelity, decision-boundary,
+and prompt extraction -- each have distinct adversary objectives, query budget
+requirements, and detection signals. The taxonomy is the filing system: every
+attack in Sections 9.3 through 9.9 maps to one or more of the four goal
+quadrants, and every detection primitive in Section 9.10 covers one or more
+quadrants. Understanding the taxonomy before the attack sections means the
+detection architecture design in Sections 9.11 and 9.12 will make immediate
+sense: each primitive exists because a specific goal quadrant required it.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 1: overfitting as data extraction vector</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Mechanism deepens in Section 9.6 (membership inference) and 9.7 (model inversion)</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 4 Section 4.8: API architecture and security</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Prerequisite for adversary access ladder and API economic abuse (Section 9.8)</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 5 Section 5.4: OWASP LLM10 framework overview</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Chapter 9 operationalises the framework; Section 9.1 introduces it</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 5 Section 5.8: AML Sigma stub pattern</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Reused for AML.T0040/T0024 Sigma rule completion in Section 9.11</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 6 Section 6.17: production injection classifier</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Gateway architecture extended in Sections 9.11 and 9.12</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 7 Section 7.14: jailbreak detection ensemble</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Parallel-track pattern reused; Track 6 (query monitoring) added in Section 9.11</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 8 Section 8.15: production auditing pipeline</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Offline architecture contrasted in Section 9.1 Tables 1 and 4</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 8 Section 8.16: cross-cutting threads framework</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Extended in Section 9.13 chapter summary</p>
+<h3 class="sh2">Forward References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.2: Extraction Taxonomy</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Taxonomy scaffold for all attack sections (9.3 through 9.9)</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.11: query_monitor.py and rate_limiter.py</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Production implementation of AML.T0040/T0024 detection; completes Sigma rule</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.12: output_watermarker.py and output_perturbator.py</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Production implementation of AML.T0044 post-hoc detection and extraction friction</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Section 9.13: Chapter Summary</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">OWASP LLM10 closure and cumulative LLM01 + LLM03 + LLM10 coverage map</p>
+</article>
