@@ -1,0 +1,616 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 23 · ~6 pages</div>
+<h1>Model Interpretability and Explainability</h1>
+<div class="tags"><span class="tag">interpretability</span><span class="tag">explainability</span><span class="tag">feature-importance</span><span class="tag">saliency-maps</span><span class="tag">lime</span><span class="tag">shap</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Neural networks are often &quot;black boxes&quot; - high accuracy but opaque reasoning.
+Why did the model predict &quot;fraud&quot;? Which features mattered? Can we trust
+this prediction? Interpretability techniques open the black box, revealing
+which inputs drive predictions and how the model makes decisions.
+
+This section covers interpretability fundamentals. You&#x27;ll understand why
+interpretability matters (debugging, trust, fairness, compliance), learn
+feature importance methods (permutation importance, SHAP), implement
+saliency maps (gradients show which pixels matter), use local explanations
+(LIME approximates model locally), understand limitations (explanations
+can mislead), and connect to security (interpretability detects backdoors).
+
+By the end, you&#x27;ll explain model predictions to stakeholders, debug via
+interpretability, and understand when explanations trustworthy vs misleading.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand interpretability vs explainability</li><li>Know global vs local explanations</li><li>Grasp feature importance fundamentals</li><li>Recognize limitations of interpretability methods</li><li>Understand when interpretability required (regulations)</li><li>Connect interpretability to security (backdoor detection)</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement feature importance (permutation)</li><li>Generate saliency maps for images</li><li>Use LIME for local explanations</li><li>Compute SHAP values</li><li>Visualize attention weights</li><li>Build interpretation dashboard</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Interpretability detects backdoors</li><li>Explanations can be manipulated (adversarial)</li><li>Feature importance reveals sensitive attributes</li><li>Attention weights leak information</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>All Chapter 02 sections (gradients, models, training)</li><li>Understanding of feature importance</li><li>Familiarity with visualization</li></ul>
+<h2 class="sh1">Why Interpretability</h2>
+<h3 class="sh2">Trust And Adoption</h3>
+<h3 class="sh3">User Trust</h3>
+<p class="prose">Users trust explainable predictions more:
+
+Black box: &quot;Model says fraud. Trust us.&quot;
+→ User skeptical
+
+Explained: &quot;Model says fraud because:
+- Transaction amount 10× typical
+- Unusual location (foreign country)
+- Time: 3am (unusual for this user)&quot;
+→ User understands and trusts</p>
+<h3 class="sh3">Stakeholder Buy In</h3>
+<p class="prose">Business stakeholders need explanations:
+
+Question: &quot;Why did model reject this loan?&quot;
+
+Without interpretability: &quot;Neural network said so&quot;
+→ Stakeholder won&#x27;t deploy
+
+With interpretability: &quot;Low income-to-debt ratio, short credit history&quot;
+→ Stakeholder understands, approves deployment</p>
+<h3 class="sh2">Debugging And Improvement</h3>
+<h3 class="sh3">Find Bugs</h3>
+<p class="prose">Interpretability reveals model bugs:
+
+Example: Image classifier
+Model: High accuracy on test set
+Explanation: Attending to watermark in corner!
+
+Bug: Model learned spurious correlation
+Fix: Remove watermarks from training data</p>
+<h3 class="sh3">Feature Engineering</h3>
+<p class="prose">Feature importance guides engineering:
+
+High importance: Income, debt_ratio, credit_history
+Low importance: Favorite_color, zodiac_sign
+
+Action: Remove low-importance features, add similar to high-importance</p>
+<h3 class="sh2">Regulatory Compliance</h3>
+<h3 class="sh3">Gdpr Right To Explanation</h3>
+<p class="prose">GDPR Article 22: Right to explanation for automated decisions
+
+Users can request: &quot;Why was my loan denied?&quot;
+
+Must provide meaningful explanation (not just &quot;algorithm&quot;)</p>
+<h3 class="sh3">Fair Lending Laws</h3>
+<p class="prose">US Fair Credit Reporting Act: Must explain credit decisions
+
+Cannot say: &quot;Computer said no&quot;
+Must explain: Which factors led to decision</p>
+<h3 class="sh3">Medical Ai</h3>
+<p class="prose">FDA guidance: Medical AI must be interpretable
+
+Doctor needs to understand: &quot;Why does AI recommend surgery?&quot;
+
+Can&#x27;t deploy black box for medical decisions</p>
+<h3 class="sh2">Fairness And Bias</h3>
+<h3 class="sh3">Detect Bias</h3>
+<p class="prose">Interpretability reveals unfair biases:
+
+Model: Predicting recidivism
+Explanation: Race is top feature
+
+Problem: Using protected attribute illegally
+Fix: Remove race, retrain, verify fairness</p>
+<h3 class="sh3">Protected Attributes</h3>
+<p class="prose">Check if model uses protected attributes:
+- Race
+- Gender
+- Age
+- Religion
+
+Even indirectly (via proxies like zip code)</p>
+<h2 class="sh1">Types Of Interpretability</h2>
+<h3 class="sh2">Global Vs Local</h3>
+<h3 class="sh3">Global Interpretability</h3>
+<p class="prose">Understanding entire model behavior:
+
+&quot;What does the model learn overall?&quot;
+&quot;Which features are generally important?&quot;
+
+Methods:
+- Feature importance
+- Decision trees approximation
+- Model architecture analysis</p>
+<h3 class="sh3">Local Interpretability</h3>
+<p class="prose">Understanding single prediction:
+
+&quot;Why did model predict fraud for THIS transaction?&quot;
+&quot;Which features mattered for THIS prediction?&quot;
+
+Methods:
+- LIME
+- SHAP
+- Saliency maps</p>
+<h3 class="sh3">Which To Use</h3>
+<p class="prose">Global: Model debugging, feature selection, overall understanding
+Local: Individual prediction explanation, user trust, compliance</p>
+<h3 class="sh2">Model Specific Vs Model Agnostic</h3>
+<h3 class="sh3">Model Specific</h3>
+<p class="prose">Works only for certain model types:
+
+- Attention weights (Transformers only)
+- Saliency maps (gradient-based models)
+- Tree feature importance (tree models only)
+
+Pros: Efficient, exact
+Cons: Limited applicability</p>
+<h3 class="sh3">Model Agnostic</h3>
+<p class="prose">Works for any model (black box):
+
+- LIME
+- SHAP
+- Permutation importance
+
+Pros: Universal
+Cons: Slower, approximate</p>
+<h2 class="sh1">Feature Importance</h2>
+<h3 class="sh2">Permutation Importance</h3>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">Measure importance by permuting feature:
+
+1. Compute baseline accuracy on validation set
+2. For each feature i:
+   a. Randomly shuffle feature i values
+   b. Compute new accuracy
+   c. Importance = baseline_accuracy - new_accuracy
+3. Rank features by importance
+
+High importance: Accuracy drops a lot when shuffled
+Low importance: Accuracy barely changes</p>
+<h3 class="sh3">Implementation</h3>
+<pre class="code"><code>def permutation_importance(model, X_val, y_val, num_repeats=10):
+    &quot;&quot;&quot;
+    Compute permutation importance for each feature.
+    
+    Parameters:
+    - model: trained model
+    - X_val: validation features (N, D)
+    - y_val: validation labels (N,)
+    - num_repeats: number of permutation repeats
+    
+    Returns:
+    - importances: (D,) array of importance scores
+    &quot;&quot;&quot;
+    # Baseline accuracy
+    baseline_acc = model.score(X_val, y_val)
+    
+    num_features = X_val.shape[1]
+    importances = np.zeros(num_features)
+    
+    for feature_idx in range(num_features):
+        acc_drops = []
+        
+        for repeat in range(num_repeats):
+            # Copy data
+            X_permuted = X_val.copy()
+            
+            # Shuffle feature
+            np.random.shuffle(X_permuted[:, feature_idx])
+            
+            # Compute accuracy
+            permuted_acc = model.score(X_permuted, y_val)
+            
+            # Importance = drop in accuracy
+            acc_drops.append(baseline_acc - permuted_acc)
+        
+        # Average over repeats
+        importances[feature_idx] = np.mean(acc_drops)
+    
+    return importances</code></pre>
+<h3 class="sh3">Visualization</h3>
+<pre class="code"><code>import matplotlib.pyplot as plt
+
+def plot_feature_importance(importances, feature_names):
+    &quot;&quot;&quot;Plot feature importance bar chart&quot;&quot;&quot;
+    # Sort by importance
+    sorted_idx = np.argsort(importances)[::-1]
+    
+    plt.figure(figsize=(10, 6))
+    plt.barh(range(len(importances)), importances[sorted_idx])
+    plt.yticks(range(len(importances)), 
+              [feature_names[i] for i in sorted_idx])
+    plt.xlabel(&#x27;Importance (Accuracy Drop)&#x27;)
+    plt.title(&#x27;Feature Importance&#x27;)
+    plt.tight_layout()
+    plt.show()</code></pre>
+<h3 class="sh3">Pros And Cons</h3>
+<p class="prose">Pros:
+- Model-agnostic (works for any model)
+- Intuitive interpretation
+- Captures feature interactions
+
+Cons:
+- Slow (need to retrain for each permutation)
+- Variance across runs (stochastic)
+- Only shows average importance</p>
+<h3 class="sh2">Shap Values</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">SHAP (SHapley Additive exPlanations):
+
+For prediction f(x):
+f(x) = f_baseline + φ_1 + φ_2 + ... + φ_D
+
+Where φ_i = SHAP value for feature i
+
+Interpretation: Contribution of feature i to prediction</p>
+<h3 class="sh3">Properties</h3>
+<p class="prose">SHAP satisfies desirable properties:
+
+1. Local accuracy: Σ φ_i = f(x) - f_baseline
+2. Consistency: If feature helps more, higher SHAP value
+3. Missingness: If feature not used, SHAP = 0
+
+Theoretically grounded (game theory)</p>
+<h3 class="sh3">Usage Example</h3>
+<pre class="code"><code>import shap
+
+# Train model
+model = RandomForestClassifier()
+model.fit(X_train, y_train)
+
+# Compute SHAP values
+explainer = shap.TreeExplainer(model)
+shap_values = explainer.shap_values(X_test)
+
+# Visualize for single prediction
+shap.force_plot(
+    explainer.expected_value,
+    shap_values[0, :],
+    X_test[0, :],
+    feature_names=feature_names
+)
+
+# Summary plot (all predictions)
+shap.summary_plot(shap_values, X_test, feature_names=feature_names)</code></pre>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">SHAP value = +0.3: Feature increases prediction by 0.3
+SHAP value = -0.2: Feature decreases prediction by 0.2
+SHAP value = 0: Feature has no effect
+
+Sum of all SHAP values = prediction - baseline</p>
+<h2 class="sh1">Saliency Maps</h2>
+<h3 class="sh2">Gradient Based Saliency</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Saliency map: Which input pixels matter most?
+
+Compute gradient of prediction w.r.t. input:
+Saliency = |∂f(x)/∂x|
+
+High gradient: Pixel strongly affects prediction
+Low gradient: Pixel doesn&#x27;t matter</p>
+<h3 class="sh3">Implementation</h3>
+<pre class="code"><code>def compute_saliency_map(model, image, target_class):
+    &quot;&quot;&quot;
+    Compute saliency map for image.
+    
+    Parameters:
+    - model: neural network
+    - image: input image (C, H, W)
+    - target_class: class to explain
+    
+    Returns:
+    - saliency: (H, W) saliency map
+    &quot;&quot;&quot;
+    image.requires_grad = True
+    
+    # Forward pass
+    logits = model(image.unsqueeze(0))
+    
+    # Get score for target class
+    score = logits[0, target_class]
+    
+    # Backward pass
+    score.backward()
+    
+    # Saliency = absolute value of gradient
+    saliency = image.grad.abs()
+    
+    # Max across channels
+    saliency = saliency.max(dim=0)[0]
+    
+    return saliency.detach().cpu().numpy()</code></pre>
+<h3 class="sh3">Visualization</h3>
+<pre class="code"><code>def visualize_saliency(image, saliency):
+    &quot;&quot;&quot;Overlay saliency map on image&quot;&quot;&quot;
+    import matplotlib.pyplot as plt
+    
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    
+    # Original image
+    axes[0].imshow(image.permute(1, 2, 0))
+    axes[0].set_title(&#x27;Original Image&#x27;)
+    axes[0].axis(&#x27;off&#x27;)
+    
+    # Saliency map
+    axes[1].imshow(saliency, cmap=&#x27;hot&#x27;)
+    axes[1].set_title(&#x27;Saliency Map&#x27;)
+    axes[1].axis(&#x27;off&#x27;)
+    
+    # Overlay
+    axes[2].imshow(image.permute(1, 2, 0))
+    axes[2].imshow(saliency, cmap=&#x27;hot&#x27;, alpha=0.5)
+    axes[2].set_title(&#x27;Overlay&#x27;)
+    axes[2].axis(&#x27;off&#x27;)
+    
+    plt.tight_layout()
+    plt.show()</code></pre>
+<h3 class="sh2">Integrated Gradients</h3>
+<h3 class="sh3">Motivation</h3>
+<p class="prose">Problem with vanilla gradients:
+- Noisy
+- Saturated neurons (gradient=0) ignored
+
+Solution: Integrated Gradients
+Integrate gradients along path from baseline to input</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">IG(x) = (x - x_baseline) × ∫[α=0 to 1] ∂f(x_baseline + α(x - x_baseline))/∂x dα
+
+Approximate with Riemann sum:
+IG(x) ≈ (x - x_baseline) × Σ[i=1 to m] ∂f(x_i)/∂x / m
+
+Where x_i = x_baseline + (i/m)(x - x_baseline)</p>
+<h3 class="sh3">Properties</h3>
+<p class="prose">Integrated Gradients satisfies:
+- Completeness: Σ IG_i = f(x) - f(x_baseline)
+- Sensitivity: If features differ and predictions differ, some IG ≠ 0
+
+More principled than vanilla gradients</p>
+<h3 class="sh2">Grad Cam</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Grad-CAM: Gradient-weighted Class Activation Mapping
+
+For CNNs: Which regions of image important?
+
+Use gradients of final conv layer to weight feature maps</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">1. Forward pass to get final conv layer activations A
+2. Compute gradients ∂y_c/∂A (for target class c)
+3. Global average pool gradients to get weights α_k
+4. Weighted combination: L_Grad-CAM = ReLU(Σ α_k · A_k)
+
+Result: Heatmap showing important regions</p>
+<h3 class="sh3">Advantage</h3>
+<p class="prose">Class-discriminative and localized:
+- Shows WHERE in image model looks
+- Specific to predicted class
+- Coarse localization (not pixel-level)</p>
+<h2 class="sh1">Lime</h2>
+<h3 class="sh2">Core Idea</h3>
+<h3 class="sh3">Black Box Approximation</h3>
+<p class="prose">LIME: Local Interpretable Model-agnostic Explanations
+
+Idea: Approximate complex model locally with simple model
+
+Complex model (global): Neural network
+Simple model (local): Linear model
+
+&quot;Near this prediction, model behaves like linear model&quot;</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">To explain prediction f(x):
+
+1. Generate perturbed samples around x
+   x_1, x_2, ..., x_m (by randomly masking features)
+
+2. Get predictions from black-box model
+   y_i = f(x_i)
+
+3. Weight samples by proximity to x
+   w_i = exp(-d(x, x_i)²/σ²)
+
+4. Fit weighted linear model
+   g(x) = w_0 + w_1·x_1 + ... + w_D·x_D
+
+5. Linear coefficients w_i = feature importances</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Lime For Tabular</h3>
+<p class="prose">from lime.lime_tabular import LimeTabularExplainer
+
+# Create explainer
+explainer = LimeTabularExplainer(
+    X_train,
+    feature_names=feature_names,
+    class_names=class_names,
+    mode=&#x27;classification&#x27;
+)
+
+# Explain single prediction
+explanation = explainer.explain_instance(
+    X_test[0],
+    model.predict_proba,
+    num_features=10
+)
+
+# Visualize
+explanation.show_in_notebook()</p>
+<h3 class="sh3">Lime For Images</h3>
+<p class="prose">from lime.lime_image import LimeImageExplainer
+
+explainer = LimeImageExplainer()
+
+# Explain image prediction
+explanation = explainer.explain_instance(
+    image,
+    model.predict_proba,
+    top_labels=1,
+    num_samples=1000
+)
+
+# Get image with important superpixels highlighted
+temp, mask = explanation.get_image_and_mask(
+    label=predicted_class,
+    positive_only=True,
+    num_features=10,
+    hide_rest=False
+)</p>
+<h3 class="sh2">Pros And Cons</h3>
+<h3 class="sh3">Pros</h3>
+<p class="prose">- Model-agnostic (works for any model)
+- Intuitive (linear approximation)
+- Local fidelity (accurate near explained instance)</p>
+<h3 class="sh3">Cons</h3>
+<p class="prose">- Slow (requires many model queries)
+- Instability (different runs give different explanations)
+- Only local (doesn&#x27;t explain global behavior)
+- Choice of kernel and neighborhood matters</p>
+<h2 class="sh1">Attention Visualization</h2>
+<h3 class="sh2">Transformer Attention</h3>
+<h3 class="sh3">What Attention Shows</h3>
+<p class="prose">Attention weights show which tokens model focuses on:
+
+Input: &quot;The cat sat on the mat&quot;
+Predicting: &quot;sat&quot;
+
+Attention weights:
+The: 0.05
+cat: 0.65 ← High attention!
+sat: 0.20
+on: 0.05
+the: 0.03
+mat: 0.02
+
+Model focuses on &quot;cat&quot; (subject) to predict verb</p>
+<h3 class="sh3">Implementation</h3>
+<pre class="code"><code>def visualize_attention(tokens, attention_weights):
+    &quot;&quot;&quot;
+    Visualize attention weights as heatmap.
+    
+    Parameters:
+    - tokens: list of tokens
+    - attention_weights: (seq_len, seq_len) attention matrix
+    &quot;&quot;&quot;
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(
+        attention_weights,
+        xticklabels=tokens,
+        yticklabels=tokens,
+        cmap=&#x27;Blues&#x27;,
+        annot=True,
+        fmt=&#x27;.2f&#x27;
+    )
+    plt.xlabel(&#x27;Key&#x27;)
+    plt.ylabel(&#x27;Query&#x27;)
+    plt.title(&#x27;Attention Weights&#x27;)
+    plt.tight_layout()
+    plt.show()</code></pre>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">High attention: Model considers this token important
+Low attention: Model ignores this token
+
+Patterns reveal:
+- Syntactic structure (subject-verb-object)
+- Long-range dependencies
+- Semantic relationships</p>
+<h3 class="sh2">Multi Head Attention</h3>
+<h3 class="sh3">Different Heads Different Patterns</h3>
+<p class="prose">Each attention head learns different pattern:
+
+Head 1: Syntactic (subject → verb)
+Head 2: Positional (adjacent words)
+Head 3: Semantic (similar meaning)
+
+Averaging loses information, visualize separately</p>
+<h2 class="sh1">Limitations</h2>
+<h3 class="sh2">Explanations Can Mislead</h3>
+<h3 class="sh3">Adversarial Explanations</h3>
+<p class="prose">Attacker can manipulate explanations:
+
+Model prediction: Malicious (correct)
+Explanation: Highlights benign features (misleading!)
+
+User sees explanation, trusts wrong reasons</p>
+<h3 class="sh3">Cherry Picking</h3>
+<p class="prose">Show only favorable explanations:
+
+Select: Examples where explanation makes sense
+Hide: Examples where explanation nonsensical
+
+Creates false sense of interpretability</p>
+<h3 class="sh2">Correlation Not Causation</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Feature importance shows correlation, not causation:
+
+Model: High importance on &quot;zip_code&quot;
+Interpretation: &quot;Living in this zip code causes loan approval&quot;
+Reality: Zip code correlates with income (confounding)
+
+Cannot conclude causality from importance</p>
+<h3 class="sh2">Local Vs Global Mismatch</h3>
+<h3 class="sh3">Problem</h3>
+<p class="prose">Local explanation may not reflect global behavior:
+
+Local (this prediction): Income most important
+Global (overall): Actually using race as proxy
+
+Local explanation hides unfair global pattern</p>
+<h3 class="sh2">Explanation Instability</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Small changes → big explanation changes:
+
+x: &quot;Income most important&quot;
+x + tiny noise: &quot;Age most important&quot;
+
+Predictions similar, explanations completely different
+
+Unstable explanations not trustworthy</p>
+<h2 class="sh1">Security Applications</h2>
+<h3 class="sh2">Backdoor Detection</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Backdoored models have unusual feature importance:
+
+Clean model: Semantic features important
+Backdoored model: Trigger pattern most important
+
+Interpretability reveals anomaly</p>
+<h3 class="sh3">Detection Method</h3>
+<p class="prose">1. Compute feature importance on clean data
+2. Compute feature importance on suspicious data
+3. Compare distributions
+4. Large difference → potential backdoor</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Image classifier with backdoor:
+
+Clean images: Object features important
+Images with trigger: Corner pixels most important (unusual!)
+
+SHAP/saliency map reveals backdoor trigger</p>
+<h3 class="sh2">Debugging Adversarial Vulnerability</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Saliency maps show where model vulnerable:
+
+Adversarial perturbation targets high-gradient regions
+
+High saliency → high vulnerability to perturbation</p>
+<h3 class="sh3">Mitigation</h3>
+<p class="prose">Smooth saliency maps (lower gradients):
+- Adversarial training
+- Gradient regularization
+- Input transformations</p>
+<h3 class="sh2">Detecting Data Leakage</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Feature importance reveals leaked information:
+
+Model: Predicting stock price
+Top feature: &quot;date_created&quot; (metadata)
+
+Data leakage: Model using information not available at prediction time</p>
+<h3 class="sh3">Action</h3>
+<p class="prose">Check feature importance before deployment:
+- Suspiciously high importance on metadata → investigate
+- Remove leaked features, retrain</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Interpretability = understanding why model predicts, required for trust, debugging, compliance</li><li>Global vs local: global explains overall behavior, local explains single prediction</li><li>Permutation importance = accuracy drop when feature shuffled, model-agnostic, intuitive</li><li>Saliency maps = gradients show which pixels matter, noisy but fast</li><li>LIME approximates locally with linear model, model-agnostic, unstable</li><li>Explanations can mislead: adversarial explanations, correlation ≠ causation, instability</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Start with permutation importance: simple, intuitive, works for any model, good first step</li><li>Use SHAP for individual predictions: theoretically grounded, consistent, good for stakeholders</li><li>Visualize saliency maps for images: quick check of what model sees, debug spurious correlations</li><li>Check explanation stability: small input changes should give similar explanations</li><li>Don&#x27;t trust blindly: explanations can be manipulated, verify with domain knowledge</li><li>Use for debugging: find bugs (watermark learning), data leakage, backdoors via interpretability</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Interpretability detects backdoors: trigger patterns show unusual feature importance</li><li>Attention weights leak information: show which tokens model focuses on, privacy risk</li><li>Explanations can be adversarial: attacker manipulates to show benign features while being malicious</li><li>Saliency maps reveal vulnerabilities: high-gradient regions targeted by adversarial attacks</li></ul>
+<h3 class="sh2">Practical Checklist</h3>
+<ul class="blist"><li>Regulatory compliance: GDPR, fair lending require explanations, SHAP or LIME sufficient</li><li>Debugging: permutation importance first, then SHAP, then saliency for images</li><li>Stakeholder communication: visualize top 5 features with SHAP, show concrete examples</li><li>Fairness audit: check if protected attributes have high importance, remove if yes</li><li>Production monitoring: track feature importance over time, alert if suddenly changes</li></ul>
+</article>

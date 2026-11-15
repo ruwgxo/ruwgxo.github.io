@@ -1,0 +1,750 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 4 · ~6 pages</div>
+<h1>Mathematical Foundations: Probability and Statistics</h1>
+<div class="tags"><span class="tag">probability</span><span class="tag">statistics</span><span class="tag">bayes-theorem</span><span class="tag">distributions</span><span class="tag">confidence-intervals</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Machine learning models don&#x27;t output certainties - they output probabilities. 
+Your spam filter doesn&#x27;t say &quot;this IS spam&quot;, it says &quot;85% probability of spam&quot;. 
+Your fraud detector outputs confidence scores. Your intrusion detection system 
+ranks alerts by likelihood. Understanding probability is understanding how to 
+interpret and trust ML predictions.
+
+More critically for security: probability tells you when to trust a model and 
+when to be suspicious. A 99.9% confidence score might seem definitive, but if 
+the model was trained on poisoned data, that confidence is meaningless. Statistical 
+thinking helps you detect data anomalies, identify adversarial manipulation, and 
+quantify detection accuracy.
+
+This section covers the probability and statistics you need for ML: distributions, 
+Bayes&#x27; theorem, confidence intervals, and hypothesis testing. We focus on 
+intuition over formalism - you need to understand what these concepts mean and 
+how adversaries exploit them.</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security context:
+- Anomaly detection requires understanding &quot;normal&quot; distributions
+- Bayesian thinking helps update beliefs given new evidence (threat hunting)
+- Confidence intervals quantify detector uncertainty
+- P-values and hypothesis testing validate detection rules
+- Adversaries poison training data to shift distributions
+
+Without probability/statistics:
+- Can&#x27;t interpret model predictions correctly
+- Can&#x27;t design proper evaluation metrics
+- Can&#x27;t detect data poisoning attacks
+- Can&#x27;t quantify false positive rates</p>
+<h2 class="sh1">Probability Fundamentals</h2>
+<h3 class="sh2">Basic Definitions</h3>
+<h3 class="sh3">Probability</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">P(A) = likelihood that event A occurs, range [0, 1]</p>
+<h4 class="sh3">Interpretation</h4>
+<ul class="blist"><li>P(A) = 0: event never happens</li><li>P(A) = 1: event always happens</li><li>P(A) = 0.5: event happens half the time</li></ul>
+<h4 class="sh3">Example</h4>
+<p class="prose">Spam classifier outputs P(spam) = 0.85
+Interpretation: Model believes there&#x27;s 85% chance this email is spam
+
+Security context: If you see P(malicious) = 0.51 (barely above threshold), 
+investigate manually - model is uncertain. If P(malicious) = 0.99, either 
+it&#x27;s very confident OR adversary crafted input to game the detector.</p>
+<h3 class="sh3">Complement</h3>
+<h4 class="sh3">Rule</h4>
+<p class="prose">P(not A) = 1 - P(A)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">P(spam) = 0.85 → P(not spam) = 0.15</p>
+<h3 class="sh3">Joint Probability</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">P(A and B) = probability both A and B occur</p>
+<h4 class="sh3">Notation</h4>
+<p class="prose">P(A ∩ B)</p>
+<h4 class="sh3">Independent Events</h4>
+<h4 class="sh3">Rule</h4>
+<p class="prose">If A and B independent: P(A and B) = P(A) × P(B)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">P(user logs in from VPN) = 0.3
+P(user accesses sensitive data) = 0.2
+If independent: P(both) = 0.3 × 0.2 = 0.06
+
+But in reality NOT independent - users on VPN more likely to access 
+sensitive data. This is why simple rule-based detection fails.</p>
+<h3 class="sh3">Conditional Probability</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">P(A|B) = probability of A given that B has occurred</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">P(A|B) = P(A and B) / P(B)</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">P(spam|contains &#x27;viagra&#x27;) = probability email is spam GIVEN it contains &#x27;viagra&#x27;
+
+This is different from P(spam), which is probability without knowing content.
+Conditional probability is the foundation of ML classification.</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Email spam detection</p>
+<h4 class="sh3">Base Rate</h4>
+<p class="prose">P(spam) = 0.4 (40% of emails are spam)</p>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Email contains word &#x27;viagra&#x27;</p>
+<h4 class="sh3">Conditional</h4>
+<p class="prose">P(spam|&#x27;viagra&#x27;) = 0.95 (95% of emails with &#x27;viagra&#x27; are spam)</p>
+<h4 class="sh3">Insight</h4>
+<p class="prose">Observing &#x27;viagra&#x27; dramatically increases spam probability from 40% → 95%
+This is how features provide information gain in ML models</p>
+<h3 class="sh2">Bayes Theorem</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">P(A|B) = P(B|A) × P(A) / P(B)</p>
+<h3 class="sh3">In Words</h3>
+<p class="prose">Posterior probability = (Likelihood × Prior) / Evidence
+
+P(A|B): Posterior - probability of A after observing B
+P(B|A): Likelihood - probability of observing B if A is true
+P(A): Prior - probability of A before observing B
+P(B): Evidence - total probability of observing B</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Bayes&#x27; theorem lets you update beliefs given new evidence. This is fundamental 
+to both ML (Naive Bayes classifier) and security (threat hunting, incident response).
+
+In security: Start with prior probability of attack. Observe indicator. Update 
+belief about attack likelihood. Repeat as you gather more evidence.</p>
+<h3 class="sh3">Practical Example</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Detecting malicious PowerShell commands</p>
+<h4 class="sh3">Prior</h4>
+<p class="prose">P(malicious) = 0.01 (1% of PowerShell commands are malicious)</p>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Command contains &#x27;DownloadString&#x27; method</p>
+<h4 class="sh3">Likelihood</h4>
+<p class="prose">P(&#x27;DownloadString&#x27;|malicious) = 0.8 (80% of malicious commands use it)</p>
+<h4 class="sh3">Evidence</h4>
+<p class="prose">P(&#x27;DownloadString&#x27;) = 0.05 (5% of all commands use it)</p>
+<h4 class="sh3">Calculation</h4>
+<p class="prose">P(malicious|&#x27;DownloadString&#x27;) = P(&#x27;DownloadString&#x27;|malicious) × P(malicious) / P(&#x27;DownloadString&#x27;)
+                              = 0.8 × 0.01 / 0.05
+                              = 0.008 / 0.05
+                              = 0.16 (16%)</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Prior belief: 1% chance of malicious
+After observing &#x27;DownloadString&#x27;: 16% chance of malicious
+Belief updated 16x based on evidence
+
+Still not definitive (only 16%), so we&#x27;d look for more indicators:
+- Obfuscation? Add evidence → update belief again
+- Base64 encoding? Add evidence → update belief again
+- External URL? Add evidence → update belief again
+
+This is exactly how Naive Bayes classifier works - chain multiple Bayes updates</p>
+<h3 class="sh3">Security Application</h3>
+<h4 class="sh3">Threat Hunting</h4>
+<ul class="blist"><li>Start with base rate of attack (prior)</li><li>Observe indicators (evidence)</li><li>Update probability using Bayes&#x27; theorem</li><li>Continue gathering evidence until confident</li></ul>
+<h4 class="sh3">False Positive Analysis</h4>
+<ul class="blist"><li>P(alert|benign) vs P(alert|attack)</li><li>High P(alert|benign) = high false positive rate</li><li>Bayes helps quantify this trade-off</li></ul>
+<h2 class="sh1">Probability Distributions</h2>
+<h3 class="sh2">What Is Distribution</h3>
+<p class="prose">A probability distribution describes how values are spread across possible outcomes.
+
+For discrete variables (coin flips, dice): Probability mass function (PMF)
+For continuous variables (heights, temperatures): Probability density function (PDF)
+
+In ML: Features often follow certain distributions. Models make assumptions about 
+these distributions. Adversaries poison data by shifting distributions.</p>
+<h3 class="sh2">Uniform Distribution</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">All outcomes equally likely</p>
+<h3 class="sh3">Discrete Example</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Fair six-sided die</p>
+<h4 class="sh3">Outcomes</h4>
+<ul class="blist"><li>1</li><li>2</li><li>3</li><li>4</li><li>5</li><li>6</li></ul>
+<h4 class="sh3">Probabilities</h4>
+<p class="prose">P(1) = P(2) = ... = P(6) = 1/6 = 0.167</p>
+<h3 class="sh3">Continuous Example</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Random number between 0 and 1</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Any value in [0,1] equally likely</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>import numpy as np
+
+# Discrete uniform: random integers
+die_rolls = np.random.randint(1, 7, size=1000)  # 1000 dice rolls
+
+# Continuous uniform: random floats [0, 1)
+random_values = np.random.uniform(0, 1, size=1000)
+
+# Continuous uniform: custom range [a, b]
+random_temps = np.random.uniform(20, 30, size=1000)  # temperatures 20-30°C</code></pre>
+<h3 class="sh3">Security Relevance</h3>
+<ul class="blist"><li>Uniform distribution for random salt generation (cryptography)</li><li>Detecting non-uniform patterns indicates manipulation</li><li>Baseline for anomaly detection: deviations from uniform</li></ul>
+<h3 class="sh2">Normal Distribution</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Bell-shaped curve, symmetric around mean. Most values cluster near mean, 
+fewer values far from mean. Defined by two parameters: mean (μ) and 
+standard deviation (σ).</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>68% of values within 1 standard deviation of mean</li><li>95% of values within 2 standard deviations</li><li>99.7% of values within 3 standard deviations (3-sigma rule)</li></ul>
+<h3 class="sh3">Formula</h3>
+<p class="prose">f(x) = (1 / (σ√(2π))) × exp(-(x-μ)² / (2σ²))</p>
+<h3 class="sh3">Parameters</h3>
+<h4 class="sh3">Mean</h4>
+<p class="prose">μ - center of distribution (where peak is)</p>
+<h4 class="sh3">Std Dev</h4>
+<p class="prose">σ - spread of distribution (how wide the bell)</p>
+<h3 class="sh3">Examples</h3>
+<h4 class="sh3">Heights</h4>
+<p class="prose">Human heights: mean ~170cm, std ~10cm</p>
+<h4 class="sh3">Test Scores</h4>
+<p class="prose">IQ scores: mean 100, std 15</p>
+<h4 class="sh3">Response Times</h4>
+<p class="prose">API latency: mean 50ms, std 10ms</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose"># Generate normal distribution samples
+mean = 0
+std_dev = 1
+samples = np.random.normal(mean, std_dev, size=10000)
+
+# Verify 68-95-99.7 rule
+within_1_sigma = np.abs(samples - mean) &lt;= 1 * std_dev
+within_2_sigma = np.abs(samples - mean) &lt;= 2 * std_dev
+within_3_sigma = np.abs(samples - mean) &lt;= 3 * std_dev
+
+print(f&quot;Within 1σ: {within_1_sigma.mean():.2%}&quot;)  # Should be ~68%
+print(f&quot;Within 2σ: {within_2_sigma.mean():.2%}&quot;)  # Should be ~95%
+print(f&quot;Within 3σ: {within_3_sigma.mean():.2%}&quot;)  # Should be ~99.7%</p>
+<h3 class="sh3">Security Application</h3>
+<h4 class="sh3">Anomaly Detection</h4>
+<p class="prose">Assume feature values follow normal distribution. Values beyond 3-sigma 
+are anomalies (only 0.3% chance of occurring naturally).
+
+Example: User login times
+- Mean login time: 9:00 AM
+- Std dev: 1 hour
+- Login at 3:00 AM is 6 standard deviations away → highly suspicious</p>
+<h4 class="sh3">Detecting Distribution Shift</h4>
+<p class="prose">Data poisoning changes distribution. Monitor mean/std over time.
+
+Baseline: Training data has mean=50, std=10
+New data: mean=55, std=15
+Conclusion: Distribution shifted - possible poisoning or drift</p>
+<h4 class="sh3">Zscore Outlier Detection</h4>
+<pre class="code"><code>z-score = (x - μ) / σ
+Measures how many standard deviations away from mean
+
+|z-score| &gt; 3 → outlier
+|z-score| &gt; 4 → extreme outlier
+
+import numpy as np
+
+def detect_outliers_zscore(data, threshold=3):
+    mean = np.mean(data)
+    std = np.std(data)
+    z_scores = np.abs((data - mean) / std)
+    return z_scores &gt; threshold
+
+# Example: Detect anomalous API response times
+response_times = np.array([45, 50, 48, 52, 200, 51, 49])  # 200ms is outlier
+outliers = detect_outliers_zscore(response_times)
+print(f&quot;Outliers: {response_times[outliers]}&quot;)  # [200]</code></pre>
+<h3 class="sh2">Binomial Distribution</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Distribution of number of successes in n independent trials, each with 
+probability p of success. Discrete distribution.
+
+Classic example: Flip coin 10 times, how many heads?</p>
+<h3 class="sh3">Parameters</h3>
+<h4 class="sh3">N</h4>
+<p class="prose">number of trials</p>
+<h4 class="sh3">P</h4>
+<p class="prose">probability of success in each trial</p>
+<h3 class="sh3">Formula</h3>
+<p class="prose">P(k successes in n trials) = C(n,k) × p^k × (1-p)^(n-k)</p>
+<h3 class="sh3">Security Example</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Brute force attack detection</p>
+<h4 class="sh3">Setup</h4>
+<p class="prose">Attacker tries passwords. Each attempt has p=0.001 probability of success 
+(1 in 1000 passwords is correct). Attacker makes n=1000 attempts.
+
+What&#x27;s probability attacker succeeds at least once?</p>
+<h4 class="sh3">Calculation</h4>
+<p class="prose">P(at least 1 success) = 1 - P(0 successes)
+
+P(0 successes) = C(1000,0) × (0.001)^0 × (0.999)^1000
+               = 1 × 1 × (0.999)^1000
+               = 0.368
+
+P(at least 1 success) = 1 - 0.368 = 0.632 (63.2%)</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<p class="prose"># Simulate 1000 password attempts, p=0.001 success rate
+n_attempts = 1000
+p_success = 0.001
+n_simulations = 10000
+
+# Run simulation many times
+successes = np.random.binomial(n_attempts, p_success, n_simulations)
+
+# Probability of at least one success
+p_at_least_one = (successes &gt;= 1).mean()
+print(f&quot;P(at least 1 success): {p_at_least_one:.2%}&quot;)  # ~63%</p>
+<h4 class="sh3">Detection Logic</h4>
+<p class="prose">If we see 1000 failed login attempts, there&#x27;s 63% chance attacker will 
+eventually succeed. MUST block after far fewer attempts (e.g., 5-10).</p>
+<h2 class="sh1">Descriptive Statistics</h2>
+<h3 class="sh2">Measures Of Center</h3>
+<h3 class="sh3">Mean</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">μ = (Σ xi) / n</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Average value - sum all values, divide by count</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<p class="prose">data = np.array([1, 2, 3, 4, 5, 100])  # Note: 100 is outlier
+mean = np.mean(data)
+print(f&quot;Mean: {mean}&quot;)  # 19.17</p>
+<h4 class="sh3">Weakness</h4>
+<p class="prose">Sensitive to outliers - one extreme value skews mean</p>
+<h4 class="sh3">Security Implication</h4>
+<p class="prose">Adversary can manipulate mean by injecting outliers (data poisoning).
+Example: Inject fake benign samples with extreme feature values → shift 
+decision boundary → evade detection</p>
+<h3 class="sh3">Median</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Middle value when data sorted - 50th percentile</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<p class="prose">data = np.array([1, 2, 3, 4, 5, 100])
+median = np.median(data)
+print(f&quot;Median: {median}&quot;)  # 3.5 (average of 3 and 4)</p>
+<h4 class="sh3">Strength</h4>
+<p class="prose">Robust to outliers - not affected by extreme values</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">Prefer median over mean when:
+- Data has outliers (common in security logs)
+- Distribution is skewed (not symmetric)
+- Need robust statistic for anomaly detection</p>
+<h3 class="sh3">Mode</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Most frequently occurring value</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Dataset [1,2,2,2,3,4] → mode is 2</p>
+<h4 class="sh3">Relevance</h4>
+<p class="prose">Useful for categorical data (most common attack type, most targeted port)</p>
+<h3 class="sh2">Measures Of Spread</h3>
+<h3 class="sh3">Variance</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">σ² = Σ(xi - μ)² / n</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Average squared deviation from mean</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">How spread out values are around mean</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<p class="prose">data = np.array([1, 2, 3, 4, 5])
+variance = np.var(data)
+print(f&quot;Variance: {variance}&quot;)  # 2.0</p>
+<h3 class="sh3">Standard Deviation</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">σ = √(variance)</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Square root of variance - same units as original data</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<p class="prose">data = np.array([1, 2, 3, 4, 5])
+std_dev = np.std(data)
+print(f&quot;Std Dev: {std_dev}&quot;)  # 1.41</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Small σ: Values clustered tightly around mean (low variability)
+Large σ: Values spread widely (high variability)</p>
+<h4 class="sh3">Security Example</h4>
+<p class="prose">Baseline API latency: mean=50ms, σ=5ms (consistent performance)
+Attack scenario: mean=50ms, σ=50ms (huge variability)
+
+Detection: Monitor σ over time. Sudden increase → investigate</p>
+<h3 class="sh3">Percentiles</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Value below which given percentage of data falls</p>
+<h4 class="sh3">Common Percentiles</h4>
+<ul class="blist"><li>25th percentile (Q1): 25% of data below this</li><li>50th percentile (Q2): Median</li><li>75th percentile (Q3): 75% of data below this</li><li>99th percentile (P99): 99% of data below this</li></ul>
+<h4 class="sh3">Numpy Implementation</h4>
+<p class="prose">data = np.random.normal(100, 15, size=10000)  # IQ scores
+
+p25 = np.percentile(data, 25)   # Q1
+p50 = np.percentile(data, 50)   # Median
+p75 = np.percentile(data, 75)   # Q3
+p99 = np.percentile(data, 99)   # P99
+
+print(f&quot;P25: {p25:.1f}&quot;)
+print(f&quot;P50: {p50:.1f}&quot;)
+print(f&quot;P75: {p75:.1f}&quot;)
+print(f&quot;P99: {p99:.1f}&quot;)</p>
+<h4 class="sh3">Security Application</h4>
+<p class="prose">SLAs often defined using percentiles:
+- &quot;P50 latency &lt; 100ms&quot; (median)
+- &quot;P99 latency &lt; 500ms&quot; (99th percentile)
+
+Anomaly detection:
+- Baseline: P99 = 200ms
+- Current: P99 = 2000ms (10x increase)
+- Conclusion: Performance attack (slowloris, resource exhaustion)</p>
+<h3 class="sh3">Interquartile Range</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">IQR = Q3 - Q1</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Range of middle 50% of data</p>
+<h4 class="sh3">Outlier Detection</h4>
+<p class="prose">Outliers defined as values outside:
+- Lower bound: Q1 - 1.5×IQR
+- Upper bound: Q3 + 1.5×IQR
+
+This is the &quot;box plot&quot; rule</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code>def detect_outliers_iqr(data):
+    q1 = np.percentile(data, 25)
+    q3 = np.percentile(data, 75)
+    iqr = q3 - q1
+    
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    
+    outliers = (data &lt; lower_bound) | (data &gt; upper_bound)
+    return outliers
+
+# Example
+data = np.array([1, 2, 3, 4, 5, 100])  # 100 is outlier
+outliers = detect_outliers_iqr(data)
+print(f&quot;Outliers: {data[outliers]}&quot;)  # [100]</code></pre>
+<h2 class="sh1">Confidence Intervals</h2>
+<h3 class="sh2">Definition</h3>
+<p class="prose">Range of values that likely contains true population parameter with given confidence.
+
+Example: &quot;95% confidence interval for mean API latency is [48ms, 52ms]&quot;
+Interpretation: 95% confident true mean latency is between 48-52ms</p>
+<h3 class="sh2">Formula</h3>
+<p class="prose">CI = sample_mean ± (z-score × standard_error)</p>
+<h3 class="sh2">Components</h3>
+<h3 class="sh3">Z Score</h3>
+<ul class="blist"><li>90% confidence: z = 1.645</li><li>95% confidence: z = 1.96</li><li>99% confidence: z = 2.576</li></ul>
+<h3 class="sh3">Standard Error</h3>
+<p class="prose">SE = σ / √n (std dev divided by square root of sample size)</p>
+<h3 class="sh2">Numpy Implementation</h3>
+<pre class="code"><code># Calculate 95% confidence interval for mean
+def confidence_interval(data, confidence=0.95):
+    n = len(data)
+    mean = np.mean(data)
+    std_error = np.std(data) / np.sqrt(n)
+    
+    # Z-score for 95% confidence
+    z_score = 1.96
+    
+    margin_of_error = z_score * std_error
+    ci_lower = mean - margin_of_error
+    ci_upper = mean + margin_of_error
+    
+    return ci_lower, ci_upper
+
+# Example: API response times
+response_times = np.random.normal(50, 10, size=100)  # mean=50ms, std=10ms
+ci_low, ci_high = confidence_interval(response_times)
+
+print(f&quot;95% CI: [{ci_low:.2f}ms, {ci_high:.2f}ms]&quot;)</code></pre>
+<h3 class="sh2">Interpretation</h3>
+<p class="prose">Wide CI: High uncertainty (small sample size or large variability)
+Narrow CI: High certainty (large sample size or low variability)
+
+To narrow CI:
+- Collect more data (increase n)
+- Reduce variability (control conditions)
+- Accept lower confidence (90% instead of 95%)</p>
+<h3 class="sh2">Security Application</h3>
+<p class="prose">Quantifying detector performance:
+- Measured accuracy: 92%
+- 95% CI: [89%, 95%]
+- Conclusion: True accuracy likely between 89-95%
+
+Before deploying detector, ensure lower bound of CI meets requirements.
+If requirement is 90% accuracy and CI is [89%, 95%], might not meet SLA.</p>
+<h2 class="sh1">Hypothesis Testing</h2>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Statistical method to test claims about populations using sample data.
+
+Security example: &quot;Is new detection rule better than baseline?&quot;
+
+Null hypothesis (H0): New rule = baseline (no difference)
+Alternative hypothesis (H1): New rule &gt; baseline (improvement)</p>
+<h3 class="sh2">Process</h3>
+<ul class="blist"><li>Define null hypothesis (H0) and alternative (H1)</li><li>Collect data and compute test statistic</li><li>Calculate p-value: probability of observing data if H0 true</li><li>Compare p-value to significance level (α, usually 0.05)</li><li>If p-value &lt; α: Reject H0, accept H1</li><li>If p-value ≥ α: Fail to reject H0</li></ul>
+<h3 class="sh2">P Value Interpretation</h3>
+<ul class="blist"><li>p &lt; 0.01: Very strong evidence against H0</li><li>p &lt; 0.05: Strong evidence against H0 (standard threshold)</li><li>p &lt; 0.10: Moderate evidence against H0</li><li>p ≥ 0.10: Weak/no evidence against H0</li></ul>
+<h3 class="sh2">Common Mistake</h3>
+<p class="prose">❌ &quot;p-value is probability H0 is true&quot;
+✅ &quot;p-value is probability of observing data this extreme IF H0 is true&quot;
+
+Low p-value means: &quot;Data is very unlikely under H0, so H0 probably false&quot;</p>
+<h3 class="sh2">Example Ab Test</h3>
+<h3 class="sh3">Scenario</h3>
+<p class="prose">Testing two prompt injection detectors:
+- Detector A (baseline): 85% accuracy
+- Detector B (new): 90% accuracy
+
+Question: Is B significantly better than A?</p>
+<h3 class="sh3">Hypotheses</h3>
+<h4 class="sh3">H0</h4>
+<p class="prose">Detector B = Detector A (no difference)</p>
+<h4 class="sh3">H1</h4>
+<p class="prose">Detector B &gt; Detector A (B is better)</p>
+<h3 class="sh3">Test</h3>
+<p class="prose">T-test comparing accuracy distributions</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>from scipy import stats
+
+# Simulate accuracy measurements
+detector_a_accuracy = np.random.normal(0.85, 0.05, size=100)  # mean 85%
+detector_b_accuracy = np.random.normal(0.90, 0.05, size=100)  # mean 90%
+
+# Perform t-test
+t_statistic, p_value = stats.ttest_ind(detector_b_accuracy, detector_a_accuracy)
+
+print(f&quot;T-statistic: {t_statistic:.3f}&quot;)
+print(f&quot;P-value: {p_value:.4f}&quot;)
+
+if p_value &lt; 0.05:
+    print(&quot;Detector B is significantly better (p &lt; 0.05)&quot;)
+else:
+    print(&quot;No significant difference (p ≥ 0.05)&quot;)</code></pre>
+<h3 class="sh3">Conclusion</h3>
+<p class="prose">If p-value &lt; 0.05: Deploy Detector B (proven improvement)
+If p-value ≥ 0.05: Keep Detector A (no proven improvement, avoid change risk)</p>
+<h2 class="sh1">Practical Implementation</h2>
+<h3 class="sh2">Statistical Summary</h3>
+<pre class="code"><code># Complete statistical summary function
+import numpy as np
+
+def statistical_summary(data, confidence=0.95):
+    &quot;&quot;&quot;
+    Comprehensive statistical analysis of dataset
+    
+    Args:
+        data: NumPy array of values
+        confidence: Confidence level for interval (default 95%)
+    
+    Returns:
+        dict with all statistical measures
+    &quot;&quot;&quot;
+    n = len(data)
+    
+    # Measures of center
+    mean = np.mean(data)
+    median = np.median(data)
+    
+    # Measures of spread
+    std_dev = np.std(data)
+    variance = np.var(data)
+    
+    # Percentiles
+    q1 = np.percentile(data, 25)
+    q3 = np.percentile(data, 75)
+    iqr = q3 - q1
+    
+    # Confidence interval
+    z_score = 1.96 if confidence == 0.95 else 2.576  # 95% or 99%
+    std_error = std_dev / np.sqrt(n)
+    margin_error = z_score * std_error
+    ci_lower = mean - margin_error
+    ci_upper = mean + margin_error
+    
+    # Outlier detection (IQR method)
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    outliers = ((data &lt; lower_bound) | (data &gt; upper_bound)).sum()
+    
+    return {
+        &#x27;n&#x27;: n,
+        &#x27;mean&#x27;: mean,
+        &#x27;median&#x27;: median,
+        &#x27;std_dev&#x27;: std_dev,
+        &#x27;variance&#x27;: variance,
+        &#x27;q1&#x27;: q1,
+        &#x27;q3&#x27;: q3,
+        &#x27;iqr&#x27;: iqr,
+        &#x27;ci_lower&#x27;: ci_lower,
+        &#x27;ci_upper&#x27;: ci_upper,
+        &#x27;outliers&#x27;: outliers
+    }
+
+# Example usage
+api_latencies = np.random.normal(50, 10, size=1000)  # 1000 measurements
+stats = statistical_summary(api_latencies)
+
+print(f&quot;Sample size: {stats[&#x27;n&#x27;]}&quot;)
+print(f&quot;Mean: {stats[&#x27;mean&#x27;]:.2f}ms&quot;)
+print(f&quot;Median: {stats[&#x27;median&#x27;]:.2f}ms&quot;)
+print(f&quot;Std Dev: {stats[&#x27;std_dev&#x27;]:.2f}ms&quot;)
+print(f&quot;95% CI: [{stats[&#x27;ci_lower&#x27;]:.2f}, {stats[&#x27;ci_upper&#x27;]:.2f}]ms&quot;)
+print(f&quot;Outliers: {stats[&#x27;outliers&#x27;]} ({stats[&#x27;outliers&#x27;]/stats[&#x27;n&#x27;]*100:.1f}%)&quot;)</code></pre>
+<h3 class="sh2">Anomaly Detection Combined</h3>
+<pre class="code"><code># Combine Z-score and IQR methods for robust anomaly detection
+import numpy as np
+
+def detect_anomalies(data, zscore_threshold=3, use_iqr=True):
+    &quot;&quot;&quot;
+    Detect anomalies using multiple methods
+    
+    Args:
+        data: NumPy array
+        zscore_threshold: Z-score threshold (default 3)
+        use_iqr: Whether to also use IQR method (default True)
+    
+    Returns:
+        Boolean array indicating anomalies
+    &quot;&quot;&quot;
+    anomalies = np.zeros(len(data), dtype=bool)
+    
+    # Method 1: Z-score
+    mean = np.mean(data)
+    std = np.std(data)
+    z_scores = np.abs((data - mean) / std)
+    zscore_anomalies = z_scores &gt; zscore_threshold
+    
+    # Method 2: IQR (if enabled)
+    if use_iqr:
+        q1 = np.percentile(data, 25)
+        q3 = np.percentile(data, 75)
+        iqr = q3 - q1
+        lower = q1 - 1.5 * iqr
+        upper = q3 + 1.5 * iqr
+        iqr_anomalies = (data &lt; lower) | (data &gt; upper)
+        
+        # Flag as anomaly if detected by EITHER method
+        anomalies = zscore_anomalies | iqr_anomalies
+    else:
+        anomalies = zscore_anomalies
+    
+    return anomalies
+
+# Example: Detect anomalous API response times
+normal_traffic = np.random.normal(50, 10, size=1000)  # Normal: 50ms ± 10ms
+attack_traffic = np.array([5000, 6000])  # DDoS attack: 5-6 second responses
+
+all_traffic = np.concatenate([normal_traffic, attack_traffic])
+anomalies = detect_anomalies(all_traffic)
+
+print(f&quot;Total samples: {len(all_traffic)}&quot;)
+print(f&quot;Anomalies detected: {anomalies.sum()}&quot;)
+print(f&quot;Anomalous values: {all_traffic[anomalies]}&quot;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Using mean when data has outliers</p>
+<h3 class="sh3">Why Wrong</h3>
+<p class="prose">Mean is sensitive to extreme values. Single outlier can drastically 
+change mean, making it unrepresentative of typical values.</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">API latencies: [50, 52, 48, 51, 5000]ms
+Mean: 1040ms (makes system look slow)
+Median: 51ms (represents typical performance)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use median for skewed distributions or data with outliers</p>
+<h3 class="sh3">Security Context</h3>
+<p class="prose">Attacker can inject outliers to manipulate monitoring dashboards.
+Example: Inject extremely high latency requests → mean latency spikes → 
+false alerts → analyst fatigue → real attacks missed</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Confusing correlation with causation</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Observation: Users who visit admin panel have 10x higher attack rate
+Wrong conclusion: Admin panel causes attacks
+Correct interpretation: Attackers target admin panel (reverse causation)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Correlation shows relationship, not direction. Always consider: Does A cause B, does B cause A, or does C cause both?</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Ignoring sample size when comparing statistics</p>
+<h3 class="sh3">Scenario</h3>
+<p class="prose">Detector A: 95% accuracy on 10,000 samples → CI: [94.5%, 95.5%]
+Detector B: 96% accuracy on 100 samples → CI: [92%, 100%]
+
+Question: Which is better?</p>
+<h3 class="sh3">Wrong Answer</h3>
+<p class="prose">Detector B (higher accuracy)</p>
+<h3 class="sh3">Correct Answer</h3>
+<p class="prose">Detector A is better - much larger sample, narrow CI, proven performance.
+Detector B&#x27;s 96% could easily be luck with small sample. Wide CI shows 
+high uncertainty (could be as low as 92%).</p>
+<h3 class="sh3">Rule</h3>
+<p class="prose">Always report sample size and confidence intervals, not just point estimates</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">P-hacking: Testing until you get p &lt; 0.05</p>
+<h3 class="sh3">Bad Practice</h3>
+<p class="prose">Run 20 different statistical tests on same data until one shows p &lt; 0.05, 
+then report only that one.
+
+Problem: If you test 20 hypotheses at α=0.05, you&#x27;ll get ~1 false positive 
+by pure chance (5% of 20 = 1).</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">- Decide hypothesis BEFORE collecting data
+- Report all tests performed, not just significant ones
+- Use Bonferroni correction if testing multiple hypotheses: α_corrected = α / n_tests
+- Pre-register experiments (common in medical research)</p>
+<h3 class="sh3">Security Relevance</h3>
+<p class="prose">Don&#x27;t tune detection rules until they &quot;look good&quot; on test set.
+That&#x27;s overfitting. Use proper train/validation/test splits (next sections).</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Data Poisoning Detection</h3>
+<h3 class="sh3">Technique</h3>
+<p class="prose">Monitor distribution shifts over time</p>
+<h3 class="sh3">Implementation</h3>
+<pre class="code"><code>Baseline: Training data has mean=μ0, std=σ0
+New data: Compute mean=μ1, std=σ1
+
+Alert if:
+- |μ1 - μ0| &gt; 2σ0 (mean shifted significantly)
+- |σ1 - σ0| &gt; 0.5σ0 (variance changed significantly)
+
+This detects adversary injecting poisoned samples to shift distribution</code></pre>
+<h3 class="sh2">Model Confidence Interpretation</h3>
+<h3 class="sh3">Issue</h3>
+<p class="prose">High confidence doesn&#x27;t mean correct</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Model outputs P(malicious) = 0.99 for input
+
+Could mean:
+1. Model very confident → probably correct
+2. Model overfit to training data → confident but wrong
+3. Adversarial input crafted to maximize confidence → definitely wrong
+
+Always check: Is input distribution similar to training data?</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">Use calibration techniques (Section 11) and confidence thresholds</p>
+<h3 class="sh2">False Positive False Negative Tradeoff</h3>
+<h3 class="sh3">Context</h3>
+<p class="prose">All detectors trade precision vs recall</p>
+<h3 class="sh3">Metrics</h3>
+<ul class="blist"><li>False Positive Rate (FPR): P(alert | benign)</li><li>False Negative Rate (FNR): P(no alert | attack)</li><li>Cannot optimize both simultaneously</li></ul>
+<h3 class="sh3">Bayesian Perspective</h3>
+<p class="prose">Given alert, what&#x27;s probability of actual attack?
+
+P(attack|alert) = P(alert|attack) × P(attack) / P(alert)
+
+If base rate of attacks is low (P(attack) = 0.01), even detector with 
+99% accuracy will have high false positive rate.
+
+Example:
+- P(attack) = 0.01 (1% of traffic is attacks)
+- P(alert|attack) = 0.99 (99% true positive rate)
+- P(alert|benign) = 0.05 (5% false positive rate)
+
+P(attack|alert) = 0.99 × 0.01 / (0.99 × 0.01 + 0.05 × 0.99)
+                = 0.0099 / 0.0594
+                = 0.167 (16.7%)
+
+Conclusion: Even with 99% accurate detector, only 16.7% of alerts are 
+real attacks! Must account for base rate.</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>ML outputs probabilities, not certainties - always quantify confidence</li><li>Bayes&#x27; theorem lets you update beliefs given evidence - foundation of threat hunting</li><li>Normal distribution describes most real-world data - use for anomaly detection</li><li>Z-scores and percentiles detect outliers - basis for statistical anomaly detection</li><li>Confidence intervals quantify uncertainty - report these with all performance metrics</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Use median (not mean) for data with outliers - more robust to adversarial manipulation</li><li>Monitor distribution shifts to detect data poisoning - track mean/std over time</li><li>Combine multiple statistical methods for anomaly detection - Z-score + IQR + domain knowledge</li><li>Always report sample size and confidence intervals - single accuracy number is insufficient</li><li>Use hypothesis testing for A/B testing detectors - prove improvement statistically</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Adversaries can manipulate statistics by injecting outliers - use robust measures</li><li>High model confidence doesn&#x27;t guarantee correctness - could be adversarial input</li><li>Base rate matters enormously - low attack rate means high false positive rate even with good detector</li><li>Distribution shifts indicate poisoning or drift - monitor continuously</li><li>Don&#x27;t p-hack your detectors - maintain proper train/test separation</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Probability = quantified uncertainty. Security = managing uncertainty. Master probability.</li><li>Bayes&#x27; theorem is how you think like a threat hunter - start with prior, update with evidence, repeat.</li><li>Statistics detect anomalies, but adversaries know statistics too. Use multiple methods.</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Data representation - how to convert raw security logs into feature vectors</li><li>Connect to security: Section 28 shows how adversaries exploit probability in attacks</li><li>Foundation complete: You now have all the math needed for ML algorithms (Sections 7-28)</li></ul>
+</article>

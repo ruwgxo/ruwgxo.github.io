@@ -1,0 +1,841 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 10 · ~5 pages</div>
+<h1>Feed-Forward Networks in Transformers</h1>
+<div class="tags"><span class="tag">feed-forward-network</span><span class="tag">position-wise-ffn</span><span class="tag">gelu-activation</span><span class="tag">dimension-expansion</span><span class="tag">ffn-memory</span><span class="tag">transformer-components</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Feed-Forward Networks in Transformers</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.10</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">After multi-head attention, transformer layers apply a position-wise feed-forward 
+network (FFN) to each position independently. The FFN is a simple two-layer network: 
+expand dimensions (typically 4x), apply non-linearity, compress back to original size. 
+This appears simple but serves critical roles: injecting non-linearity, increasing 
+model capacity, and serving as key-value memory for factual knowledge.
+
+The FFN processes each position independently (position-wise), in contrast to attention 
+which mixes information across positions. This complementary design - attention for 
+context mixing, FFN for position-specific transformations - is key to transformer success.
+
+For security engineers: FFNs store factual knowledge in their weights. Understanding 
+FFN structure reveals how to extract stored information (model inversion), inject 
+backdoors through fine-tuning (weight poisoning), or detect model tampering (weight 
+analysis). FFNs are primary targets for model editing attacks.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand position-wise FFN (applies same network to each position)</li><li>Grasp dimension expansion strategy (d_model → 4×d_model → d_model)</li><li>Learn why FFN is necessary after attention (non-linearity, capacity)</li><li>See FFN as key-value memory storing factual knowledge</li><li>Compare ReLU vs GELU activation functions</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement position-wise FFN from scratch (NumPy)</li><li>Create GELU activation function</li><li>Build configurable FFN with different expansion ratios</li><li>Analyze FFN parameter count and computational cost</li><li>Visualize FFN activations and weight patterns</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Extract factual knowledge from FFN weights (model inversion)</li><li>Detect backdoors in FFN layers (weight analysis)</li><li>Understand FFN fine-tuning vulnerabilities</li><li>Identify FFN neurons encoding sensitive information</li><li>Audit FFN for anomalous weight patterns</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Chapter 1: Fully connected layers, activation functions</li><li>Chapter 2: Gradient descent, backpropagation</li><li>Section 3.8: Multi-head attention (what comes before FFN)</li><li>Understanding of matrix multiplication</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy matrix operations</li><li>Implementing neural network layers</li><li>Activation function derivatives</li><li>Parameter counting and memory analysis</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 9</h3>
+<p class="prose">Section 3.9 covered positional encoding (how transformers know word order). 
+Now we introduce feed-forward networks - the other major component of transformer 
+layers that works alongside attention.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.11 will cover layer normalization and residual connections - the 
+architectural components that stabilize training and enable deep transformer 
+models (many stacked layers).</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Position-Wise Feed-Forward Network Architecture</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The FFN in transformers is &quot;position-wise&quot; - it applies the same fully connected 
+network independently to each position in the sequence. Unlike attention (which 
+mixes positions), FFN processes each token separately. The architecture is simple: 
+two linear layers with a non-linear activation in between.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Position Wise Definition</h3>
+<h4 class="sh3">Meaning</h4>
+<p class="prose">Same transformation applied to each position independently</p>
+<h4 class="sh3">Mathematical Formulation</h4>
+<p class="prose">For each position i in sequence:
+
+FFN(x_i) = W_2 × ReLU(W_1 × x_i + b_1) + b_2
+
+Where:
+- x_i ∈ ℝ^d_model (input for position i)
+- W_1 ∈ ℝ^(d_ff × d_model) (expand)
+- W_2 ∈ ℝ^(d_model × d_ff) (compress)
+- d_ff = 4 × d_model (typical expansion)</p>
+<h4 class="sh3">Key Property</h4>
+<p class="prose">Same W_1, W_2, b_1, b_2 used for ALL positions
+→ Parameters shared across positions
+→ Like applying 1D convolution with kernel size 1</p>
+<h4 class="sh3">Contrast With Attention</h4>
+<p class="prose">Attention: Mixes information ACROSS positions
+FFN: Transforms EACH position independently
+
+Complementary roles!</p>
+<h3 class="sh3">Two Layer Architecture</h3>
+<h4 class="sh3">Layer 1 Expansion</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Expand to higher dimension</p>
+<h4 class="sh3">Operation</h4>
+<p class="prose">h = ReLU(W_1 × x + b_1)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">d_model → d_ff (typically 4x expansion)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">512 → 2048</p>
+<h4 class="sh3">Layer 2 Compression</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Compress back to original dimension</p>
+<h4 class="sh3">Operation</h4>
+<p class="prose">y = W_2 × h + b_2</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">d_ff → d_model</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">2048 → 512</p>
+<h4 class="sh3">Final Output</h4>
+<p class="prose">y ∈ ℝ^d_model (same as input)</p>
+<h3 class="sh3">Dimension Expansion Ratio</h3>
+<h4 class="sh3">Typical Values</h4>
+<h4 class="sh3">Original Transformer</h4>
+<p class="prose">4x expansion (d_ff = 4 × d_model)</p>
+<h4 class="sh3">Bert Base</h4>
+<p class="prose">4x (768 → 3072 → 768)</p>
+<h4 class="sh3">Gpt2</h4>
+<p class="prose">4x (768 → 3072 → 768)</p>
+<h4 class="sh3">Gpt3</h4>
+<p class="prose">4x (12288 → 49152 → 12288)</p>
+<h4 class="sh3">Why 4X</h4>
+<h4 class="sh3">Empirical</h4>
+<p class="prose">Works well in practice across many tasks</p>
+<h4 class="sh3">Capacity</h4>
+<p class="prose">Adds significant parameters without huge overhead</p>
+<h4 class="sh3">Tradeoff</h4>
+<p class="prose">Larger = more capacity but slower, more memory</p>
+<h4 class="sh3">Alternatives</h4>
+<h4 class="sh3">Smaller 2X</h4>
+<p class="prose">For efficiency (mobile models)</p>
+<h4 class="sh3">Larger 8X</h4>
+<p class="prose">For more capacity (some large models)</p>
+<h4 class="sh3">Adaptive</h4>
+<p class="prose">Different expansion ratios per layer</p>
+<h3 class="sh3">Computational Cost</h3>
+<h4 class="sh3">Parameters</h4>
+<h4 class="sh3">Layer 1</h4>
+<p class="prose">d_model × d_ff + d_ff bias</p>
+<h4 class="sh3">Layer 2</h4>
+<p class="prose">d_ff × d_model + d_model bias</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">2 × d_model × d_ff + d_model + d_ff</p>
+<h4 class="sh3">Example Bert</h4>
+<p class="prose">d_model = 768, d_ff = 3072
+Total = 2 × 768 × 3072 + 768 + 3072 ≈ 4.7M parameters per FFN</p>
+<h4 class="sh3">Operations Per Token</h4>
+<h4 class="sh3">Layer 1</h4>
+<p class="prose">d_model × d_ff (matrix-vector multiply)</p>
+<h4 class="sh3">Activation</h4>
+<p class="prose">d_ff (element-wise)</p>
+<h4 class="sh3">Layer 2</h4>
+<p class="prose">d_ff × d_model</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">O(d_model × d_ff) ≈ O(d_model²) for d_ff = 4×d_model</p>
+<h4 class="sh3">Comparison To Attention</h4>
+<h4 class="sh3">Attention</h4>
+<p class="prose">O(n² × d_model) - quadratic in sequence length</p>
+<h4 class="sh3">Ffn</h4>
+<p class="prose">O(n × d_model²) - linear in sequence length</p>
+<h4 class="sh3">Crossover</h4>
+<p class="prose">Short sequences (n &lt; d_model): FFN dominates
+Long sequences (n &gt; d_model): Attention dominates</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Position Wise Ffn</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class PositionWiseFeedForward:
+    &quot;&quot;&quot;
+    Position-wise feed-forward network (Transformer FFN).
+    
+    FFN(x) = W_2 × ReLU(W_1 × x + b_1) + b_2
+    
+    Applied independently to each position.
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, d_ff: int, dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension (input/output size)
+            d_ff: Hidden dimension (intermediate size)
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.dropout = dropout
+        
+        # Layer 1: Expand
+        self.W_1 = np.random.randn(d_ff, d_model) * np.sqrt(2.0 / d_model)
+        self.b_1 = np.zeros(d_ff)
+        
+        # Layer 2: Compress
+        self.W_2 = np.random.randn(d_model, d_ff) * np.sqrt(2.0 / d_ff)
+        self.b_2 = np.zeros(d_model)
+    
+    def relu(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;ReLU activation.&quot;&quot;&quot;
+        return np.maximum(0, x)
+    
+    def forward(self, x: np.ndarray, training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Forward pass through FFN.
+        
+        Args:
+            x: Input (batch, seq_len, d_model) or (seq_len, d_model)
+            training: Whether in training mode (for dropout)
+        
+        Returns:
+            output: (batch, seq_len, d_model) or (seq_len, d_model)
+        &quot;&quot;&quot;
+        # Layer 1: Expand and activate
+        # (*, d_model) @ (d_model, d_ff)^T = (*, d_ff)
+        h = np.dot(x, self.W_1.T) + self.b_1
+        h = self.relu(h)
+        
+        # Dropout (if training)
+        if training and self.dropout &gt; 0:
+            mask = np.random.binomial(1, 1 - self.dropout, h.shape) / (1 - self.dropout)
+            h = h * mask
+        
+        # Layer 2: Compress
+        # (*, d_ff) @ (d_ff, d_model)^T = (*, d_model)
+        output = np.dot(h, self.W_2.T) + self.b_2
+        
+        return output
+    
+    def __call__(self, x: np.ndarray, training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x, training)
+
+
+# Example usage
+d_model = 512
+d_ff = 2048  # 4x expansion
+seq_len = 10
+batch_size = 2
+
+ffn = PositionWiseFeedForward(d_model, d_ff)
+
+# Input (batch, seq_len, d_model)
+x = np.random.randn(batch_size, seq_len, d_model)
+
+# Forward pass
+output = ffn(x)
+
+print(f&quot;Position-Wise Feed-Forward Network:&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Hidden dimension: {d_ff} ({d_ff // d_model}x expansion)&quot;)
+print(f&quot;  Input shape: {x.shape}&quot;)
+print(f&quot;  Output shape: {output.shape}&quot;)
+print(f&quot;\nParameters:&quot;)
+print(f&quot;  Layer 1 (W_1): {d_ff * d_model:,}&quot;)
+print(f&quot;  Layer 1 (b_1): {d_ff:,}&quot;)
+print(f&quot;  Layer 2 (W_2): {d_model * d_ff:,}&quot;)
+print(f&quot;  Layer 2 (b_2): {d_model:,}&quot;)
+print(f&quot;  Total: {2 * d_model * d_ff + d_model + d_ff:,}&quot;)</code></pre>
+<h3 class="sh3">Demonstrate Position Wise</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_position_wise_property():
+    &quot;&quot;&quot;Show that FFN applies same transformation to each position.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Position-Wise Property ===\n&quot;)
+    
+    d_model = 64
+    d_ff = 256
+    seq_len = 5
+    
+    ffn = PositionWiseFeedForward(d_model, d_ff)
+    
+    # Create sequence
+    x = np.random.randn(seq_len, d_model)
+    
+    # Apply FFN to entire sequence
+    output_batch = ffn(x)
+    
+    # Apply FFN to each position individually
+    output_individual = np.zeros_like(x)
+    for i in range(seq_len):
+        output_individual[i] = ffn(x[i])
+    
+    # Check if identical
+    difference = np.abs(output_batch - output_individual).max()
+    
+    print(f&quot;Sequence length: {seq_len}&quot;)
+    print(f&quot;Model dimension: {d_model}&quot;)
+    print()
+    print(f&quot;Output (batch processing): {output_batch.shape}&quot;)
+    print(f&quot;Output (individual positions): {output_individual.shape}&quot;)
+    print()
+    print(f&quot;Max difference: {difference:.10f}&quot;)
+    
+    if difference &lt; 1e-10:
+        print(&quot;\n✓ Results are identical!&quot;)
+        print(&quot;  → FFN applies SAME transformation to each position&quot;)
+        print(&quot;  → Positions are processed independently&quot;)
+    else:
+        print(&quot;\n✗ Results differ (unexpected!)&quot;)
+
+demonstrate_position_wise_property()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Parameter Tampering</h3>
+<p class="prose">FFN weights are large and dense:
+- 2 × d_model × d_ff parameters (millions)
+- Adversary can inject backdoors by modifying small subset
+- Changes to few neurons can create hidden triggers
+- Defense: Monitor weight distributions, detect anomalies</p>
+<h3 class="sh3">Position Independent Processing</h3>
+<p class="prose">FFN treats all positions identically:
+- Cannot distinguish position-specific attacks
+- Adversary can inject payload at any position
+- FFN processes it the same way
+- Defense relies on attention (which IS position-aware)</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Activation Functions: ReLU vs GELU</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The original transformer used ReLU activation. Modern transformers (BERT, GPT) 
+predominantly use GELU (Gaussian Error Linear Unit). GELU is smoother than ReLU, 
+provides better gradient flow, and empirically performs better for language tasks. 
+Understanding activation choices is important for both model behavior and security.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Relu Activation</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">ReLU(x) = max(0, x)</p>
+<h4 class="sh3">Properties</h4>
+<ul class="blist"><li>Simple: zero for negative, identity for positive</li><li>Non-differentiable at 0 (but set gradient to 0 or 1)</li><li>Unbounded above, bounded below at 0</li><li>Can cause &#x27;dead neurons&#x27; (always output 0)</li></ul>
+<h4 class="sh3">Gradient</h4>
+<p class="prose">dReLU/dx = 1 if x &gt; 0
+            0 if x ≤ 0</p>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Computationally efficient (just max operation)</li><li>Sparse activations (many neurons exactly 0)</li><li>Proven track record (CNNs, early transformers)</li></ul>
+<h4 class="sh3">Disadvantages</h4>
+<ul class="blist"><li>Dead neurons (gradient always 0)</li><li>Sharp corner at 0 (not smooth)</li><li>Negative inputs completely ignored</li></ul>
+<h3 class="sh3">Gelu Activation</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">GELU(x) = x × Φ(x)
+
+Where Φ(x) is cumulative distribution function of standard normal</p>
+<h4 class="sh3">Approximation</h4>
+<p class="prose">GELU(x) ≈ 0.5 × x × (1 + tanh(√(2/π) × (x + 0.044715 × x³)))
+
+Or simpler:
+GELU(x) ≈ x × σ(1.702 × x)  where σ is sigmoid</p>
+<h4 class="sh3">Properties</h4>
+<ul class="blist"><li>Smooth everywhere (differentiable)</li><li>Stochastic interpretation: multiply by Bernoulli(Φ(x))</li><li>Non-monotonic (slight dip for negative values)</li><li>Asymptotically linear for large positive x</li></ul>
+<h4 class="sh3">Gradient</h4>
+<p class="prose">dGELU/dx = Φ(x) + x × φ(x)
+
+Where φ(x) is probability density function of standard normal</p>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Smooth gradient flow (better optimization)</li><li>No dead neurons (always some gradient)</li><li>Empirically better for NLP tasks</li><li>Used in BERT, GPT-2/3, modern transformers</li></ul>
+<h4 class="sh3">Disadvantages</h4>
+<ul class="blist"><li>More computationally expensive (tanh/sigmoid)</li><li>Approximation needed for practical implementation</li><li>Less interpretable than ReLU</li></ul>
+<h3 class="sh3">Comparison</h3>
+<h4 class="sh3">Relu</h4>
+<p class="prose">f(x) = {x if x &gt; 0, 0 if x ≤ 0}
+
+Sharp corner at 0
+Sparse (many zeros)</p>
+<h4 class="sh3">Gelu</h4>
+<p class="prose">f(x) = x × Φ(x)
+
+Smooth transition
+Dense (few exact zeros)</p>
+<h4 class="sh3">Why Gelu For Nlp</h4>
+<h4 class="sh3">Smoother Gradients</h4>
+<p class="prose">Better optimization for deep networks</p>
+<h4 class="sh3">No Dead Neurons</h4>
+<p class="prose">All neurons can contribute</p>
+<h4 class="sh3">Empirical Performance</h4>
+<p class="prose">Consistently better on language benchmarks</p>
+<h4 class="sh3">Stochastic Interpretation</h4>
+<p class="prose">Theoretical justification via dropout connection</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Activation Functions</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class ActivationFunctions:
+    &quot;&quot;&quot;Common activation functions for transformers.&quot;&quot;&quot;
+    
+    @staticmethod
+    def relu(x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;ReLU activation.&quot;&quot;&quot;
+        return np.maximum(0, x)
+    
+    @staticmethod
+    def relu_derivative(x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;ReLU derivative.&quot;&quot;&quot;
+        return (x &gt; 0).astype(float)
+    
+    @staticmethod
+    def gelu(x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        GELU activation (Gaussian Error Linear Unit).
+        
+        Approximation:
+        GELU(x) ≈ 0.5 * x * (1 + tanh(√(2/π) * (x + 0.044715 * x³)))
+        &quot;&quot;&quot;
+        return 0.5 * x * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x**3)))
+    
+    @staticmethod
+    def gelu_derivative(x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        GELU derivative (approximation).
+        
+        Computed via automatic differentiation of approximation.
+        &quot;&quot;&quot;
+        # Simplified approximation
+        cdf_approx = 0.5 * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x**3)))
+        pdf_approx = np.exp(-0.5 * x**2) / np.sqrt(2 * np.pi)
+        return cdf_approx + x * pdf_approx
+    
+    @staticmethod
+    def swish(x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Swish activation (also called SiLU).
+        
+        Swish(x) = x × σ(x) where σ is sigmoid
+        &quot;&quot;&quot;
+        return x * (1 / (1 + np.exp(-x)))
+
+
+# Compare activations
+print(&quot;\n=== Activation Function Comparison ===\n&quot;)
+
+x_values = np.linspace(-3, 3, 100)
+
+relu_output = ActivationFunctions.relu(x_values)
+gelu_output = ActivationFunctions.gelu(x_values)
+swish_output = ActivationFunctions.swish(x_values)
+
+# Show values at key points
+key_points = [-2, -1, 0, 1, 2]
+
+print(&quot;x     | ReLU  | GELU  | Swish&quot;)
+print(&quot;------|-------|-------|-------&quot;)
+for x_val in key_points:
+    idx = np.argmin(np.abs(x_values - x_val))
+    print(f&quot;{x_val:5.1f} | {relu_output[idx]:5.2f} | &quot;
+          f&quot;{gelu_output[idx]:5.2f} | {swish_output[idx]:5.2f}&quot;)
+
+print(&quot;\nKey differences:&quot;)
+print(&quot;  ReLU:  Sharp corner at 0, zero for x &lt; 0&quot;)
+print(&quot;  GELU:  Smooth transition, slight dip for x &lt; 0&quot;)
+print(&quot;  Swish: Similar to GELU, smooth everywhere&quot;)</code></pre>
+<h3 class="sh3">Ffn With Gelu</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class PositionWiseFeedForwardGELU:
+    &quot;&quot;&quot;FFN with GELU activation (modern transformers).&quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, d_ff: int):
+        self.d_model = d_model
+        self.d_ff = d_ff
+        
+        # Weights
+        self.W_1 = np.random.randn(d_ff, d_model) * np.sqrt(2.0 / d_model)
+        self.b_1 = np.zeros(d_ff)
+        self.W_2 = np.random.randn(d_model, d_ff) * np.sqrt(2.0 / d_ff)
+        self.b_2 = np.zeros(d_model)
+    
+    def gelu(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;GELU activation.&quot;&quot;&quot;
+        return 0.5 * x * (1 + np.tanh(np.sqrt(2 / np.pi) * (x + 0.044715 * x**3)))
+    
+    def forward(self, x: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Forward pass with GELU.&quot;&quot;&quot;
+        # Expand
+        h = np.dot(x, self.W_1.T) + self.b_1
+        h = self.gelu(h)
+        
+        # Compress
+        output = np.dot(h, self.W_2.T) + self.b_2
+        
+        return output
+    
+    def __call__(self, x: np.ndarray) -&gt; np.ndarray:
+        return self.forward(x)
+
+
+# Example usage
+d_model = 768  # BERT-base
+d_ff = 3072    # 4x expansion
+
+ffn_gelu = PositionWiseFeedForwardGELU(d_model, d_ff)
+
+x = np.random.randn(10, d_model)
+output = ffn_gelu(x)
+
+print(&quot;\n=== FFN with GELU (BERT-style) ===\n&quot;)
+print(f&quot;Model dimension: {d_model}&quot;)
+print(f&quot;Hidden dimension: {d_ff}&quot;)
+print(f&quot;Input shape: {x.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print(f&quot;\nUsing GELU activation (smooth, modern)&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Activation Function Fingerprinting</h3>
+<p class="prose">Different activations create different output patterns:
+- ReLU: Sparse outputs (many exact zeros)
+- GELU: Dense outputs (few exact zeros)
+- Adversary can fingerprint model type via activation patterns
+- Defense: May want to add noise to hide activation function</p>
+<h3 class="sh3">Dead Neuron Exploitation Relu</h3>
+<p class="prose">ReLU can create dead neurons (always output 0):
+- Adversary can poison training to kill specific neurons
+- Dead neurons cannot contribute to detection
+- Model capacity reduced without obvious degradation
+- Defense: Monitor neuron death rates, use GELU instead</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why FFN After Attention? Roles and Interpretations</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Why do transformers need FFN layers after attention? Attention is already powerful - 
+it mixes information across positions. FFN serves complementary roles: injecting 
+non-linearity, increasing model capacity, and serving as key-value memory for storing 
+factual knowledge. Understanding these roles reveals FFN&#x27;s critical importance.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Role 1 Non Linearity</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Attention is (mostly) linear operation</p>
+<h4 class="sh3">Attention Linearity</h4>
+<p class="prose">Attention(Q, K, V) = softmax(QK^T) V
+
+After softmax, this is weighted sum (linear combination of V)
+→ Multiple attention layers without FFN = still linear!</p>
+<h4 class="sh3">Ffn Solution</h4>
+<p class="prose">FFN adds non-linearity via ReLU/GELU
+→ Enables complex non-linear transformations
+→ Critical for deep network expressive power</p>
+<h4 class="sh3">Without Ffn</h4>
+<p class="prose">Stack of attention layers (no FFN) ≈ single attention layer
+→ Depth doesn&#x27;t help much
+→ Limited expressiveness</p>
+<h3 class="sh3">Role 2 Capacity Expansion</h3>
+<h4 class="sh3">Dimension Expansion</h4>
+<p class="prose">Attention: d_model → d_model (preserves dimension)
+FFN: d_model → 4×d_model → d_model (expands then compresses)</p>
+<h4 class="sh3">Parameter Count</h4>
+<p class="prose">Attention (single head, d_model=512):
+- Q, K, V projections: 3 × 512² ≈ 786K
+- Output projection: 512² ≈ 262K
+- Total: ~1M parameters
+
+FFN (d_ff=2048):
+- Layer 1: 512 × 2048 ≈ 1M
+- Layer 2: 2048 × 512 ≈ 1M
+- Total: ~2M parameters (2x more than attention!)</p>
+<h4 class="sh3">Capacity Implications</h4>
+<p class="prose">FFN has MORE parameters than attention in typical transformers
+→ Significant contribution to model capacity
+→ Can learn complex transformations</p>
+<h3 class="sh3">Role 3 Ffn As Key Value Memory</h3>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Geva et al. (2020): FFN layers store factual knowledge
+
+FFN can be viewed as key-value memory:
+- Layer 1 (W_1): Keys (pattern matching)
+- Layer 2 (W_2): Values (information retrieval)</p>
+<h4 class="sh3">How It Works</h4>
+<p class="prose">Input x matches against keys (rows of W_1)
+→ Activations h = ReLU(W_1 x) indicate which keys fired
+→ Output = W_2 h retrieves corresponding values</p>
+<h4 class="sh3">Empirical Evidence</h4>
+<h4 class="sh3">Factual Recall</h4>
+<p class="prose">&quot;The Eiffel Tower is in ___&quot;
+→ FFN retrieves &quot;Paris&quot; from learned weights</p>
+<h4 class="sh3">Knowledge Editing</h4>
+<p class="prose">Can update factual knowledge by editing FFN weights
+Example: Change &quot;Paris&quot; to &quot;London&quot; by modifying W_2</p>
+<h4 class="sh3">Knowledge Neurons</h4>
+<p class="prose">Specific neurons in FFN encode specific facts
+&quot;France neuron&quot;, &quot;Paris neuron&quot;, &quot;capital city neuron&quot;</p>
+<h4 class="sh3">Implications For Understanding</h4>
+<p class="prose">Attention: Contextual processing (what&#x27;s relevant?)
+FFN: Factual knowledge storage (what do I know?)
+
+Together: Context + Knowledge → Understanding</p>
+<h3 class="sh3">Complementary Design</h3>
+<h4 class="sh3">Attention Ffn Comparison</h4>
+<h4 class="sh3">Attention</h4>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Mix information ACROSS positions</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">Shared across positions via Q, K, V</p>
+<h4 class="sh3">Role</h4>
+<p class="prose">Context aggregation, relevance weighting</p>
+<h4 class="sh3">Ffn</h4>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Transform EACH position independently</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">Shared across positions (same W_1, W_2)</p>
+<h4 class="sh3">Role</h4>
+<p class="prose">Non-linear transformation, knowledge retrieval</p>
+<h4 class="sh3">Why Both Needed</h4>
+<p class="prose">Attention alone: Can aggregate context but limited transformation
+FFN alone: Can transform but cannot mix positions
+
+Together: Attention gathers context, FFN processes it
+→ Powerful combination!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Ffn As Memory Demonstration</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_ffn_as_memory():
+    &quot;&quot;&quot;
+    Demonstrate FFN as key-value memory.
+    
+    Simplified example showing how FFN can store/retrieve facts.
+    &quot;&quot;&quot;
+    
+    print(&quot;\n=== FFN as Key-Value Memory ===\n&quot;)
+    
+    # Simplified example: FFN storing city-country associations
+    d_model = 4
+    d_ff = 8
+    
+    # Create FFN
+    ffn = PositionWiseFeedForward(d_model, d_ff)
+    
+    # Simulate &quot;city&quot; embeddings (simplified)
+    cities = {
+        &quot;Paris&quot;: np.array([1.0, 0.0, 0.0, 0.0]),
+        &quot;London&quot;: np.array([0.0, 1.0, 0.0, 0.0]),
+        &quot;Tokyo&quot;: np.array([0.0, 0.0, 1.0, 0.0]),
+        &quot;NYC&quot;: np.array([0.0, 0.0, 0.0, 1.0]),
+    }
+    
+    print(&quot;Concept: FFN as Key-Value Memory&quot;)
+    print()
+    print(&quot;Layer 1 (W_1): Keys - pattern matching&quot;)
+    print(&quot;  Rows of W_1 act as &#x27;keys&#x27; that match input patterns&quot;)
+    print(&quot;  Activation h = ReLU(W_1 × x) shows which keys fired&quot;)
+    print()
+    print(&quot;Layer 2 (W_2): Values - information retrieval&quot;)
+    print(&quot;  Columns of W_2 store &#x27;values&#x27; for each key&quot;)
+    print(&quot;  Output = W_2 × h retrieves corresponding values&quot;)
+    print()
+    
+    # Process each city
+    print(&quot;Processing cities through FFN:&quot;)
+    for city, embedding in cities.items():
+        # Layer 1: Key matching
+        h = np.dot(embedding, ffn.W_1.T) + ffn.b_1
+        h = np.maximum(0, h)  # ReLU
+        
+        # Layer 2: Value retrieval
+        output = np.dot(h, ffn.W_2.T) + ffn.b_2
+        
+        print(f&quot;\n  {city}:&quot;)
+        print(f&quot;    Hidden activations (which neurons fired): {h[:4]}&quot;)
+        print(f&quot;    Output: {output}&quot;)
+    
+    print(&quot;\n\nKey insight:&quot;)
+    print(&quot;  Different inputs activate different neurons (keys)&quot;)
+    print(&quot;  Each neuron&#x27;s activation retrieves associated information (values)&quot;)
+    print(&quot;  → FFN stores and retrieves factual knowledge!&quot;)
+
+demonstrate_ffn_as_memory()</code></pre>
+<h3 class="sh3">Analyze Ffn Parameters</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def analyze_ffn_parameters():
+    &quot;&quot;&quot;Analyze FFN parameter distribution and capacity.&quot;&quot;&quot;
+    
+    print(&quot;\n=== FFN Parameter Analysis ===\n&quot;)
+    
+    configurations = [
+        (&quot;BERT-base&quot;, 768, 3072),
+        (&quot;BERT-large&quot;, 1024, 4096),
+        (&quot;GPT-2 small&quot;, 768, 3072),
+        (&quot;GPT-2 medium&quot;, 1024, 4096),
+        (&quot;GPT-3&quot;, 12288, 49152),
+    ]
+    
+    print(&quot;Model          | d_model | d_ff  | FFN Params | Attention Params | Ratio&quot;)
+    print(&quot;---------------|---------|-------|------------|------------------|-------&quot;)
+    
+    for name, d_model, d_ff in configurations:
+        # FFN parameters
+        ffn_params = 2 * d_model * d_ff + d_model + d_ff
+        
+        # Multi-head attention parameters (simplified: 8 heads)
+        num_heads = 8
+        d_k = d_model // num_heads
+        # Q, K, V projections + output projection
+        attn_params = 4 * d_model * d_model
+        
+        ratio = ffn_params / attn_params
+        
+        print(f&quot;{name:14s} | {d_model:7,} | {d_ff:5,} | {ffn_params:10,} | &quot;
+              f&quot;{attn_params:16,} | {ratio:5.2f}x&quot;)
+    
+    print(&quot;\nObservation:&quot;)
+    print(&quot;  FFN typically has 2-3x MORE parameters than attention!&quot;)
+    print(&quot;  FFN is major contributor to model capacity&quot;)
+    print(&quot;  → Important target for compression and security analysis&quot;)
+
+analyze_ffn_parameters()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Knowledge Extraction Attacks</h3>
+<p class="prose">FFN stores factual knowledge in weights:
+- Adversary can extract facts via weight analysis
+- Example: Extract &quot;Paris is capital of France&quot; from W_1, W_2
+- Model inversion attacks target FFN layers
+- Defense: Protect FFN weights, monitor extraction attempts</p>
+<h3 class="sh3">Knowledge Injection Backdoors</h3>
+<p class="prose">FFN is primary target for knowledge injection:
+- Fine-tune FFN to inject false facts (&quot;London is capital of France&quot;)
+- Small weight changes can add backdoors
+- Hard to detect without comprehensive fact-checking
+- Defense: Validate fine-tuned models, compare against base weights</p>
+<h3 class="sh3">Knowledge Neurons Targeting</h3>
+<p class="prose">Specific neurons encode specific facts:
+- Adversary identifies &quot;security-relevant&quot; neurons
+- Suppresses or amplifies these neurons
+- Example: Kill &quot;malware detection&quot; neurons
+- Defense: Monitor neuron activation patterns, redundancy</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Position-wise FFN applies same network independently to each position</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Complements attention (which mixes positions)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Two-layer architecture: expand (4x) → activate → compress</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Adds capacity and non-linearity critical for deep networks</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">GELU activation smoother than ReLU, better for NLP</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Used in modern transformers (BERT, GPT), better optimization</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">FFN has 2-3x more parameters than attention in typical transformers</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Major contributor to model capacity, important for security</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">FFN as key-value memory storing factual knowledge</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Reveals how to extract knowledge, inject backdoors, edit facts</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement position-wise FFN from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Expand → activate → compress, same transformation per position</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement GELU activation function</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Smooth approximation using tanh, no dead neurons</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Demonstrate FFN complements attention</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Attention mixes positions, FFN transforms independently</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Analyze FFN parameter count and computational cost</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">2×d_model×d_ff parameters, O(n×d_model²) operations</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Understand FFN as key-value memory</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">W_1 = keys, W_2 = values, stores factual knowledge</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">FFN stores factual knowledge in weights</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Target for knowledge extraction and injection attacks</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Large parameter count (2-3x attention) creates attack surface</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">More weights to tamper with, harder to audit</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Specific neurons encode specific facts (knowledge neurons)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary can target specific neurons for suppression/amplification</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Position-wise processing treats all positions identically</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Cannot distinguish position-based attacks, relies on attention</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Activation function choice affects output patterns</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Can fingerprint model type, different security properties</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using different FFN parameters for different positions</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Same W_1, W_2, b_1, b_2 for ALL positions (position-wise)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting non-linear activation between layers</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Must have ReLU/GELU between W_1 and W_2</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using wrong dimension ordering in weight matrices</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">W_1: (d_ff, d_model), W_2: (d_model, d_ff)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not accounting for FFN&#x27;s large parameter count</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">FFN often dominates model size, plan memory accordingly</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Ignoring FFN in security analysis (focusing only on attention)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">FFN stores knowledge, is primary target for many attacks</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Chapter 1</h3>
+<ul class="blist"><li>Fully connected layers (FFN is two FC layers)</li><li>Activation functions (ReLU basics)</li><li>Parameter counting and memory analysis</li></ul>
+<h3 class="sh3">From Section 3 8</h3>
+<ul class="blist"><li>Multi-head attention (what comes before FFN)</li><li>Transformer layer structure</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.11: Layer normalization and residual connections</li><li>How to stabilize training with LayerNorm</li><li>Residual connections for gradient flow</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Layer normalization (stabilize activations)</li><li>Residual connections (gradient highways)</li><li>Pre-norm vs post-norm configurations</li><li>Complete transformer layer (attention + FFN + norms + residuals)</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement layer normalization</li><li>Add residual connections properly</li><li>Build complete transformer encoder layer</li><li>Stack multiple layers into deep transformer</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Feed-forward networks are the often-overlooked component of transformers, overshadowed 
+by attention&#x27;s glamour. But FFN is critical: it injects non-linearity (enabling deep 
+networks), adds significant capacity (2-3x more parameters than attention), and serves 
+as key-value memory for factual knowledge.
+
+The architecture is elegantly simple: expand to 4x dimension, apply GELU activation, 
+compress back. Applied position-wise - same transformation to each position independently. 
+This complements attention perfectly: attention mixes information across positions, FFN 
+transforms each position based on learned knowledge.
+
+Modern transformers use GELU instead of ReLU for smoother gradients and better 
+optimization. The interpretation of FFN as key-value memory (Geva et al., 2020) reveals 
+how transformers store factual knowledge: Layer 1 acts as keys (pattern matching), 
+Layer 2 as values (information retrieval). This enables both understanding and attacks.
+
+From a security perspective: FFN is a primary target. Knowledge extraction attacks aim 
+to recover facts from weights. Knowledge injection attacks add false facts or backdoors 
+through fine-tuning. Specific &quot;knowledge neurons&quot; can be identified and targeted for 
+suppression. FFN&#x27;s large parameter count (often majority of model) creates significant 
+attack surface that requires careful monitoring.
+
+Next: Section 3.11 introduces the glue that holds transformers together - layer 
+normalization and residual connections. These enable training deep networks by 
+stabilizing activations and providing gradient highways.</p>
+</article>

@@ -1,0 +1,564 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 18 · ~7 pages</div>
+<h1>Support Vector Machines</h1>
+<div class="tags"><span class="tag">svm</span><span class="tag">support-vectors</span><span class="tag">kernel-trick</span><span class="tag">margin</span><span class="tag">rbf-kernel</span><span class="tag">maximum-margin</span><span class="tag">soft-margin</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Support Vector Machines (SVMs) are powerful classifiers that find the optimal decision 
+boundary between classes. Unlike logistic regression which finds &quot;any&quot; boundary, SVMs 
+find the boundary that maximizes the margin - the distance to the nearest samples from 
+each class. This maximum margin principle leads to better generalization and robustness.
+
+SVMs shine when data isn&#x27;t linearly separable. Through the &quot;kernel trick,&quot; they can 
+learn complex, non-linear decision boundaries in high-dimensional spaces without 
+explicitly computing those transformations. A polynomial kernel can separate data with 
+circular boundaries, an RBF kernel can handle arbitrary shapes - all while solving a 
+convex optimization problem.
+
+This section covers:
+- Maximum margin principle (why maximize margin?)
+- Hard margin SVM (linearly separable data)
+- Soft margin SVM (handling outliers and noise with slack variables)
+- Kernel trick (non-linear decision boundaries)
+- Common kernels (linear, polynomial, RBF)
+- Dual formulation and support vectors
+
+For security, SVMs are valuable because:
+1. Maximum margin = robust to adversarial perturbations
+2. Kernel trick handles complex attack patterns
+3. Few support vectors = interpretable, efficient
+4. Resistant to overfitting (regularization built-in)
+5. Strong theoretical guarantees</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security context:
+- Intrusion detection: Separate normal vs attack traffic with maximum margin
+- Malware detection: Non-linear kernels capture complex behavioral patterns
+- Spam filtering: RBF kernel handles diverse spam characteristics
+- Adversarial robustness: Larger margin = harder to evade
+
+Real deployments:
+- Used in production intrusion detection systems
+- Popular for malware classification (pre-deep learning era)
+- Strong baseline for binary security classification
+
+Why learn SVMs:
+- Foundation of modern ML (influenced many algorithms)
+- Maximum margin principle applies broadly
+- Kernel methods still relevant (kernel PCA, kernel k-means)
+- Understanding SVMs deepens understanding of optimization and duality</p>
+<h2 class="sh1">Maximum Margin</h2>
+<h3 class="sh2">Intuition</h3>
+<p class="prose">Many decision boundaries can separate two classes
+Which one is &quot;best&quot;?
+
+SVM answer: The one farthest from both classes (maximum margin)
+
+Visualization:
+
+Bad boundary (close to data):
+X X X | O O O
+      ↑ Small margin, close to data
+
+Good boundary (maximum margin):
+X X X    |    O O O
+         ↑ Large margin, far from both classes</p>
+<h3 class="sh2">Why Maximize Margin</h3>
+<p class="prose">Generalization argument:
+- Larger margin = more &quot;breathing room&quot;
+- Less sensitive to small data variations
+- Better generalization to unseen data
+
+Adversarial robustness:
+- Adversary must perturb sample more to cross boundary
+- Larger margin = harder to evade
+
+Statistical learning theory:
+- VC dimension related to margin
+- Larger margin → lower VC dimension → better bounds</p>
+<h3 class="sh2">Margin Definition</h3>
+<p class="prose">Margin: Perpendicular distance from decision boundary to nearest sample
+
+Decision boundary: w·x + b = 0
+Margin: γ = min_i |w·xᵢ + b| / ||w||
+
+Goal: Maximize γ (find w, b with largest margin)</p>
+<h3 class="sh2">Geometric Intuition</h3>
+<p class="prose">Decision boundary: Hyperplane w·x + b = 0
+
+Margin boundaries:
+- w·x + b = +1  (positive class boundary)
+- w·x + b = -1  (negative class boundary)
+
+Width of margin: 2/||w||
+
+To maximize margin: Minimize ||w||
+Subject to: All samples correctly classified with margin</p>
+<h2 class="sh1">Hard Margin Svm</h2>
+<h3 class="sh2">Problem Formulation</h3>
+<p class="prose">Given training data: {(x₁, y₁), ..., (xₙ, yₙ)}
+Where yᵢ ∈ {-1, +1}
+
+Find w, b that:
+1. Correctly classify all samples: yᵢ(w·xᵢ + b) ≥ 1 for all i
+2. Maximize margin: Minimize ||w||²
+
+Optimization problem:
+
+minimize    ½||w||²
+subject to  yᵢ(w·xᵢ + b) ≥ 1  for all i</p>
+<h3 class="sh2">Constraints Explained</h3>
+<p class="prose">yᵢ(w·xᵢ + b) ≥ 1  means:
+
+If yᵢ = +1 (positive class):
+  w·xᵢ + b ≥ +1  (above positive margin)
+
+If yᵢ = -1 (negative class):
+  w·xᵢ + b ≤ -1  (below negative margin)
+
+All samples must be on correct side WITH margin</p>
+<h3 class="sh2">Why Half Norm Squared</h3>
+<p class="prose">Original goal: Maximize margin = 2/||w||
+Equivalent: Minimize ||w||
+Convenient: Minimize ½||w||²  (differentiable, convex)</p>
+<h3 class="sh2">Support Vectors</h3>
+<p class="prose">Support vectors: Training samples exactly on margin boundaries
+
+These are samples where yᵢ(w·xᵢ + b) = 1
+
+Key insight: Decision boundary determined ONLY by support vectors
+Other samples (far from boundary) don&#x27;t affect solution
+
+Example:
+1000 training samples
+Only 10 support vectors
+→ Remove other 990 samples, same decision boundary!</p>
+<h3 class="sh2">Limitations</h3>
+<p class="prose">Hard margin SVM requires:
+- Data must be linearly separable (rare in practice!)
+- No outliers or noise
+- No overlapping classes
+
+If data not linearly separable → no solution exists</p>
+<h2 class="sh1">Soft Margin Svm</h2>
+<h3 class="sh2">Motivation</h3>
+<p class="prose">Real data often:
+- Not perfectly linearly separable
+- Contains outliers
+- Has noise
+
+Hard margin SVM fails (no feasible solution)
+
+Solution: Allow some violations (soft margin)</p>
+<h3 class="sh2">Slack Variables</h3>
+<p class="prose">Introduce slack variables ξᵢ ≥ 0 for each sample
+
+ξᵢ = 0:    Sample correctly classified with margin
+0 &lt; ξᵢ &lt; 1: Sample correctly classified but inside margin
+ξᵢ ≥ 1:    Sample misclassified
+
+Modified constraint: yᵢ(w·xᵢ + b) ≥ 1 - ξᵢ</p>
+<h3 class="sh2">Optimization Problem</h3>
+<p class="prose">minimize    ½||w||² + C Σᵢ ξᵢ
+subject to  yᵢ(w·xᵢ + b) ≥ 1 - ξᵢ  for all i
+            ξᵢ ≥ 0  for all i
+
+Trade-off:
+- ½||w||²: Maximize margin (regularization)
+- C Σᵢ ξᵢ: Minimize violations (fit training data)
+
+C is regularization parameter (hyperparameter)</p>
+<h3 class="sh2">C Parameter</h3>
+<p class="prose">C controls trade-off between margin and violations
+
+Small C (e.g., C=0.1):
+- Large margin tolerated (more regularization)
+- More violations allowed
+- May underfit
+
+Large C (e.g., C=100):
+- Small margin (less regularization)
+- Few violations allowed
+- May overfit
+
+Typical values: C ∈ [0.1, 1, 10, 100]
+Tune on validation set</p>
+<h3 class="sh2">Hinge Loss Interpretation</h3>
+<p class="prose">Soft margin SVM equivalent to minimizing hinge loss:
+
+Hinge loss: max(0, 1 - yᵢ(w·xᵢ + b))
+
+SVM objective = Hinge loss + L2 regularization:
+
+J(w, b) = C Σᵢ max(0, 1 - yᵢ(w·xᵢ + b)) + ½||w||²
+
+This connects SVM to other ML algorithms!</p>
+<h2 class="sh1">Kernel Trick</h2>
+<h3 class="sh2">Motivation</h3>
+<p class="prose">Linear SVM limited to linear decision boundaries
+
+Many real problems non-linearly separable:
+- Concentric circles (malware vs benign in feature space)
+- XOR pattern
+- Complex attack patterns
+
+Need: Non-linear decision boundaries</p>
+<h3 class="sh2">Feature Mapping</h3>
+<p class="prose">Idea: Transform data to higher-dimensional space where it&#x27;s linearly separable
+
+Original space (2D):
+x = [x₁, x₂]
+
+Transformed space (3D):
+φ(x) = [x₁, x₂, x₁² + x₂²]
+
+Example: Circle boundary in 2D → Linear boundary in 3D!
+
+Problem: Explicit transformation expensive (high dimensions)</p>
+<h3 class="sh2">Kernel Trick Magic</h3>
+<p class="prose">Key insight: SVM only needs dot products φ(xᵢ)·φ(xⱼ)
+
+Kernel function: K(xᵢ, xⱼ) = φ(xᵢ)·φ(xⱼ)
+
+Magic: Compute K(xᵢ, xⱼ) directly WITHOUT computing φ(x)!
+
+Example:
+Polynomial kernel: K(x, y) = (x·y + 1)²
+
+Implicitly maps to very high-dimensional space
+But only computes simple dot product and square!</p>
+<h3 class="sh2">Common Kernels</h3>
+<h3 class="sh3">Linear Kernel</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">K(x, y) = x·y</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Data already linearly separable</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">No transformation (standard linear SVM)</p>
+<h3 class="sh3">Polynomial Kernel</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">K(x, y) = (x·y + c)ᵈ</p>
+<h4 class="sh3">Hyperparameters</h4>
+<h4 class="sh3">D</h4>
+<p class="prose">Degree (typically 2-5)</p>
+<h4 class="sh3">C</h4>
+<p class="prose">Constant (typically 0 or 1)</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Decision boundary is polynomial</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">d=2: Quadratic boundary (circles, ellipses)
+d=3: Cubic boundary</p>
+<h3 class="sh3">Rbf Kernel</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">K(x, y) = exp(-γ||x - y||²)</p>
+<h4 class="sh3">Names</h4>
+<ul class="blist"><li>RBF</li><li>Gaussian kernel</li><li>Radial basis function</li></ul>
+<h4 class="sh3">Hyperparameter</h4>
+<h4 class="sh3">Gamma</h4>
+<p class="prose">Controls width of Gaussian (1/(2σ²))</p>
+<h4 class="sh3">Properties</h4>
+<ul class="blist"><li>Most popular kernel</li><li>Can approximate any decision boundary (universal)</li><li>Creates &#x27;bubbles&#x27; around support vectors</li></ul>
+<h4 class="sh3">Gamma Effect</h4>
+<p class="prose">Small γ (e.g., 0.01): Wide Gaussian, smooth boundary
+Large γ (e.g., 10): Narrow Gaussian, complex boundary (overfits)</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Default choice for non-linear problems</p>
+<h3 class="sh3">Sigmoid Kernel</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">K(x, y) = tanh(αx·y + c)</p>
+<h4 class="sh3">Use Case</h4>
+<p class="prose">Mimics neural network (historical interest)</p>
+<h3 class="sh2">Choosing Kernel</h3>
+<p class="prose">Decision tree:
+
+1. Try linear kernel first (fastest, simplest)
+   If accuracy good enough → Done!
+
+2. If linear insufficient, try RBF kernel
+   Tune γ on validation set
+
+3. If domain knowledge suggests polynomial → try polynomial
+
+4. Default for non-linear: RBF with γ ∈ [0.001, 0.01, 0.1, 1, 10]</p>
+<h2 class="sh1">Dual Formulation</h2>
+<h3 class="sh2">Primal Vs Dual</h3>
+<p class="prose">Primal problem: Optimize w, b (one variable per feature)
+Dual problem: Optimize α (one variable per training sample)
+
+Primal: n_features variables
+Dual: n_samples variables
+
+When n_features &gt;&gt; n_samples: Solve dual
+When n_samples &gt;&gt; n_features: Solve primal</p>
+<h3 class="sh2">Dual Optimization</h3>
+<p class="prose">Dual problem:
+
+maximize  Σᵢ αᵢ - ½ΣᵢΣⱼ αᵢαⱼyᵢyⱼK(xᵢ, xⱼ)
+subject to  0 ≤ αᵢ ≤ C  for all i
+            Σᵢ αᵢyᵢ = 0
+
+Where:
+- αᵢ: Dual variable for sample i (Lagrange multiplier)
+- K(xᵢ, xⱼ): Kernel function</p>
+<h3 class="sh2">Support Vectors From Dual</h3>
+<p class="prose">After solving for α:
+
+αᵢ = 0:     Sample far from boundary (not support vector)
+0 &lt; αᵢ &lt; C: Sample on margin (support vector)
+αᵢ = C:     Sample violating margin (support vector, possibly misclassified)
+
+Decision function:
+f(x) = Σᵢ αᵢyᵢK(xᵢ, x) + b
+
+Only sum over support vectors (αᵢ &gt; 0)!</p>
+<h3 class="sh2">Why Dual Matters</h3>
+<p class="prose">1. Kernel trick only works in dual form
+2. Reveals support vectors explicitly
+3. Efficient when n_features &gt;&gt; n_samples
+4. Deep connection to optimization theory</p>
+<h2 class="sh1">Practical Implementation</h2>
+<pre class="code"><code>import numpy as np
+
+class SVM:
+    &quot;&quot;&quot;
+    Simplified SVM using gradient descent on primal (linear kernel only)
+    
+    Note: Production SVMs use dual formulation with QP solvers
+    This implementation for educational purposes
+    &quot;&quot;&quot;
+    
+    def __init__(self, C=1.0, learning_rate=0.001, n_iterations=1000):
+        &quot;&quot;&quot;
+        Args:
+            C: Regularization parameter
+            learning_rate: Step size for gradient descent
+            n_iterations: Number of training iterations
+        &quot;&quot;&quot;
+        self.C = C
+        self.learning_rate = learning_rate
+        self.n_iterations = n_iterations
+        self.w = None
+        self.b = None
+    
+    def fit(self, X, y):
+        &quot;&quot;&quot;
+        Train SVM using subgradient descent on hinge loss
+        
+        Objective: C Σ max(0, 1 - yᵢ(w·xᵢ + b)) + ½||w||²
+        &quot;&quot;&quot;
+        n_samples, n_features = X.shape
+        
+        # Convert labels to {-1, +1}
+        y_ = np.where(y &lt;= 0, -1, 1)
+        
+        # Initialize
+        self.w = np.zeros(n_features)
+        self.b = 0
+        
+        # Gradient descent
+        for iteration in range(self.n_iterations):
+            for i, x_i in enumerate(X):
+                # Compute hinge loss condition
+                condition = y_[i] * (np.dot(x_i, self.w) + self.b) &gt;= 1
+                
+                if condition:
+                    # No hinge loss, only regularization gradient
+                    self.w -= self.learning_rate * self.w
+                else:
+                    # Hinge loss + regularization gradient
+                    self.w -= self.learning_rate * (self.w - self.C * y_[i] * x_i)
+                    self.b -= self.learning_rate * (-self.C * y_[i])
+        
+        return self
+    
+    def predict(self, X):
+        &quot;&quot;&quot;Predict class labels&quot;&quot;&quot;
+        linear_output = np.dot(X, self.w) + self.b
+        return np.sign(linear_output)
+    
+    def decision_function(self, X):
+        &quot;&quot;&quot;Compute decision function values&quot;&quot;&quot;
+        return np.dot(X, self.w) + self.b
+    
+    def score(self, X, y):
+        &quot;&quot;&quot;Compute accuracy&quot;&quot;&quot;
+        y_ = np.where(y &lt;= 0, -1, 1)
+        predictions = self.predict(X)
+        return np.mean(predictions == y_)
+
+# ========================================================================
+# USAGE EXAMPLE
+# ========================================================================
+
+# Generate linearly separable data
+np.random.seed(42)
+
+# Class 1: Normal traffic (low packet size, low connection rate)
+X_normal = np.random.randn(100, 2) * 0.5 + np.array([1, 1])
+y_normal = np.zeros(100)
+
+# Class 2: Attack traffic (high packet size, high connection rate)
+X_attack = np.random.randn(100, 2) * 0.5 + np.array([4, 4])
+y_attack = np.ones(100)
+
+# Combine
+X = np.vstack([X_normal, X_attack])
+y = np.hstack([y_normal, y_attack])
+
+# Shuffle
+indices = np.random.permutation(len(y))
+X, y = X[indices], y[indices]
+
+# Train/test split
+split = int(0.8 * len(y))
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
+
+# Train SVM
+svm = SVM(C=1.0, learning_rate=0.001, n_iterations=1000)
+svm.fit(X_train, y_train)
+
+# Evaluate
+train_acc = svm.score(X_train, y_train)
+test_acc = svm.score(X_test, y_test)
+
+print(f&quot;SVM (C={svm.C})&quot;)
+print(f&quot;Training accuracy: {train_acc:.2%}&quot;)
+print(f&quot;Test accuracy: {test_acc:.2%}&quot;)
+print(f&quot;Weights: {svm.w}&quot;)
+print(f&quot;Bias: {svm.b:.4f}&quot;)
+
+# Tune C
+print(&quot;\nTuning C:&quot;)
+for C in [0.1, 1.0, 10.0, 100.0]:
+    svm = SVM(C=C, learning_rate=0.001, n_iterations=1000)
+    svm.fit(X_train, y_train)
+    acc = svm.score(X_test, y_test)
+    print(f&quot;C={C}: {acc:.2%}&quot;)
+
+# Note on kernel SVM:
+# For kernel SVM (RBF, polynomial), use library like scikit-learn
+# which implements dual formulation with QP solver
+&quot;&quot;&quot;
+from sklearn.svm import SVC
+
+# RBF kernel SVM
+svm_rbf = SVC(kernel=&#x27;rbf&#x27;, C=1.0, gamma=&#x27;scale&#x27;)
+svm_rbf.fit(X_train, y_train)
+
+# Number of support vectors
+print(f&quot;Support vectors: {len(svm_rbf.support_vectors_)}&quot;)
+&quot;&quot;&quot;</code></pre>
+<h2 class="sh1">Security Applications</h2>
+<h3 class="sh2">Intrusion Detection</h3>
+<h3 class="sh3">Approach</h3>
+<p class="prose">Features: Packet size, protocol, ports, timing, payload statistics
+Classes: Normal vs Attack
+
+Use RBF kernel SVM:
+- Captures non-linear attack patterns
+- Maximum margin = robust to variations</p>
+<h3 class="sh3">Benefit</h3>
+<p class="prose">Large margin makes detector robust:
+- Attack must deviate significantly to evade
+- Small perturbations don&#x27;t cross boundary</p>
+<h3 class="sh2">Malware Classification</h3>
+<h3 class="sh3">Features</h3>
+<p class="prose">- API call sequences (behavioral)
+- Byte n-grams (static)
+- PE header features
+- Control flow graphs</p>
+<h3 class="sh3">Kernel Choice</h3>
+<p class="prose">Linear: Fast, interpretable (weight per feature)
+RBF: Better accuracy for complex patterns</p>
+<h3 class="sh3">Support Vectors</h3>
+<p class="prose">Only 5% of malware samples are support vectors
+→ Only these samples define boundary
+→ Can explain detection by showing nearest support vectors</p>
+<h3 class="sh2">Spam Detection</h3>
+<h3 class="sh3">Features</h3>
+<p class="prose">TF-IDF vectors of email text</p>
+<h3 class="sh3">Kernel</h3>
+<p class="prose">Linear (high-dimensional text data)</p>
+<h3 class="sh3">Advantage</h3>
+<p class="prose">Spam/ham boundary complex (many spam tactics)
+SVM finds maximum margin boundary
+Generalizes to new spam variations</p>
+<h3 class="sh2">Adversarial Robustness</h3>
+<h3 class="sh3">Maximum Margin Defense</h3>
+<p class="prose">SVM naturally more robust than other classifiers
+
+Reason: Maximum margin = largest &quot;safe zone&quot;
+Adversary must perturb more to cross boundary</p>
+<h3 class="sh3">Comparison</h3>
+<p class="prose">Logistic regression: Finds any separating boundary
+SVM: Finds boundary FARTHEST from data
+
+Under adversarial attack:
+- Logistic regression: Easier to evade
+- SVM: Harder to evade (larger margin)</p>
+<h3 class="sh3">Limitation</h3>
+<p class="prose">Large margin helps but doesn&#x27;t guarantee robustness
+Adversarial training still needed for strong defenses</p>
+<h2 class="sh1">Advantages Limitations</h2>
+<h3 class="sh2">Advantages</h3>
+<h3 class="sh3">Maximum Margin</h3>
+<ul class="blist"><li>Better generalization (theoretical guarantees)</li><li>Robust to overfitting (regularization built-in)</li><li>Adversarially more robust</li></ul>
+<h3 class="sh3">Kernel Trick</h3>
+<ul class="blist"><li>Handles non-linear decision boundaries</li><li>Efficient (no explicit feature mapping)</li><li>Flexible (many kernel choices)</li></ul>
+<h3 class="sh3">Sparse Solution</h3>
+<ul class="blist"><li>Only support vectors matter</li><li>Efficient prediction (few dot products)</li><li>Interpretable (show support vectors)</li></ul>
+<h3 class="sh3">Effective High Dimensions</h3>
+<ul class="blist"><li>Works well when n_features &gt;&gt; n_samples</li><li>Regularization prevents overfitting</li></ul>
+<h3 class="sh2">Limitations</h3>
+<h3 class="sh3">Kernel Hyperparameters</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Must tune C and kernel parameters (γ for RBF)</p>
+<h4 class="sh3">Impact</h4>
+<p class="prose">Performance sensitive to hyperparameter choices</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Grid search or random search on validation set</p>
+<h3 class="sh3">Computational Cost</h3>
+<h4 class="sh3">Training</h4>
+<p class="prose">O(n²) to O(n³) depending on solver
+Slow for large datasets (n &gt; 100K)</p>
+<h4 class="sh3">Prediction</h4>
+<p class="prose">O(n_support_vectors × n_features)
+Fast if few support vectors</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Use approximate methods or linear SVM for large scale</p>
+<h3 class="sh3">No Probability Estimates</h3>
+<h4 class="sh3">Issue</h4>
+<p class="prose">SVM gives decision values, not probabilities</p>
+<h4 class="sh3">Workaround</h4>
+<p class="prose">Platt scaling: Fit logistic regression to decision values
+Provides calibrated probabilities</p>
+<h4 class="sh3">Alternative</h4>
+<p class="prose">Use logistic regression if probabilities needed</p>
+<h3 class="sh3">Binary Classification</h3>
+<h4 class="sh3">Native</h4>
+<p class="prose">SVM is binary classifier</p>
+<h4 class="sh3">Multi Class</h4>
+<p class="prose">One-vs-rest: Train k binary SVMs
+One-vs-one: Train k(k-1)/2 SVMs</p>
+<h4 class="sh3">Less Natural</h4>
+<p class="prose">Compared to algorithms with native multi-class support</p>
+<h3 class="sh3">Interpretability With Kernels</h3>
+<h4 class="sh3">Linear Svm</h4>
+<p class="prose">Weights show feature importance (interpretable)</p>
+<h4 class="sh3">Kernel Svm</h4>
+<p class="prose">Non-linear transformation (less interpretable)</p>
+<h4 class="sh3">Compromise</h4>
+<p class="prose">Can show support vectors as evidence</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>SVM finds decision boundary with maximum margin</li><li>Hard margin: All samples correctly classified with margin</li><li>Soft margin: Allow violations with slack variables (C parameter)</li><li>Kernel trick: Non-linear boundaries without explicit transformation</li><li>Support vectors: Samples on margin (define decision boundary)</li><li>RBF kernel: Most popular for non-linear problems</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement linear SVM from scratch using hinge loss</li><li>Understand primal vs dual formulation</li><li>Choose kernel: Linear first, then RBF if needed</li><li>Tune C (regularization) and γ (RBF width) on validation set</li><li>Identify support vectors (key samples)</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Maximum margin = more robust to adversarial perturbations</li><li>Few support vectors = efficient, interpretable detection</li><li>RBF kernel captures complex attack patterns</li><li>SVM baseline for binary security classification</li><li>Large margin makes evasion harder for adversary</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>SVM maximizes margin (key differentiator)</li><li>Kernel trick = non-linear boundaries efficiently</li><li>Tune C: Small = large margin, Large = fit data closely</li><li>RBF kernel is default for non-linear problems</li><li>Only support vectors define decision boundary</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Naive Bayes (probabilistic classifier)</li><li>You now understand margin-based classification</li><li>SVMs foundation for kernel methods across ML</li></ul>
+</article>

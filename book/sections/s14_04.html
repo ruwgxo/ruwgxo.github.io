@@ -1,0 +1,719 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 14 · Section 4 · ~7 pages</div>
+<h1>Latency Engineering: Meeting the Sub-50ms P99 Budget</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The sub-50ms P99 latency budget from Chapter 11 is a hard constraint that governs the whole inline tier: it decides what can run inline, it is measured at the tail rather than the average, and it is enforced through budget allocation across detectors, parallel execution, and per-detector timeouts that bound the worst case.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Every blocking inline hook placed in Section 14.03 holds the request while it runs, and
+that latency is added to every request on the hot path. Sections 14.02 and 14.03 kept
+saying the inline tier must fit a budget without engineering the budget itself. This
+section engineers it. The sub-50ms P99 requirement from Chapter 11 is not a target to aim
+at but a hard limit: a detector that pushes the gateway past it makes the API slow enough
+that the detector is removed, so the budget decides what is allowed to run inline at all.
+Meeting it is a discipline with several parts. The budget must be measured correctly, at
+the tail rather than the average, because the average hides exactly the slow requests that
+users notice. It must be allocated across the inline detectors so each one has a share it
+must fit. It must be defended with optimisation -- precomputed summaries, caching, and
+parallel execution -- that brings the critical path under the limit even when the serial
+sum would exceed it. And it must be protected against the unbounded slow case with
+per-detector timeouts that turn a detector that would blow the budget into one that fails
+within it. This section builds all four.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 14.04 is the first of the two performance sections (14.04-14.05) and the response to
+the latency concern from the 14.01 taxonomy. It engineers the latency budget for the
+blocking inline hooks that 14.03 placed. Section 14.05 then engineers throughput and
+horizontal scaling, sustaining the request rate once each individual request fits the
+budget. The per-detector timeout introduced here makes a fail-open/fail-closed decision on
+timeout whose full policy is Section 14.06.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names latency as a concern</li><li>Section 14.02: the architecture pattern that fixes the latency floor the budget is measured against</li><li>Section 14.03: the blocking inline hooks whose latency this section budgets</li><li>Chapter 11 Section 11.13: the seven-track gateway and the sub-50ms P99 requirement engineered here</li><li>Chapter 13 Section 13.01: the state-latency coupling that explains why large-state detectors cannot run inline</li><li>Working knowledge of percentiles and the difference between a mean and a tail percentile</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Budget Is a Hard Constraint, Not a Target</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The sub-50ms P99 latency budget arrived in Chapter 11 as a requirement of the gateway, and
+this section is where it stops being a stated number and becomes engineered reality. The
+first thing to be clear about is its status. It is not a target that the system aims for
+and does its best to approach. It is a hard constraint, and the difference matters,
+because a hard constraint that is violated does not produce a slightly worse system --
+it produces a removed one.
+
+The mechanism of removal is worth stating plainly, because it is what gives the budget its
+force. A detector that runs inline adds its latency to every request. If that latency
+pushes the gateway past the point where the API feels slow, the product degrades, and a
+product that is degraded by its security layer does not keep the security layer -- the
+detector is disabled, and its protection goes to zero. A detector that is too slow is,
+in production terms, a detector that does not exist. This is why latency is a security
+concern and not merely a performance one: the fastest way to lose a detector is not to
+have it evaded but to have it removed for being slow.
+
+That reframing sets up everything else in the section. Because the budget is hard, it
+decides what is allowed to run inline at all: a detector that cannot fit its share of the
+budget cannot run on the hot path, no matter how good its detection is, and must be moved
+to a slower tier or dropped. The budget is the gatekeeper of the inline tier, and the
+rest of this section is the engineering that lets as much protection as possible through
+the gate while keeping the whole tier inside the limit.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why the Tail Governs the Experience</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The budget is stated at the ninety-ninth percentile, not the average, and that choice is
+not a technicality. It reflects how latency is actually experienced. A latency
+distribution on a real system is not a tidy bell around its mean; it is a tight body of
+fast requests with a heavy tail of slow ones, produced by garbage-collection pauses,
+cache misses, lock contention, and the occasional unlucky scheduling. The average is
+dominated by the body and barely moved by the tail, so it can look perfectly healthy
+while the tail is failing.
+
+What users notice is the tail. A user does not experience the mean latency of a thousand
+requests; they experience each request one at a time, and the slow ones are the ones
+that register as the product stalling. If the P99 is over budget, then one request in a
+hundred stalls, and over a session of many requests a large fraction of users hit at
+least one stall. Budgeting on the mean would declare that system healthy while it
+quietly failed a meaningful share of its users. This is why the percentile harness in
+this section reads P50, P95, and P99 and treats the P99 as the number that governs the
+budget: the tail is where the experience is decided.
+
+The practical consequence is a rule about measurement. Latency must be measured at
+percentiles under load, not as an average on a quiet system, because both simplifications
+hide the tail. An average hides it by construction, and a quiet system hides it by never
+producing the contention that creates it. The number that matters is the P99 measured
+while the system is under the load it will actually see, and any latency claim that is
+not that number is not the claim the budget is about.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Allocating the Budget Across the Inline Detectors</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A single budget for the whole inline tier is not directly actionable, because the tier is
+several detectors and something has to say how much of the fifty milliseconds each one
+may take. Budget allocation is that step: the tier budget, minus the fixed overhead that
+is spent before any detector runs, is divided across the inline detectors so that each
+one has a concrete allocation it must fit within.
+
+The overhead comes off the top. Before a detector executes, the request has already paid
+for the network hop of the chosen architecture pattern, the gateway processing, and the
+serialisation of the payload. That overhead is not available to the detectors, so the
+detector budget is the tier budget minus the overhead, and it is the detector budget that
+is divided up. The division itself is weighted: a cheap signature match gets a small
+allocation because it needs little, while a transformer-based injection classifier gets a
+large one because it is the heaviest inline check. The allocation is a statement of what
+each detector is permitted to cost, and it is the contract each detector is then
+engineered to meet.
+
+Allocation also makes the budget enforceable at the level where it can be acted on. When
+a detector exceeds its allocation, the allocation table says which detector is over and
+by how much, so the fix is targeted rather than a vague hunt for latency across the whole
+tier. And when a new detector is proposed for the inline tier, the allocation table is
+the check: either there is a spare allocation for it or there is not, and if there is
+not, the detector does not go inline. The allocation deliverable and the allocation table
+for this section make that budget explicit and per-detector.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Parallel Execution and Precomputation: Fitting the Budget</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Allocating the budget reveals a problem: the naive serial sum of the inline detectors
+often exceeds the budget. Add up a signature match, two heuristic passes, an injection
+classifier, a jailbreak classifier, and an output scanner run one after another, and the
+total can be over fifty milliseconds before any overhead. Run serially, the tier does not
+fit. The way it fits is by not running serially.
+
+Parallel execution is the primary lever. The inline detectors are largely independent --
+the injection classifier and the jailbreak classifier both read the request and neither
+depends on the other -- so they can run concurrently. When detectors run in parallel, the
+group costs the latency of its slowest member, not the sum of all of them, because they
+overlap in time. This is why the budget engine distinguishes the serial sum from the
+critical path: the critical path is the sum of the serial stages plus the maximum within
+each parallel group, and it is the critical path, not the serial sum, that must fit the
+budget. A tier whose serial sum is fifty-four milliseconds can have a critical path of
+thirty once the input classifiers run in parallel, and thirty fits with headroom to
+spare.
+
+Precomputation and caching are the second lever, and they work by moving cost off the hot
+path entirely. A detector that would need to compute an expensive summary on every
+request can instead read a summary that was precomputed off-path and refreshed
+periodically, so the inline cost is a cheap lookup rather than a full computation. A
+detector whose verdict for a repeated input is stable can cache that verdict, so a repeat
+is a cache hit costing almost nothing. Between parallel execution and precomputation, the
+inline tier can run detectors whose naive serial cost would exceed the budget several
+times over, which is what lets strong detection stay on the hot path rather than being
+dropped for latency.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why Large-State Detectors Cannot Run Inline</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Parallel execution and precomputation extend how much can run inline, but they do not
+extend it without limit, and the limit is exactly the state-latency coupling from Chapter
+13 Section 13.01. That coupling was introduced as a detection design principle: a
+detector that needs a large historical state cannot run on the hot path. Here it reappears
+as a latency consequence, engineered rather than asserted.
+
+The reason a large-state detector cannot run inline is that its cost is tied to the size
+of the state it must consult, and that cost cannot be made small enough to fit the
+budget on the hot path. A coordinated-network detector that must examine a population of
+sessions, or a baselining detector that must compare against a historical corpus, does
+work proportional to a large and growing body of data, and no amount of parallelism
+within a single request brings that under a few tens of milliseconds. Precomputation
+helps only up to a point: a precomputed summary can be read cheaply, but the detectors
+whose whole value is analysing the full state in the moment cannot be reduced to a
+lookup without becoming a different, weaker detector.
+
+This is why the tiers exist and why the latency budget confirms rather than contradicts
+the Chapter 13 partition. The inline tier is the set of detectors that can be made to
+fit the budget -- small-state or precomputable, parallelisable, cheap per request. The
+near-real-time and batch tiers are the detectors that cannot, and they run off the hot
+path precisely so that their unavoidable cost is paid where there is no budget to blow.
+The latency budget does not fight the state-latency coupling; it is the coupling made
+quantitative, and it is the reason a large-state detector belongs on a slower tier no
+matter how valuable its verdict.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Timeouts and Load Testing: Bounding and Verifying</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A detector that fits its allocation on average can still, on a bad request, take far
+longer than its allocation, and an unbounded slow case is a budget violation waiting to
+happen. A single detector that occasionally takes two hundred milliseconds will produce a
+P99 far over budget even if its median is tiny, because the P99 is exactly where those
+occasional slow cases land. The tool that bounds this is the per-detector timeout.
+
+A timeout puts a hard deadline on each detector. If the detector has not returned by its
+timeout, it is stopped, and its worst case is thereby bounded at the timeout rather than
+being unbounded. This converts an unbounded slow detector into a bounded one that fails
+within the budget instead of blowing it. The conversion is not free: when a detector
+times out, the gateway has no verdict from it, and a decision must be made -- fail-open,
+admitting the request without that detector, or fail-closed, blocking it. That decision
+is a security-versus-availability trade, and its full per-detector policy is the subject
+of Section 14.06; here the timeout only guarantees that the worst case is bounded so the
+budget holds.
+
+The last discipline is verification. A latency budget that is reasoned about but not
+measured under load is a hypothesis, and production is a bad place to test a hypothesis.
+The budget must be load-tested before production: drive the gateway at the request rate
+it will actually see, measure the P50, P95, and P99 under that load, and confirm the P99
+is within budget with the timeouts in place. Only a P99 measured under realistic load
+validates the budget, because only that load produces the contention that creates the
+tail. With the per-request latency engineered and verified, the chapter can turn to the
+next performance concern: Section 14.05 sustains the request rate itself through
+throughput and horizontal scaling, once each individual request is known to fit.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Percentiles Versus the Average</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Why the latency budget is read at the tail. The mean is dominated by the fast body and barely moved by the heavy tail, so it can look healthy while the P99 fails. The percentile that governs the experience is the one users actually hit.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Statistic</li><li>What it reports</li><li>What it hides</li><li>Role in the budget</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Mean</li><li>The average across all requests</li><li>The heavy tail of slow requests</li><li>Misleading -- not used as the budget</li></ul>
+<ul class="blist"><li>P50 (median)</li><li>The typical request</li><li>Everything above the middle</li><li>Sanity check on the body</li></ul>
+<ul class="blist"><li>P95</li><li>The slower requests</li><li>The worst 5 per cent</li><li>Early warning of tail growth</li></ul>
+<ul class="blist"><li>P99</li><li>The tail users notice</li><li>Only the extreme 1 per cent</li><li>The number the budget is stated at</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Inline Latency Budget Allocation</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The 50ms tier budget, minus fixed overhead, allocated across the inline detectors with a per-detector share. Cheap checks get a small allocation; the heavy transformer classifiers get the largest. Each detector must fit its allocation.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Component</li><li>Allocation</li><li>Notes</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Fixed overhead</li><li>8ms</li><li>Network hop, gateway processing, serialisation -- spent before any detector</li></ul>
+<ul class="blist"><li>Signature match</li><li>2ms</li><li>Cheap exact and pattern match, near-constant time</li></ul>
+<ul class="blist"><li>Heuristic rules</li><li>3ms</li><li>Small rule set over the request</li></ul>
+<ul class="blist"><li>Injection classifier</li><li>13ms</li><li>Heaviest inline check; runs in parallel with jailbreak</li></ul>
+<ul class="blist"><li>Jailbreak classifier</li><li>11ms</li><li>Second input classifier, parallel with injection</li></ul>
+<ul class="blist"><li>Output PII scanner</li><li>7ms</li><li>Serial post-processing scan of the response</li></ul>
+<ul class="blist"><li>Total critical path</li><li>Under 50ms</li><li>Parallel input classifiers cost their slowest member, not the sum</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Latency Optimisation Levers</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The techniques that keep the inline tier within budget, what each one does, and its limit. Together they let detectors whose naive serial cost exceeds the budget still run on the hot path.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Lever</li><li>How it helps</li><li>Limit</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Parallel execution</li><li>Independent detectors overlap; the group costs its slowest member</li><li>Only for detectors with no dependency between them</li></ul>
+<ul class="blist"><li>Precomputed summaries</li><li>Expensive computation moved off-path; inline cost is a cheap lookup</li><li>Only when a periodically refreshed summary is sufficient</li></ul>
+<ul class="blist"><li>Caching</li><li>A repeated input is a cache hit costing almost nothing</li><li>Only when the verdict for an input is stable</li></ul>
+<ul class="blist"><li>Per-detector timeout</li><li>Bounds the worst case at the timeout instead of unbounded</li><li>Requires a fail-open or fail-closed decision on timeout</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why the Tiers Fit or Do Not Fit the Budget</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The state-latency coupling of Chapter 13 made quantitative by the latency budget. The inline tier is what can be made to fit; the off-path tiers are what cannot, which is why they run where there is no budget to blow.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Tier</li><li>State</li><li>Fits the sub-50ms budget?</li><li>Why</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Inline</li><li>Small or precomputable</li><li>Yes</li><li>Cheap per request, parallelisable, precomputable to a lookup</li></ul>
+<ul class="blist"><li>Near-real-time</li><li>Moderate recent-window</li><li>No -- runs off-path</li><li>Cost tied to a growing recent-window state, seconds not milliseconds</li></ul>
+<ul class="blist"><li>Batch</li><li>Large historical corpus</li><li>No -- runs off-path</li><li>Work proportional to a large corpus; minutes to hours, no request budget</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Latency Budget Engine</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">latency_budget_engine.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Allocates the inline latency budget across the detectors and computes the critical path under parallel execution, distinguishing the naive serial sum from the critical path so that a tier whose serial sum exceeds the budget can still fit once independent detectors run in parallel. Reports whether the tier is within the sub-50ms budget and the headroom.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the allocation, the serial sum versus the critical path, and the budget verdict.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># latency_budget_engine.py
+# Section 14.04: Inline Latency Budget Allocation and P99 Measurement
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List, Dict
+
+
+BUDGET_MS = 50.0  # Sub-50ms P99 hard constraint from Chapter 11
+
+
+@dataclass
+class InlineDetector:
+    name: str
+    allocation_ms: float
+    execution: str  # &#x27;serial&#x27; or &#x27;parallel_group_a&#x27; etc.
+
+
+@dataclass
+class BudgetReport:
+    total_allocation_ms: float
+    critical_path_ms: float
+    within_budget: bool
+    headroom_ms: float
+
+
+DETECTORS: List[InlineDetector] = [
+    InlineDetector(&#x27;Signature match&#x27;, 3.0, &#x27;parallel_group_a&#x27;),
+    InlineDetector(&#x27;Heuristic rules&#x27;, 5.0, &#x27;parallel_group_a&#x27;),
+    InlineDetector(&#x27;Injection classifier&#x27;, 18.0, &#x27;parallel_group_a&#x27;),
+    InlineDetector(&#x27;Jailbreak classifier&#x27;, 16.0, &#x27;parallel_group_a&#x27;),
+    InlineDetector(&#x27;Output PII scanner&#x27;, 12.0, &#x27;serial_post&#x27;),
+]
+
+
+def critical_path(detectors: List[InlineDetector]) -&gt; float:
+    &#x27;&#x27;&#x27;The critical path is the sum of serial stages plus the max within each parallel group.
+
+    Detectors in the same parallel group run concurrently, so the group costs the
+    slowest member, not the sum. Serial stages add their full allocation.
+    &#x27;&#x27;&#x27;
+    groups: Dict[str, List[float]] = {}
+    serial_total = 0.0
+    for d in detectors:
+        if d.execution.startswith(&#x27;parallel_&#x27;):
+            groups.setdefault(d.execution, []).append(d.allocation_ms)
+        else:
+            serial_total += d.allocation_ms
+    parallel_total = sum(max(v) for v in groups.values())
+    return serial_total + parallel_total
+
+
+def build_report(detectors: List[InlineDetector]) -&gt; BudgetReport:
+    total = sum(d.allocation_ms for d in detectors)
+    cp = critical_path(detectors)
+    return BudgetReport(total, cp, cp &lt;= BUDGET_MS, BUDGET_MS - cp)
+
+
+def print_report(detectors: List[InlineDetector]) -&gt; None:
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;INLINE LATENCY BUDGET ENGINE&#x27;)
+    print(f&#x27;Hard constraint: P99 &lt;= {BUDGET_MS:.0f}ms (Chapter 11)&#x27;)
+    print(&#x27;=&#x27; * 78)
+    print()
+    header = &#x27;Detector&#x27;.ljust(24) + &#x27;Alloc (ms)&#x27;.ljust(12) + &#x27;Execution&#x27;.ljust(20)
+    print(header)
+    print(&#x27;-&#x27; * 78)
+    for d in detectors:
+        print(f&#x27;{d.name:&lt;24}{d.allocation_ms:&lt;12.1f}{d.execution:&lt;20}&#x27;)
+    print(&#x27;-&#x27; * 78)
+    r = build_report(detectors)
+    print()
+    print(f&#x27;Naive serial sum : {r.total_allocation_ms:.1f}ms&#x27;)
+    print(f&#x27;Critical path    : {r.critical_path_ms:.1f}ms (parallel groups cost their slowest member)&#x27;)
+    verdict = &#x27;WITHIN BUDGET&#x27; if r.within_budget else &#x27;OVER BUDGET&#x27;
+    print(f&#x27;Verdict          : {verdict} (headroom {r.headroom_ms:.1f}ms)&#x27;)
+    print()
+    if r.total_allocation_ms &gt; BUDGET_MS and r.within_budget:
+        print(&#x27;Note: the serial sum exceeds the budget but parallel execution brings the&#x27;)
+        print(&#x27;critical path under it. Parallelism is what makes the inline tier fit.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_report(DETECTORS)</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Latency Budget Allocation Table</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">latency_allocation_table.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Divides the tier budget, minus the fixed overhead spent before any detector runs, across the inline detectors by weight, producing a per-detector allocation and its share of the detector budget with a rationale for each. Shows how much of the budget is overhead and how much remains for detection.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the weighted per-detector allocation table and the overhead breakdown.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># latency_allocation_table.py
+# Section 14.04: Latency Budget Allocation Table
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+BUDGET_MS = 50.0
+RESERVED_OVERHEAD_MS = 8.0  # gateway, network hop, serialisation -- not available to detectors
+
+
+@dataclass
+class Allocation:
+    detector: str
+    allocation_ms: float
+    share_of_detector_budget: float
+    rationale: str
+
+
+def build_allocations(detector_budget_ms: float) -&gt; List[Allocation]:
+    # Detectors and their relative weights (heavier ML classifiers get more).
+    raw = [
+        (&#x27;Signature match&#x27;, 1.0, &#x27;Cheap exact and pattern match, near-constant time&#x27;),
+        (&#x27;Heuristic rules&#x27;, 1.5, &#x27;Small rule set evaluated over the request&#x27;),
+        (&#x27;Injection classifier&#x27;, 6.0, &#x27;Transformer-based input classifier, the heaviest inline check&#x27;),
+        (&#x27;Jailbreak classifier&#x27;, 5.0, &#x27;Second input classifier, run in parallel with injection&#x27;),
+        (&#x27;Output PII scanner&#x27;, 3.0, &#x27;Serial post-processing scan of the response&#x27;),
+    ]
+    weight_total = sum(w for _, w, _ in raw)
+    allocations: List[Allocation] = []
+    for name, w, reason in raw:
+        share = w / weight_total
+        allocations.append(Allocation(name, round(detector_budget_ms * share, 1), round(share * 100, 1), reason))
+    return allocations
+
+
+def print_table() -&gt; None:
+    detector_budget = BUDGET_MS - RESERVED_OVERHEAD_MS
+    print(&#x27;=&#x27; * 82)
+    print(&#x27;LATENCY BUDGET ALLOCATION TABLE&#x27;)
+    print(f&#x27;Total budget {BUDGET_MS:.0f}ms  -  reserved overhead {RESERVED_OVERHEAD_MS:.0f}ms &#x27;
+          f&#x27;=  {detector_budget:.0f}ms for detectors&#x27;)
+    print(&#x27;=&#x27; * 82)
+    allocations = build_allocations(detector_budget)
+    header = &#x27;Detector&#x27;.ljust(24) + &#x27;Alloc (ms)&#x27;.ljust(13) + &#x27;Share&#x27;.ljust(10) + &#x27;Rationale&#x27;
+    print(header)
+    print(&#x27;-&#x27; * 82)
+    for a in allocations:
+        line = a.detector.ljust(24) + f&#x27;{a.allocation_ms:.1f}&#x27;.ljust(13) + f&#x27;{a.share_of_detector_budget:.1f}%&#x27;.ljust(10) + a.rationale
+        print(line)
+    print(&#x27;-&#x27; * 82)
+    allocated = sum(a.allocation_ms for a in allocations)
+    print(f&#x27;Allocated to detectors: {allocated:.1f}ms of {detector_budget:.0f}ms available&#x27;)
+    print()
+    print(&#x27;The reserved overhead is spent before any detector runs -- the network hop,&#x27;)
+    print(&#x27;gateway processing, and serialisation. Only what remains is the detector budget,&#x27;)
+    print(&#x27;and every inline detector must fit its allocation.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_table()</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Percentile Latency Measurement Harness</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">percentile_latency_harness.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Measures P50, P95, and P99 from a simulated latency distribution with a tight body and a heavy tail, and contrasts the healthy-looking mean with the P99 at the tail to show why budgeting on the average hides the slow requests users notice. Reports pass or fail against the sub-50ms budget at the P99.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library random only, prints the percentile summary and the pass/fail verdict at the tail.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># percentile_latency_harness.py
+# Section 14.04: Percentile Latency Measurement Under Load
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import random
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class LatencyStats:
+    p50: float
+    p95: float
+    p99: float
+    mean: float
+    max_ms: float
+    count: int
+
+
+def percentile(sorted_samples: List[float], pct: float) -&gt; float:
+    &#x27;&#x27;&#x27;Nearest-rank percentile on an already-sorted list.
+
+    Percentiles are read at the tail, not the average, because the slowest
+    requests are the ones users notice. P99 is the value at or below which
+    99 per cent of requests complete.
+    &#x27;&#x27;&#x27;
+    if not sorted_samples:
+        return 0.0
+    k = max(0, min(len(sorted_samples) - 1, int(round(pct / 100.0 * len(sorted_samples))) - 1))
+    return sorted_samples[k]
+
+
+def summarise(samples: List[float]) -&gt; LatencyStats:
+    s = sorted(samples)
+    mean = sum(s) / len(s) if s else 0.0
+    return LatencyStats(
+        p50=percentile(s, 50),
+        p95=percentile(s, 95),
+        p99=percentile(s, 99),
+        mean=round(mean, 2),
+        max_ms=s[-1] if s else 0.0,
+        count=len(s),
+    )
+
+
+def simulate_load(n: int, seed: int = 14) -&gt; List[float]:
+    &#x27;&#x27;&#x27;Generate a realistic latency distribution: a tight body with a heavy tail.
+
+    Most requests are fast, but a small fraction are much slower (garbage
+    collection pauses, cache misses, contention). The heavy tail is exactly why
+    the average hides the problem and the P99 exposes it.
+    &#x27;&#x27;&#x27;
+    rng = random.Random(seed)
+    samples: List[float] = []
+    for _ in range(n):
+        if rng.random() &lt; 0.97:
+            samples.append(rng.uniform(18.0, 34.0))   # fast body
+        else:
+            samples.append(rng.uniform(48.0, 95.0))   # heavy tail
+    return samples
+
+
+def print_stats(stats: LatencyStats, budget_ms: float = 50.0) -&gt; None:
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;PERCENTILE LATENCY MEASUREMENT HARNESS&#x27;)
+    print(f&#x27;Samples: {stats.count}  |  Budget: P99 &lt;= {budget_ms:.0f}ms&#x27;)
+    print(&#x27;=&#x27; * 78)
+    print(f&#x27;  Mean : {stats.mean:.1f}ms   &lt;- the average looks fine and hides the tail&#x27;)
+    print(f&#x27;  P50  : {stats.p50:.1f}ms&#x27;)
+    print(f&#x27;  P95  : {stats.p95:.1f}ms&#x27;)
+    print(f&#x27;  P99  : {stats.p99:.1f}ms   &lt;- this is the number that governs the budget&#x27;)
+    print(f&#x27;  Max  : {stats.max_ms:.1f}ms&#x27;)
+    print()
+    if stats.p99 &lt;= budget_ms:
+        print(f&#x27;PASS: P99 {stats.p99:.1f}ms is within the {budget_ms:.0f}ms budget&#x27;)
+    else:
+        print(f&#x27;FAIL: P99 {stats.p99:.1f}ms exceeds the {budget_ms:.0f}ms budget despite a healthy mean&#x27;)
+    print()
+    print(&#x27;The mean is well under budget while the P99 is at the tail. Budgeting on the&#x27;)
+    print(&#x27;mean would have declared this system healthy while 1 in 100 users saw a stall.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    samples = simulate_load(10000)
+    print_stats(summarise(samples))</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Per-Detector Timeout Configuration</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">detector_timeout_config.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Configures a per-detector timeout that bounds the worst case, and demonstrates a fast run completing within its deadline and a slow run exceeding it, showing how the timeout turns an unbounded slow detector into a bounded one that fails within the budget. The timeout makes a fail-open or fail-closed decision whose full policy is Section 14.06.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library time only, prints the timeout configuration and a demonstration of the bounded worst case.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># detector_timeout_config.py
+# Section 14.04: Per-Detector Timeouts for Worst-Case Bounding
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import time
+from dataclasses import dataclass
+from typing import Callable, List
+
+
+@dataclass
+class TimeoutConfig:
+    detector: str
+    allocation_ms: float
+    timeout_ms: float
+    on_timeout_fail_open: bool
+
+
+@dataclass
+class TimeoutResult:
+    detector: str
+    elapsed_ms: float
+    timed_out: bool
+    decision: str
+
+
+def run_with_timeout(cfg: TimeoutConfig, detector_fn: Callable[[], bool]) -&gt; TimeoutResult:
+    &#x27;&#x27;&#x27;Run a detector and bound its worst case at the timeout.
+
+    A detector without a timeout is unbounded: one slow call can blow the whole
+    latency budget. The timeout converts an unbounded slow detector into a bounded
+    one that fails within the budget. On timeout a fail-open/fail-closed decision
+    is made -- the full per-detector policy is Section 14.06; here the timeout only
+    guarantees the worst case is bounded.
+    &#x27;&#x27;&#x27;
+    start = time.perf_counter()
+    budget_s = cfg.timeout_ms / 1000.0
+    flagged = False
+    timed_out = False
+    # Cooperative timeout check: the detector reports progress and we stop at the bound.
+    # In production this is enforced by a real deadline; here we measure and compare.
+    flagged = detector_fn()
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    if elapsed_ms &gt; cfg.timeout_ms:
+        timed_out = True
+        if cfg.on_timeout_fail_open:
+            decision = &#x27;timed out -&gt; fail-open (admit)&#x27;
+        else:
+            decision = &#x27;timed out -&gt; fail-closed (block)&#x27;
+    else:
+        decision = &#x27;flagged -&gt; block&#x27; if flagged else &#x27;clean -&gt; admit&#x27;
+    return TimeoutResult(cfg.detector, round(elapsed_ms, 2), timed_out, decision)
+
+
+def fast_detector() -&gt; bool:
+    time.sleep(0.002)
+    return False
+
+
+def slow_detector() -&gt; bool:
+    time.sleep(0.040)  # 40ms -- exceeds a 20ms timeout
+    return False
+
+
+CONFIGS: List[TimeoutConfig] = [
+    TimeoutConfig(&#x27;Injection classifier&#x27;, allocation_ms=18.0, timeout_ms=20.0, on_timeout_fail_open=False),
+    TimeoutConfig(&#x27;Output PII scanner&#x27;, allocation_ms=12.0, timeout_ms=15.0, on_timeout_fail_open=False),
+]
+
+
+def demo() -&gt; None:
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;PER-DETECTOR TIMEOUT CONFIGURATION&#x27;)
+    print(&#x27;Timeouts bound the worst case per detector, turning unbounded into bounded&#x27;)
+    print(&#x27;=&#x27; * 78)
+    print()
+    header = &#x27;Detector&#x27;.ljust(24) + &#x27;Alloc&#x27;.ljust(9) + &#x27;Timeout&#x27;.ljust(10) + &#x27;On timeout&#x27;.ljust(14)
+    print(header)
+    print(&#x27;-&#x27; * 78)
+    for cfg in CONFIGS:
+        mode = &#x27;fail-open&#x27; if cfg.on_timeout_fail_open else &#x27;fail-closed&#x27;
+        print(f&#x27;{cfg.detector:&lt;24}{cfg.allocation_ms:&lt;9.0f}{cfg.timeout_ms:&lt;10.0f}{mode:&lt;14}&#x27;)
+    print(&#x27;-&#x27; * 78)
+    print()
+    print(&#x27;DEMONSTRATION&#x27;)
+    print(&#x27;-&#x27; * 78)
+    r_fast = run_with_timeout(CONFIGS[0], fast_detector)
+    print(f&#x27;Fast run : {r_fast.detector} took {r_fast.elapsed_ms:.1f}ms -&gt; {r_fast.decision}&#x27;)
+    r_slow = run_with_timeout(CONFIGS[0], slow_detector)
+    print(f&#x27;Slow run : {r_slow.detector} took {r_slow.elapsed_ms:.1f}ms -&gt; {r_slow.decision}&#x27;)
+    print()
+    print(&#x27;Without the timeout the slow run would have added its full duration to the&#x27;)
+    print(&#x27;request and blown the budget. With it, the worst case is bounded and the&#x27;)
+    print(&#x27;detector fails within the budget rather than degrading every request.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Budgeting and reporting latency on the average instead of the tail percentile</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The mean is the most familiar summary and the easiest to compute, and on a quiet test
+system it looks reassuringly low, so it is reported as the latency of the system without
+the tail ever being examined.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The system is declared healthy on a mean that is well within budget while its P99 is over budget, so one request in a hundred stalls and a large fraction of users hit at least one stall that the average never revealed.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Budget and measure at the tail: read the P99 under realistic load and treat it as the number the budget is stated at, using the mean only as a sanity check on the body, never as the budget.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Summing inline detector latencies serially and concluding the tier cannot fit the budget</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The serial sum is the obvious first calculation, and when it exceeds the budget it looks
+like a hard verdict that the tier is too heavy, without considering that independent
+detectors need not run one after another.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Strong detectors are dropped from the inline tier or moved to a slower tier unnecessarily, because the serial sum was treated as the cost when the critical path under parallel execution would have fit the budget with headroom.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Compute the critical path, not the serial sum: run independent detectors in parallel so a group costs its slowest member, and only the critical path -- serial stages plus the max of each parallel group -- has to fit the budget.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Running detectors inline without per-detector timeouts, leaving the worst case unbounded</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A detector that is fast in the median looks safe, and the occasional slow request is easy
+to overlook because it does not show up in the median or the mean, only in the tail.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">An occasional slow call on a bad request lands squarely in the P99 and pushes it over budget even though the median is tiny, and with no timeout the slow call adds its full unbounded duration to the request.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Put a per-detector timeout on every inline detector so the worst case is bounded at the timeout, turning a budget-blowing slow call into a bounded failure, and make a deliberate fail-open or fail-closed decision on timeout.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Trying to force a large-state detector inline by optimisation because its verdict is valuable</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The detector produces a strong signal, so there is pressure to have it on the hot path
+where it can block, and it feels like enough parallelism or caching should eventually
+bring any detector under the budget.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Effort is spent trying to shrink a cost that is fundamentally tied to a large and growing state, the detector either misses the budget anyway or is weakened into a different detector to fit, and the inline tier is destabilised by a check that never belonged there.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Respect the state-latency coupling made quantitative by the budget: keep large-state detectors on the near-real-time or batch tier where their unavoidable cost is paid off the hot path, and use precomputed summaries inline only when a refreshed summary genuinely suffices.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Validating the latency budget by reasoning or on a quiet system instead of load-testing at percentiles</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Load testing is more work than reasoning about allocations, and a quick check on a quiet
+system shows low latency, so the budget is assumed to hold without ever being driven at
+production load.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The tail that only appears under contention is never produced in testing, the budget looks satisfied, and the P99 blows past the limit the first time production load creates the garbage-collection pauses, cache misses, and contention that generate the tail.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Load-test the budget before production: drive the gateway at the request rate it will actually see, measure P50, P95, and P99 under that load with timeouts in place, and confirm the P99 is within budget, because only realistic load produces the tail the budget is about.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">The sub-50ms P99 latency budget from Chapter 11 is a hard constraint, not a target: a
+detector that pushes the gateway past it is removed for degrading the API, so a too-slow
+detector provides no protection and the budget decides what may run inline at all. The
+budget is stated at the tail because tail latency governs the experience -- the latency
+distribution is a tight body with a heavy tail, the average is dominated by the body and
+hides the tail, and users notice the slow requests one at a time, so the P99 measured
+under load is the number that matters. The tier budget, minus the fixed overhead spent
+before any detector runs, is allocated across the inline detectors so each has a share it
+must fit. The tier is kept within budget by optimisation: parallel execution makes an
+independent group cost its slowest member rather than the sum, so the critical path rather
+than the serial sum must fit, and precomputed summaries and caching move cost off the hot
+path. Large-state detectors still cannot fit, which is the Chapter 13 state-latency
+coupling made quantitative, so they run on the off-path tiers where there is no budget to
+blow. Per-detector timeouts bound the worst case, turning an unbounded slow detector into
+a bounded one that fails within the budget at the cost of a fail-open/fail-closed decision
+on timeout, and the whole budget is load-tested at percentiles before production because
+only realistic load produces the tail.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>The sub-50ms P99 budget is a hard constraint, not a target: a detector removed for being slow provides zero protection, so the budget governs what can run inline at all</li><li>Tail latency governs the user experience, so the budget is read at the P99 measured under load, never at the average, which hides the heavy tail</li><li>The tier budget minus fixed overhead is allocated across the inline detectors, and each detector must fit its allocation</li><li>Parallel execution means a group costs its slowest member, so the critical path rather than the serial sum must fit the budget, and precomputation and caching move cost off the hot path</li><li>Large-state detectors cannot fit the inline budget -- the state-latency coupling made quantitative -- so they run on the off-path tiers where their cost is paid without a request budget</li><li>Per-detector timeouts bound the worst case at the cost of a fail-open/fail-closed decision on timeout, and the budget is load-tested at percentiles before production because only realistic load produces the tail</li></ul>
+<h2 class="sh1">Preview Section 14 05</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Throughput and Horizontal Scaling</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 14.04 made each individual request fit the latency budget; Section 14.05 sustains
+the rate of requests. It engineers throughput -- the requests per second the gateway must
+sustain -- through horizontal scaling, explaining why the stateless inline tier scales
+cleanly by replication, how the near-real-time and batch tiers scale with shared state,
+how load is balanced across gateway instances, how autoscaling responds to load, and how
+backpressure handles load beyond capacity. It is the second performance section, moving
+from per-request latency to aggregate throughput.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names latency as a concern</li><li>Section 14.02: the architecture pattern that fixes the latency floor the budget is measured against</li><li>Section 14.03: the blocking inline hooks whose latency this section budgets</li><li>Chapter 11 Section 11.13: the seven-track gateway and the sub-50ms P99 requirement engineered here</li><li>Chapter 13 Section 13.01: the state-latency coupling made quantitative by the latency budget</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 14.05: throughput and horizontal scaling -- sustaining the request rate once each request fits the budget</li><li>Section 14.06: failure modes -- the full fail-open/fail-closed policy for the timeout decision introduced here</li><li>Section 14.09: monitoring dashboard -- the P99 latency signal tracked in production against this budget</li><li>Section 14.11: the production gateway capstone -- the latency-budgeted inline tier assembled into the running service</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>latency-engineering</li><li>p99-budget</li><li>tail-latency</li><li>percentiles</li><li>budget-allocation</li><li>parallel-execution</li><li>precomputed-summaries</li><li>caching</li><li>per-detector-timeout</li><li>worst-case-bounding</li><li>load-testing</li><li>state-latency-coupling</li><li>inline-tier</li><li>production-deployment</li><li>part-3-chapter-4</li></ul>
+</article>

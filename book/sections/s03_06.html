@@ -1,0 +1,1143 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 6 · ~8 pages</div>
+<h1>Attention Mechanism: The Core Innovation</h1>
+<div class="tags"><span class="tag">attention-mechanism</span><span class="tag">query-key-value</span><span class="tag">attention-scores</span><span class="tag">softmax-normalization</span><span class="tag">attention-weights</span><span class="tag">security-transparency</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Attention Mechanism: The Core Innovation</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.6</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">The attention mechanism (Bahdanau et al., 2015) revolutionized NLP by solving the 
+seq2seq bottleneck problem. Instead of compressing entire input into a fixed vector, 
+attention lets the decoder dynamically access ALL encoder states. At each generation 
+step, the model computes which input positions are relevant and creates a custom 
+context vector as a weighted sum.
+
+This simple idea - &quot;let the decoder look back and decide what&#x27;s important&quot; - enabled 
+transformers, BERT, GPT, and all modern LLMs. Attention is differentiable memory 
+access: the model learns what to pay attention to through gradient descent.
+
+For security engineers: Attention weights reveal what the model focuses on, enabling 
+interpretability and explainable AI. But attention patterns can leak sensitive 
+information (which tokens the model considers related) and can be manipulated by 
+adversaries. Understanding attention mechanics is critical for both using and 
+attacking LLMs.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand attention as weighted sum over encoder states</li><li>Grasp Query-Key-Value (QKV) formulation of attention</li><li>Learn how attention scores measure relevance</li><li>Understand softmax normalization creating attention weights</li><li>See attention as differentiable memory access</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement attention mechanism from scratch (NumPy)</li><li>Compute attention scores for query-key pairs</li><li>Calculate attention weights via softmax</li><li>Generate dynamic context vectors as weighted sums</li><li>Visualize attention patterns to understand model behavior</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Analyze attention weights to detect adversarial patterns</li><li>Identify information leakage through attention patterns</li><li>Understand how attention can be manipulated</li><li>Use attention for model interpretability and debugging</li><li>Audit attention patterns for unexpected associations</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.5: Seq2seq bottleneck problem (motivation for attention)</li><li>Linear algebra: dot products, matrix multiplication</li><li>Softmax function (Chapter 1 or 2)</li><li>Gradient descent and backpropagation</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>NumPy matrix operations and broadcasting</li><li>Implementing neural network components</li><li>Visualization of model internals</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 5</h3>
+<p class="prose">Section 3.5 established the problem: fixed-context bottleneck in seq2seq. 
+Now we implement the solution: attention mechanism that creates dynamic 
+context vectors by weighted sum over all encoder states.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.7 will introduce scaled dot-product attention (the specific 
+attention variant used in transformers) and explain why scaling is necessary 
+for numerical stability.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Attention Intuition: Weighted Sum Over Encoder States</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The core idea of attention is beautifully simple: instead of using a fixed context 
+vector, compute a custom context vector at each decoder step by taking a weighted 
+sum of all encoder hidden states. The weights reflect how relevant each encoder 
+state is to the current decoder state.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">The Key Idea</h3>
+<h4 class="sh3">Vanilla Seq2Seq Recap</h4>
+<h4 class="sh3">Encoder Output</h4>
+<p class="prose">Final hidden state h_n = context vector c</p>
+<h4 class="sh3">Decoder Usage</h4>
+<p class="prose">All decoder steps use same c</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">c must encode entire input - information bottleneck</p>
+<h4 class="sh3">Attention Solution</h4>
+<h4 class="sh3">Encoder Output</h4>
+<p class="prose">ALL hidden states: [h₁, h₂, ..., h_n]</p>
+<h4 class="sh3">Decoder At Step T</h4>
+<p class="prose">Computes custom context c_t based on decoder state s_t</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">c_t = weighted sum of encoder states, weights based on relevance</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">No bottleneck - all encoder information accessible</p>
+<h3 class="sh3">Weighted Sum Formulation</h3>
+<h4 class="sh3">Mathematical Definition</h4>
+<p class="prose">At decoder step t with decoder state s_t:
+
+1. Compute attention scores: e_ti = score(s_t, h_i)
+   → How relevant is encoder state h_i to current decoder state s_t?
+
+2. Normalize to weights: α_ti = softmax(e_ti)
+   → Ensure weights sum to 1.0
+
+3. Compute context vector: c_t = Σ α_ti × h_i
+   → Weighted sum of encoder states
+
+4. Use c_t for generation at step t</p>
+<h4 class="sh3">Concrete Example</h4>
+<h4 class="sh3">Encoder States</h4>
+<h4 class="sh3">H1</h4>
+<p class="prose">encoding of &#x27;The&#x27;</p>
+<h4 class="sh3">H2</h4>
+<p class="prose">encoding of &#x27;cat&#x27;</p>
+<h4 class="sh3">H3</h4>
+<p class="prose">encoding of &#x27;sat&#x27;</p>
+<h4 class="sh3">H4</h4>
+<p class="prose">encoding of &#x27;on&#x27;</p>
+<h4 class="sh3">H5</h4>
+<p class="prose">encoding of &#x27;mat&#x27;</p>
+<h4 class="sh3">Decoder Step T</h4>
+<p class="prose">Generating &#x27;chat&#x27; (French for &#x27;cat&#x27;)</p>
+<h4 class="sh3">Attention Scores</h4>
+<p class="prose">e_t1 = score(s_t, h1) = 0.5   (some relevance to &#x27;The&#x27;)
+e_t2 = score(s_t, h2) = 5.0   (high relevance to &#x27;cat&#x27;)
+e_t3 = score(s_t, h3) = 0.3   (little relevance to &#x27;sat&#x27;)
+e_t4 = score(s_t, h4) = 0.2   (little relevance to &#x27;on&#x27;)
+e_t5 = score(s_t, h5) = 0.4   (some relevance to &#x27;mat&#x27;)</p>
+<h4 class="sh3">After Softmax</h4>
+<p class="prose">α_t1 = 0.05  (normalized weight for h1)
+α_t2 = 0.80  (HIGH weight for h2 - focuses on &#x27;cat&#x27;)
+α_t3 = 0.04
+α_t4 = 0.03
+α_t5 = 0.08
+(weights sum to 1.0)</p>
+<h4 class="sh3">Context Vector</h4>
+<p class="prose">c_t = 0.05×h1 + 0.80×h2 + 0.04×h3 + 0.03×h4 + 0.08×h5
+→ Dominated by h2 (encoding of &#x27;cat&#x27;)
+→ Perfect for generating &#x27;chat&#x27;!</p>
+<h3 class="sh3">Why This Works</h3>
+<h4 class="sh3">Alignment Learning</h4>
+<p class="prose">Model learns what to attend to through training:
+- When generating target word, which source words are relevant?
+- Gradient descent optimizes score function to give high scores to relevant pairs
+- Result: automatic learning of alignment (source ↔ target correspondences)</p>
+<h4 class="sh3">Dynamic Context</h4>
+<p class="prose">Each decoder step gets different context:
+- Generating &#x27;Le&#x27; → focuses on &#x27;The&#x27; (h1 gets high weight)
+- Generating &#x27;chat&#x27; → focuses on &#x27;cat&#x27; (h2 gets high weight)
+- Generating &#x27;assis&#x27; → focuses on &#x27;sat&#x27; (h3 gets high weight)
+
+Single mechanism, learned alignments for all word pairs!</p>
+<h4 class="sh3">No Information Loss</h4>
+<p class="prose">All encoder states preserved and accessible:
+- No compression into fixed vector
+- Long sequences: still have all h1...hn available
+- Decoder can focus on any position, near or far</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Basic Attention Mechanism</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class BasicAttention:
+    &quot;&quot;&quot;
+    Basic attention mechanism (Bahdanau et al., 2015).
+    
+    Given decoder state s_t and encoder states [h1, ..., hn],
+    compute context vector c_t as weighted sum.
+    &quot;&quot;&quot;
+    
+    def __init__(self, hidden_dim: int):
+        &quot;&quot;&quot;
+        Args:
+            hidden_dim: Dimension of hidden states
+        &quot;&quot;&quot;
+        self.hidden_dim = hidden_dim
+        
+        # Score function parameters (learned)
+        # We&#x27;ll use additive attention: score = v^T tanh(W_s × s + W_h × h)
+        self.W_s = np.random.randn(hidden_dim, hidden_dim) * 0.01  # decoder state projection
+        self.W_h = np.random.randn(hidden_dim, hidden_dim) * 0.01  # encoder state projection
+        self.v = np.random.randn(hidden_dim) * 0.01                # score vector
+    
+    def score(self, decoder_state: np.ndarray, encoder_state: np.ndarray) -&gt; float:
+        &quot;&quot;&quot;
+        Compute attention score between decoder and encoder states.
+        
+        Score function (Bahdanau attention):
+            score(s, h) = v^T tanh(W_s × s + W_h × h)
+        
+        Args:
+            decoder_state: Current decoder state s_t (hidden_dim,)
+            encoder_state: Single encoder state h_i (hidden_dim,)
+        
+        Returns:
+            score: Scalar attention score
+        &quot;&quot;&quot;
+        # Project states
+        s_proj = np.dot(self.W_s, decoder_state)
+        h_proj = np.dot(self.W_h, encoder_state)
+        
+        # Combine and apply non-linearity
+        combined = np.tanh(s_proj + h_proj)
+        
+        # Final score
+        score = np.dot(self.v, combined)
+        
+        return score
+    
+    def softmax(self, scores: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;
+        exp_scores = np.exp(scores - np.max(scores))
+        return exp_scores / exp_scores.sum()
+    
+    def forward(self, decoder_state: np.ndarray, 
+               encoder_states: np.ndarray) -&gt; tuple:
+        &quot;&quot;&quot;
+        Compute attention and context vector.
+        
+        Args:
+            decoder_state: Current decoder state s_t (hidden_dim,)
+            encoder_states: All encoder states (seq_len, hidden_dim)
+        
+        Returns:
+            context_vector: Weighted sum of encoder states (hidden_dim,)
+            attention_weights: Attention weights α (seq_len,)
+        &quot;&quot;&quot;
+        seq_len = encoder_states.shape[0]
+        
+        # Compute attention scores for all encoder states
+        scores = np.zeros(seq_len)
+        for i in range(seq_len):
+            scores[i] = self.score(decoder_state, encoder_states[i])
+        
+        # Normalize to weights (softmax)
+        attention_weights = self.softmax(scores)
+        
+        # Compute context vector as weighted sum
+        context_vector = np.zeros(self.hidden_dim)
+        for i in range(seq_len):
+            context_vector += attention_weights[i] * encoder_states[i]
+        
+        return context_vector, attention_weights
+    
+    def __call__(self, decoder_state: np.ndarray, 
+                encoder_states: np.ndarray) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(decoder_state, encoder_states)
+
+
+# Example usage
+hidden_dim = 64
+seq_len = 5  # &quot;The cat sat on mat&quot;
+
+# Initialize attention
+attention = BasicAttention(hidden_dim)
+
+# Simulate encoder states
+encoder_states = np.random.randn(seq_len, hidden_dim)
+
+# Simulate decoder state (generating &quot;chat&quot; for &quot;cat&quot;)
+decoder_state = np.random.randn(hidden_dim)
+
+# Compute attention
+context, weights = attention(decoder_state, encoder_states)
+
+print(f&quot;Encoder sequence length: {seq_len}&quot;)
+print(f&quot;Attention weights: {weights}&quot;)
+print(f&quot;  Sum of weights: {weights.sum():.4f} (should be 1.0)&quot;)
+print(f&quot;\nContext vector shape: {context.shape}&quot;)
+print(f&quot;Context is weighted sum of {seq_len} encoder states&quot;)
+
+# Visualize attention pattern
+print(&quot;\nAttention pattern visualization:&quot;)
+positions = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;mat&quot;]
+for i, (pos, weight) in enumerate(zip(positions, weights)):
+    bar = &quot;█&quot; * int(weight * 50)
+    print(f&quot;  {pos:6s}: {bar} {weight:.3f}&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Attention Transparency</h3>
+<p class="prose">Attention weights show what model focuses on:
+- Interpretability: Can visualize model&#x27;s decision-making process
+- Debugging: Detect if model attends to wrong features
+- Auditing: Check if model focuses on sensitive attributes
+- But: Attention weights can be misleading - high attention ≠ high importance always</p>
+<h3 class="sh3">Information Leakage Via Attention</h3>
+<p class="prose">Attention patterns reveal associations:
+- If model attends strongly to &quot;password&quot; when seeing &quot;admin&quot;
+- Reveals model learned &quot;admin&quot; and &quot;password&quot; are related
+- Adversaries can probe attention to extract training data knowledge
+- Defense: Monitor attention patterns for unexpected associations</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Query, Key, Value: The Attention Formulation</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The modern formulation of attention (used in transformers) uses Query-Key-Value 
+(QKV) notation. This abstraction clarifies attention as a form of differentiable 
+memory access: queries search, keys respond, values contain the content to retrieve.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Qkv Intuition</h3>
+<h4 class="sh3">Database Analogy</h4>
+<p class="prose">Think of attention like a database lookup:
+
+Query: &quot;Find information about &#x27;cat&#x27;&quot;
+Keys: [&quot;information about The&quot;, &quot;information about cat&quot;, &quot;information about sat&quot;, ...]
+Values: [actual encoding of The, actual encoding of cat, actual encoding of sat, ...]
+
+Process:
+1. Compare query to all keys → get relevance scores
+2. Normalize scores to weights (softmax)
+3. Retrieve weighted sum of values</p>
+<h4 class="sh3">Differentiable Memory</h4>
+<p class="prose">Traditional memory: Hard lookup by address
+  memory[0] → returns value at position 0
+  
+Attention: Soft lookup by content
+  - Every memory location accessed with some weight
+  - Weights determined by query-key similarity
+  - Differentiable → can train with backprop</p>
+<h3 class="sh3">Mathematical Formulation</h3>
+<h4 class="sh3">Components</h4>
+<h4 class="sh3">Query</h4>
+<p class="prose">Q = query vector
+Represents &quot;what we&#x27;re looking for&quot;
+In seq2seq: decoder state s_t</p>
+<h4 class="sh3">Keys</h4>
+<p class="prose">K = [k₁, k₂, ..., k_n]
+Represent &quot;what each memory location contains&quot;
+In seq2seq: projections of encoder states</p>
+<h4 class="sh3">Values</h4>
+<p class="prose">V = [v₁, v₂, ..., v_n]
+Represent &quot;actual content to retrieve&quot;
+In seq2seq: encoder states (or projections)</p>
+<h4 class="sh3">Attention Formula</h4>
+<p class="prose">Attention(Q, K, V) = Σ softmax(score(Q, K)) × V
+
+Step-by-step:
+1. Compute scores: e_i = score(Q, k_i) for all i
+2. Normalize: α_i = softmax(e_i)
+3. Retrieve: output = Σ α_i × v_i</p>
+<h4 class="sh3">Score Functions</h4>
+<h4 class="sh3">Additive</h4>
+<p class="prose">score(Q, k) = v^T tanh(W_q Q + W_k k)
+Used in Bahdanau attention
+Learnable parameters: W_q, W_k, v</p>
+<h4 class="sh3">Multiplicative</h4>
+<p class="prose">score(Q, k) = Q^T W k
+Bilinear form
+Learnable parameters: W</p>
+<h4 class="sh3">Dot Product</h4>
+<p class="prose">score(Q, k) = Q^T k
+Simplest form (no parameters!)
+Used in transformers (with scaling)
+Requirement: Q and k must have same dimension</p>
+<h3 class="sh3">Qkv Projections</h3>
+<h4 class="sh3">Why Projections</h4>
+<p class="prose">Often K, V (and Q) are linear projections of hidden states:
+
+Q = W_q × s        (query projection)
+K = W_k × H        (key projections)
+V = W_v × H        (value projections)
+
+Where:
+- s = decoder state
+- H = [h₁, ..., h_n] (encoder states)
+- W_q, W_k, W_v are learned projection matrices</p>
+<h4 class="sh3">Benefits</h4>
+<ul class="blist"><li>Allows different dimensions for Q, K, V</li><li>Model learns optimal representations for scoring vs. content</li><li>Keys optimized for matching, values optimized for information</li><li>Additional parameters → more model capacity</li></ul>
+<h3 class="sh3">Attention As Weighted Average</h3>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Attention is a soft selection mechanism:
+
+Hard selection: Pick one value (argmax)
+  output = v_best_match
+
+Soft selection: Weighted average of all values (softmax)
+  output = α₁v₁ + α₂v₂ + ... + α_nv_n
+
+Benefit: Differentiable (can train with backprop)
+Weights α_i are continuous → gradients flow through</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Query Key Value Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class QueryKeyValueAttention:
+    &quot;&quot;&quot;
+    Query-Key-Value attention mechanism.
+    
+    Implements: Attention(Q, K, V) = softmax(QK^T) V
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, d_k: int, d_v: int):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension (input hidden size)
+            d_k: Key/Query dimension
+            d_v: Value dimension
+        &quot;&quot;&quot;
+        self.d_model = d_model
+        self.d_k = d_k
+        self.d_v = d_v
+        
+        # Projection matrices
+        self.W_q = np.random.randn(d_k, d_model) * 0.01  # Query projection
+        self.W_k = np.random.randn(d_k, d_model) * 0.01  # Key projection
+        self.W_v = np.random.randn(d_v, d_model) * 0.01  # Value projection
+    
+    def project(self, states: np.ndarray, W: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Project states using weight matrix.
+        
+        Args:
+            states: Input states (batch, d_model) or (d_model,)
+            W: Projection matrix (d_out, d_model)
+        
+        Returns:
+            projected: Projected states (batch, d_out) or (d_out,)
+        &quot;&quot;&quot;
+        if states.ndim == 1:
+            return np.dot(W, states)
+        else:
+            return np.dot(states, W.T)
+    
+    def attention_scores(self, Q: np.ndarray, K: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Compute attention scores (Q · K^T).
+        
+        Args:
+            Q: Query (d_k,) or (batch, d_k)
+            K: Keys (seq_len, d_k)
+        
+        Returns:
+            scores: (seq_len,) or (batch, seq_len)
+        &quot;&quot;&quot;
+        if Q.ndim == 1:
+            # Single query
+            scores = np.dot(K, Q)  # (seq_len,)
+        else:
+            # Batch of queries
+            scores = np.dot(Q, K.T)  # (batch, seq_len)
+        
+        return scores
+    
+    def softmax(self, x: np.ndarray, axis: int = -1) -&gt; np.ndarray:
+        &quot;&quot;&quot;Numerically stable softmax.&quot;&quot;&quot;
+        exp_x = np.exp(x - np.max(x, axis=axis, keepdims=True))
+        return exp_x / exp_x.sum(axis=axis, keepdims=True)
+    
+    def forward(self, query_state: np.ndarray, 
+               key_states: np.ndarray,
+               value_states: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;
+        Compute QKV attention.
+        
+        Args:
+            query_state: Query state (d_model,)
+            key_states: Key states (seq_len, d_model)
+            value_states: Value states (seq_len, d_model)
+                         If None, uses key_states
+        
+        Returns:
+            output: Attention output (d_v,)
+            attention_weights: Attention weights (seq_len,)
+        &quot;&quot;&quot;
+        if value_states is None:
+            value_states = key_states
+        
+        # Project to Q, K, V
+        Q = self.project(query_state, self.W_q)     # (d_k,)
+        K = self.project(key_states, self.W_k)      # (seq_len, d_k)
+        V = self.project(value_states, self.W_v)    # (seq_len, d_v)
+        
+        # Compute attention scores
+        scores = self.attention_scores(Q, K)        # (seq_len,)
+        
+        # Apply softmax to get weights
+        attention_weights = self.softmax(scores)    # (seq_len,)
+        
+        # Compute weighted sum of values
+        output = np.zeros(self.d_v)
+        for i in range(len(value_states)):
+            output += attention_weights[i] * V[i]
+        
+        return output, attention_weights
+    
+    def __call__(self, query_state: np.ndarray,
+                key_states: np.ndarray,
+                value_states: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(query_state, key_states, value_states)
+
+
+# Example usage
+d_model = 512   # Model dimension
+d_k = 64        # Key/Query dimension
+d_v = 64        # Value dimension
+seq_len = 10
+
+qkv_attention = QueryKeyValueAttention(d_model, d_k, d_v)
+
+# Simulate states
+query_state = np.random.randn(d_model)
+key_states = np.random.randn(seq_len, d_model)
+value_states = np.random.randn(seq_len, d_model)
+
+# Compute attention
+output, weights = qkv_attention(query_state, key_states, value_states)
+
+print(f&quot;Query dimension: {d_model}&quot;)
+print(f&quot;Key dimension: {d_k}&quot;)
+print(f&quot;Value dimension: {d_v}&quot;)
+print(f&quot;Sequence length: {seq_len}&quot;)
+print(f&quot;\nAttention weights shape: {weights.shape}&quot;)
+print(f&quot;Attention weights sum: {weights.sum():.4f}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print(f&quot;\nAttention weights: {weights}&quot;)</code></pre>
+<h3 class="sh3">Qkv Visualization</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_qkv_attention():
+    &quot;&quot;&quot;Visualize Query-Key-Value attention mechanism.&quot;&quot;&quot;
+    
+    print(&quot;=== Query-Key-Value Attention ===\n&quot;)
+    
+    # Simplified example
+    positions = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;mat&quot;]
+    
+    print(&quot;Encoder states (memory):&quot;)
+    print(&quot;  Position | Key (what it contains) | Value (actual content)&quot;)
+    print(&quot;  ---------|------------------------|--------------------&quot;)
+    for i, pos in enumerate(positions):
+        print(f&quot;  {i+1}        | &#x27;info about {pos}&#x27;      | encoding({pos})&quot;)
+    
+    print(&quot;\nDecoder step: Generating &#x27;chat&#x27; (French for &#x27;cat&#x27;)&quot;)
+    print(&quot;  Query: &#x27;Find info about word meaning cat&#x27;&quot;)
+    
+    # Simulate scores
+    scores = {
+        &quot;The&quot;: 0.5,
+        &quot;cat&quot;: 5.0,   # High score!
+        &quot;sat&quot;: 0.3,
+        &quot;on&quot;: 0.2,
+        &quot;mat&quot;: 0.4
+    }
+    
+    print(&quot;\n1. Compute Query-Key similarity scores:&quot;)
+    for pos, score in scores.items():
+        print(f&quot;     score(Query, Key_{pos}) = {score:.1f}&quot;)
+    
+    # Softmax
+    import math
+    exp_scores = {k: math.exp(v) for k, v in scores.items()}
+    total = sum(exp_scores.values())
+    weights = {k: v/total for k, v in exp_scores.items()}
+    
+    print(&quot;\n2. Normalize with softmax (attention weights):&quot;)
+    for pos, weight in weights.items():
+        bar = &quot;█&quot; * int(weight * 50)
+        print(f&quot;     α_{pos:6s} = {weight:.3f} {bar}&quot;)
+    
+    print(&quot;\n3. Compute weighted sum of Values:&quot;)
+    print(&quot;   Output = Σ α_i × Value_i&quot;)
+    print(&quot;          = 0.05×V_The + 0.80×V_cat + 0.04×V_sat + ...&quot;)
+    print(&quot;          ≈ 0.80×V_cat  (dominated by &#x27;cat&#x27;)&quot;)
+    print(&quot;\n→ Model focuses on &#x27;cat&#x27; encoding when generating &#x27;chat&#x27;!&quot;)
+
+visualize_qkv_attention()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Query Manipulation Attacks</h3>
+<p class="prose">Adversaries can craft queries that manipulate attention:
+- Design inputs that cause model to attend to wrong positions
+- Exploit query-key similarity computation
+- Force high attention weights on adversarial content
+- Example: Craft query that maximizes similarity to malicious key</p>
+<h3 class="sh3">Key Poisoning</h3>
+<p class="prose">Training data poisoning affects learned keys:
+- Poison training to make malicious content have keys similar to benign queries
+- Result: Model attends to malicious content when shouldn&#x27;t
+- Defense: Audit key-query similarity patterns for anomalies</p>
+<h3 class="sh3">Value Extraction</h3>
+<p class="prose">Values contain actual content - potential information leak:
+- Attention weights show which values were accessed
+- Adversaries can infer value content from attention patterns
+- Repeated attention to same positions reveals frequently accessed info</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Attention Scores and Softmax Normalization</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The heart of attention is the score function: how do we measure relevance between 
+query and key? Common choices are additive (Bahdanau), multiplicative, and dot 
+product. Softmax normalizes scores into weights that sum to 1.0, creating a 
+probability distribution over positions.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Score Function Design</h3>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Measure compatibility/relevance between query and key</p>
+<h4 class="sh3">Desirable Properties</h4>
+<ul class="blist"><li>High score when Q and k are similar/relevant</li><li>Low score when Q and k are unrelated</li><li>Differentiable (for backprop)</li><li>Efficient to compute (millions of scores needed)</li></ul>
+<h4 class="sh3">Comparison Of Score Functions</h4>
+<h4 class="sh3">Additive Attention</h4>
+<h4 class="sh3">Formula</h4>
+<p class="prose">score(Q, k) = v^T tanh(W_q Q + W_k k)</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">W_q (d_k × d_model), W_k (d_k × d_model), v (d_k)</p>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(d_k × d_model) per score</p>
+<h4 class="sh3">Used In</h4>
+<p class="prose">Bahdanau attention (2015)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Flexible, learnable non-linear combination</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">More parameters, slower computation</p>
+<h4 class="sh3">Multiplicative Attention</h4>
+<h4 class="sh3">Formula</h4>
+<p class="prose">score(Q, k) = Q^T W k</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">W (d_model × d_model)</p>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(d_model²) per score</p>
+<h4 class="sh3">Used In</h4>
+<p class="prose">Luong attention (2015)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Fewer parameters than additive</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">Still requires large weight matrix</p>
+<h4 class="sh3">Dot Product Attention</h4>
+<h4 class="sh3">Formula</h4>
+<p class="prose">score(Q, k) = Q^T k</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">None!</p>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(d_model) per score</p>
+<h4 class="sh3">Used In</h4>
+<p class="prose">Transformers (2017)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Fastest, no extra parameters, highly efficient</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">Requires Q and k same dimension</p>
+<h4 class="sh3">Scaled Dot Product</h4>
+<h4 class="sh3">Formula</h4>
+<p class="prose">score(Q, k) = (Q^T k) / √d_k</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">Dot product with scaling (Section 3.7)</p>
+<h4 class="sh3">Rationale</h4>
+<p class="prose">Prevents softmax saturation for large d_k</p>
+<h3 class="sh3">Softmax Normalization</h3>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Convert scores to probability distribution (weights sum to 1)</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Given scores [e₁, e₂, ..., e_n]:
+
+α_i = exp(e_i) / Σ_j exp(e_j)
+
+Properties:
+- α_i ∈ (0, 1) for all i
+- Σ_i α_i = 1
+- Higher scores → higher weights (exponentially)</p>
+<h4 class="sh3">Why Softmax</h4>
+<h4 class="sh3">Differentiable</h4>
+<p class="prose">Smooth function → gradients flow</p>
+<h4 class="sh3">Probabilistic</h4>
+<p class="prose">Weights are proper probability distribution</p>
+<h4 class="sh3">Amplification</h4>
+<p class="prose">Exponential amplifies differences (high scores dominate)</p>
+<h4 class="sh3">Temperature Control</h4>
+<h4 class="sh3">Formula</h4>
+<p class="prose">α_i = exp(e_i / T) / Σ_j exp(e_j / T)</p>
+<h4 class="sh3">Temperature Effects</h4>
+<h4 class="sh3">High T</h4>
+<p class="prose">Softmax more uniform (attends to more positions)</p>
+<h4 class="sh3">Low T</h4>
+<p class="prose">Softmax more peaked (attends to fewer positions)</p>
+<h4 class="sh3">T To Zero</h4>
+<p class="prose">Approaches argmax (hard attention)</p>
+<h4 class="sh3">T To Inf</h4>
+<p class="prose">Approaches uniform (no attention)</p>
+<h4 class="sh3">Security Relevance</h4>
+<p class="prose">Temperature can be manipulated:
+- High T: Force model to attend uniformly (dilute focus)
+- Low T: Force model to attend to single position (narrow focus)
+- Adversaries can exploit temperature in attacks</p>
+<h3 class="sh3">Attention Weight Properties</h3>
+<h4 class="sh3">Always Positive</h4>
+<p class="prose">All α_i &gt; 0 (every position gets some attention)</p>
+<h4 class="sh3">Sum To One</h4>
+<p class="prose">Σ α_i = 1 (normalized weights)</p>
+<h4 class="sh3">Differentiable</h4>
+<p class="prose">Gradient flows through softmax:
+∂α_i/∂e_j depends on whether i == j
+→ Can learn score function via backprop</p>
+<h4 class="sh3">Interpretable</h4>
+<p class="prose">α_i = &quot;importance of position i&quot;
+Can visualize to understand model behavior</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Score Functions Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class AttentionScoreFunctions:
+    &quot;&quot;&quot;Different attention score functions.&quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, d_k: int = None):
+        self.d_model = d_model
+        self.d_k = d_k or d_model
+        
+        # Parameters for additive attention
+        self.W_q_add = np.random.randn(self.d_k, d_model) * 0.01
+        self.W_k_add = np.random.randn(self.d_k, d_model) * 0.01
+        self.v_add = np.random.randn(self.d_k) * 0.01
+        
+        # Parameters for multiplicative attention
+        self.W_mult = np.random.randn(d_model, d_model) * 0.01
+    
+    def additive_score(self, Q: np.ndarray, k: np.ndarray) -&gt; float:
+        &quot;&quot;&quot;
+        Additive attention score (Bahdanau).
+        score = v^T tanh(W_q Q + W_k k)
+        &quot;&quot;&quot;
+        Q_proj = np.dot(self.W_q_add, Q)
+        k_proj = np.dot(self.W_k_add, k)
+        combined = np.tanh(Q_proj + k_proj)
+        score = np.dot(self.v_add, combined)
+        return score
+    
+    def multiplicative_score(self, Q: np.ndarray, k: np.ndarray) -&gt; float:
+        &quot;&quot;&quot;
+        Multiplicative attention score.
+        score = Q^T W k
+        &quot;&quot;&quot;
+        Wk = np.dot(self.W_mult, k)
+        score = np.dot(Q, Wk)
+        return score
+    
+    def dot_product_score(self, Q: np.ndarray, k: np.ndarray) -&gt; float:
+        &quot;&quot;&quot;
+        Dot product attention score.
+        score = Q^T k
+        &quot;&quot;&quot;
+        score = np.dot(Q, k)
+        return score
+    
+    def scaled_dot_product_score(self, Q: np.ndarray, k: np.ndarray) -&gt; float:
+        &quot;&quot;&quot;
+        Scaled dot product attention score.
+        score = (Q^T k) / sqrt(d_k)
+        &quot;&quot;&quot;
+        score = np.dot(Q, k) / np.sqrt(self.d_k)
+        return score
+    
+    def compare_all(self, Q: np.ndarray, keys: np.ndarray):
+        &quot;&quot;&quot;Compare all score functions on same inputs.&quot;&quot;&quot;
+        seq_len = keys.shape[0]
+        
+        print(f&quot;=== Attention Score Functions Comparison ===\n&quot;)
+        print(f&quot;Query dimension: {Q.shape[0]}&quot;)
+        print(f&quot;Number of keys: {seq_len}\n&quot;)
+        
+        # Compute scores with each function
+        for method_name, method in [
+            (&quot;Additive&quot;, self.additive_score),
+            (&quot;Multiplicative&quot;, self.multiplicative_score),
+            (&quot;Dot Product&quot;, self.dot_product_score),
+            (&quot;Scaled Dot Product&quot;, self.scaled_dot_product_score)
+        ]:
+            scores = np.array([method(Q, keys[i]) for i in range(seq_len)])
+            
+            print(f&quot;{method_name}:&quot;)
+            print(f&quot;  Scores: {scores}&quot;)
+            print(f&quot;  Min: {scores.min():.3f}, Max: {scores.max():.3f}, &quot;
+                  f&quot;Std: {scores.std():.3f}&quot;)
+            print()
+
+
+# Example usage
+d_model = 64
+seq_len = 5
+
+scorer = AttentionScoreFunctions(d_model)
+
+Q = np.random.randn(d_model)
+keys = np.random.randn(seq_len, d_model)
+
+scorer.compare_all(Q, keys)</code></pre>
+<h3 class="sh3">Softmax With Temperature</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def softmax_temperature_demo():
+    &quot;&quot;&quot;Demonstrate softmax temperature effect.&quot;&quot;&quot;
+    
+    scores = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    
+    print(&quot;=== Softmax Temperature Effect ===\n&quot;)
+    print(f&quot;Scores: {scores}\n&quot;)
+    
+    temperatures = [0.1, 0.5, 1.0, 2.0, 10.0]
+    
+    for T in temperatures:
+        # Softmax with temperature
+        scaled_scores = scores / T
+        exp_scores = np.exp(scaled_scores - np.max(scaled_scores))
+        weights = exp_scores / exp_scores.sum()
+        
+        print(f&quot;Temperature T = {T:4.1f}:&quot;)
+        print(f&quot;  Weights: {weights}&quot;)
+        
+        # Measure concentration (entropy)
+        entropy = -np.sum(weights * np.log(weights + 1e-10))
+        max_entropy = np.log(len(weights))
+        
+        print(f&quot;  Entropy: {entropy:.3f} / {max_entropy:.3f} &quot;
+              f&quot;({&#x27;peaked&#x27; if entropy &lt; 1.0 else &#x27;uniform&#x27;})&quot;)
+        
+        # Visualize
+        for i, w in enumerate(weights):
+            bar = &quot;█&quot; * int(w * 50)
+            print(f&quot;    Pos {i}: {bar} {w:.3f}&quot;)
+        print()
+    
+    print(&quot;Observations:&quot;)
+    print(&quot;  Low T (0.1): Peaked distribution (focuses on max)&quot;)
+    print(&quot;  High T (10): Uniform distribution (attends to all)&quot;)
+
+softmax_temperature_demo()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Softmax Saturation</h3>
+<p class="prose">Large score differences cause softmax saturation:
+- If one score &gt;&gt; others: single position gets ~1.0 weight
+- Gradients vanish for low-weight positions
+- Adversaries can craft inputs causing extreme saturation
+- Model becomes brittle (focuses only on one position)</p>
+<h3 class="sh3">Attention Weight Manipulation</h3>
+<p class="prose">Adversaries can manipulate attention distribution:
+- Craft inputs to force specific attention patterns
+- Make model attend to adversarial content
+- Or force uniform attention (dilute focus on important parts)
+- Defense: Monitor attention entropy, detect anomalous patterns</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Attention as Differentiable Memory Access</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Attention can be viewed as a differentiable alternative to hard memory addressing. 
+Instead of accessing memory[i] (hard, discrete), attention accesses a weighted 
+combination of all memory locations (soft, continuous). This enables learning what 
+to access through gradient descent.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Memory Access Analogy</h3>
+<h4 class="sh3">Traditional Memory</h4>
+<h4 class="sh3">Access</h4>
+<p class="prose">memory[index] → returns value at specific address</p>
+<h4 class="sh3">Properties</h4>
+<ul class="blist"><li>Hard addressing (discrete index)</li><li>Returns single value</li><li>Not differentiable (index is discrete)</li><li>Can&#x27;t learn addressing through backprop</li></ul>
+<h4 class="sh3">Attention As Memory</h4>
+<h4 class="sh3">Access</h4>
+<p class="prose">attention(query, memory) → returns weighted combination</p>
+<h4 class="sh3">Properties</h4>
+<ul class="blist"><li>Soft addressing (continuous weights)</li><li>Returns weighted average of all values</li><li>Fully differentiable</li><li>Can learn addressing through backprop</li></ul>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Model learns WHERE to look (attention) and WHAT to look for (query)
+through the same gradient-based optimization used for weights</p>
+<h3 class="sh3">Gradient Flow Through Attention</h3>
+<h4 class="sh3">Forward Pass</h4>
+<p class="prose">1. Scores: e = score(Q, K)
+2. Weights: α = softmax(e)
+3. Output: y = Σ α_i v_i</p>
+<h4 class="sh3">Backward Pass</h4>
+<p class="prose">Gradient flows through all components:
+
+∂Loss/∂Q: How to change query to get better output?
+∂Loss/∂K: How to change keys to be more relevant?
+∂Loss/∂V: How to change values to give better content?
+
+All differentiable → can optimize via backprop</p>
+<h4 class="sh3">Learning What To Attend</h4>
+<p class="prose">Through training, model learns:
+- Query representations that ask the right questions
+- Key representations that respond to relevant queries
+- Value representations that contain useful information
+
+All learned jointly through gradient descent!</p>
+<h3 class="sh3">Attention Patterns Learned</h3>
+<h4 class="sh3">Local Attention</h4>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Attend to nearby positions</p>
+<h4 class="sh3">Learned When</h4>
+<p class="prose">Local context matters (e.g., syntax)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Adjective attending to following noun</p>
+<h4 class="sh3">Global Attention</h4>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Attend to distant positions</p>
+<h4 class="sh3">Learned When</h4>
+<p class="prose">Long-range dependencies matter</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Pronoun attending to antecedent 10+ words back</p>
+<h4 class="sh3">Content Based Attention</h4>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Attend based on content similarity</p>
+<h4 class="sh3">Learned When</h4>
+<p class="prose">Semantic relationships matter</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Attend to semantically similar words</p>
+<h4 class="sh3">Positional Attention</h4>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Attend to specific positions (e.g., first or last)</p>
+<h4 class="sh3">Learned When</h4>
+<p class="prose">Position itself is informative</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Always attend to &lt;CLS&gt; token for classification</p>
+<h3 class="sh3">Why Attention Works</h3>
+<h4 class="sh3">Inductive Bias</h4>
+<p class="prose">Attention has minimal inductive bias:
+- Doesn&#x27;t assume locality (unlike CNNs)
+- Doesn&#x27;t assume sequentiality (unlike RNNs)
+- Model learns what matters through data</p>
+<h4 class="sh3">Flexibility</h4>
+<p class="prose">Can learn any pattern that&#x27;s useful:
+- Short-range and long-range dependencies
+- Forward and backward dependencies
+- Content-based and position-based patterns</p>
+<h4 class="sh3">Compositionality</h4>
+<p class="prose">Multiple attention heads (Section 3.8) can learn different patterns:
+- One head for syntax
+- Another for semantics
+- Another for coreference
+- All learned automatically!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Gradient Computation Demo</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_attention_gradients():
+    &quot;&quot;&quot;
+    Show that attention is differentiable.
+    Compute gradients manually to understand gradient flow.
+    &quot;&quot;&quot;
+    
+    print(&quot;=== Gradient Flow Through Attention ===\n&quot;)
+    
+    # Simple example: 3 positions, 2 dimensions
+    d_k = 2
+    seq_len = 3
+    
+    # Query, Keys, Values
+    Q = np.array([1.0, 0.0])
+    K = np.array([
+        [1.0, 0.0],  # Similar to Q
+        [0.0, 1.0],  # Orthogonal to Q
+        [0.5, 0.5],  # Medium similarity to Q
+    ])
+    V = np.array([
+        [1.0, 2.0],
+        [3.0, 4.0],
+        [5.0, 6.0],
+    ])
+    
+    print(&quot;Forward pass:&quot;)
+    
+    # 1. Scores
+    scores = np.dot(K, Q)
+    print(f&quot;1. Scores = K @ Q: {scores}&quot;)
+    
+    # 2. Attention weights
+    exp_scores = np.exp(scores - np.max(scores))
+    weights = exp_scores / exp_scores.sum()
+    print(f&quot;2. Weights = softmax(scores): {weights}&quot;)
+    
+    # 3. Output
+    output = np.dot(weights, V)
+    print(f&quot;3. Output = weights @ V: {output}&quot;)
+    
+    print(&quot;\nBackward pass (gradients):&quot;)
+    print(&quot;If Loss = ||output - target||²:&quot;)
+    print(&quot;  ∂Loss/∂output flows back through:&quot;)
+    print(&quot;    → ∂output/∂weights (gradient w.r.t. weights)&quot;)
+    print(&quot;    → ∂weights/∂scores (softmax gradient)&quot;)
+    print(&quot;    → ∂scores/∂Q (dot product gradient)&quot;)
+    print(&quot;    → ∂scores/∂K (dot product gradient)&quot;)
+    print(&quot;\nAll differentiable → can optimize Q, K, V!&quot;)
+    
+    print(&quot;\n→ Model learns what to attend to through backprop&quot;)
+
+demonstrate_attention_gradients()</code></pre>
+<h3 class="sh3">Learned Attention Patterns</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_learned_patterns():
+    &quot;&quot;&quot;Visualize different attention patterns that could be learned.&quot;&quot;&quot;
+    
+    seq_len = 10
+    
+    print(&quot;=== Examples of Learned Attention Patterns ===\n&quot;)
+    
+    patterns = {
+        &quot;Local&quot;: np.array([0.05] * 10),
+        &quot;Global&quot;: np.array([0.1] * 10),
+        &quot;First-token&quot;: np.array([0.7, 0.05, 0.05, 0.05, 0.05, 0.025, 0.025, 0.025, 0.025, 0.025]),
+        &quot;Last-token&quot;: np.array([0.025, 0.025, 0.025, 0.025, 0.05, 0.05, 0.05, 0.05, 0.1, 0.6]),
+        &quot;Peaked&quot;: np.array([0.01, 0.02, 0.05, 0.1, 0.64, 0.1, 0.05, 0.02, 0.01, 0.0]),
+    }
+    
+    # Normalize local pattern to favor nearby positions
+    patterns[&quot;Local&quot;][3:7] = [0.25, 0.25, 0.25, 0.25]
+    patterns[&quot;Local&quot;] /= patterns[&quot;Local&quot;].sum()
+    
+    for name, pattern in patterns.items():
+        print(f&quot;{name} attention (focusing at position 5):&quot;)
+        for i, weight in enumerate(pattern):
+            bar = &quot;█&quot; * int(weight * 50)
+            print(f&quot;  Pos {i:2d}: {bar} {weight:.3f}&quot;)
+        print()
+    
+    print(&quot;These patterns are LEARNED, not hand-coded!&quot;)
+    print(&quot;Model learns which pattern is useful for the task.&quot;)
+
+visualize_learned_patterns()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Learned Pattern Manipulation</h3>
+<p class="prose">Adversaries can poison training to manipulate learned patterns:
+- Inject training examples that teach malicious attention patterns
+- Model learns to always attend to adversarial content
+- Example: Poison training so model always attends to position 0
+           Then place adversarial trigger at position 0</p>
+<h3 class="sh3">Gradient Based Attacks</h3>
+<p class="prose">Differentiability enables gradient-based adversarial attacks:
+- Compute gradients of attention w.r.t. input
+- Craft inputs that maximize attention on adversarial content
+- Or minimize attention on safety-relevant content
+- Defense: Adversarial training with attention-manipulating examples</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention computes weighted sum over encoder states dynamically</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Solves seq2seq bottleneck, no information loss</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Query-Key-Value formulation: queries search, keys respond, values contain content</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Clean abstraction for differentiable memory access</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention scores measure relevance, softmax normalizes to weights</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Weights sum to 1, differentiable, interpretable</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention is fully differentiable - learns what to attend to</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">No hand-coding of attention patterns, model learns from data</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention weights provide transparency into model decisions</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Interpretability for debugging and auditing, but can leak information</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement basic attention mechanism from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Compute weighted sum over encoder states based on decoder state</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement Query-Key-Value attention with projections</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Project to Q/K/V, compute scores, apply softmax, weighted sum</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Compare different score functions (additive, multiplicative, dot product)</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Understand tradeoffs in parameters and computation</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Visualize attention weights to interpret model behavior</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">See which positions model focuses on at each step</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Understand gradient flow through attention</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Trace how gradients flow to learn attention patterns</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Attention weights reveal what model focuses on (transparency)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Use for interpretability, debugging, and auditing decisions</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Attention patterns can leak information about training data</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Monitor attention for unexpected associations, audit patterns</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Attention can be manipulated by adversarial inputs</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Test robustness against attention-manipulation attacks</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Learned attention patterns reflect training data biases</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Audit learned patterns for problematic associations</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Differentiability enables gradient-based attacks on attention</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Use adversarial training to make attention robust</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Treating attention weights as feature importance</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Attention ≠ importance. High attention doesn&#x27;t always mean high impact.</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not normalizing attention scores with softmax</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Weights must sum to 1.0 for proper probability distribution</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using only one attention head (limits pattern learning)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Multi-head attention (Section 3.8) learns multiple patterns in parallel</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Ignoring attention pattern analysis in debugging</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Visualize attention to understand model failures</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Assuming attention is always interpretable</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Attention can be misleading - use alongside other interpretation methods</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 5</h3>
+<ul class="blist"><li>Seq2seq bottleneck problem (motivation)</li><li>Why decoder needs different context per step</li><li>Information loss in fixed-length context</li></ul>
+<h3 class="sh3">From Chapter 2</h3>
+<ul class="blist"><li>Softmax function (normalization)</li><li>Gradient descent and backpropagation</li><li>Neural network components</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.7: Scaled dot-product attention (transformer variant)</li><li>Why scaling by √d_k is necessary</li><li>Attention in matrix form for efficiency</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Scaled dot-product attention (prevents softmax saturation)</li><li>Multi-head attention (parallel attention pathways)</li><li>Self-attention (attention within same sequence)</li><li>Transformer architecture (pure attention, no RNNs)</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement scaled dot-product attention</li><li>Build multi-head attention layer</li><li>Understand self-attention mechanism</li><li>Create transformer encoder and decoder</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">The attention mechanism (Bahdanau et al., 2015; Luong et al., 2015) revolutionized 
+NLP by solving the seq2seq bottleneck problem. Instead of compressing entire input 
+into a fixed vector, attention lets the decoder dynamically access all encoder 
+states through a weighted sum. Each decoder step computes which encoder positions 
+are relevant and focuses on them.
+
+The Query-Key-Value formulation provides an elegant abstraction: queries search 
+for information, keys respond to queries, values contain the actual content. The 
+attention score measures query-key similarity, softmax normalizes to weights, and 
+the output is a weighted sum of values. All differentiable - the model learns what 
+to attend to through gradient descent.
+
+Attention provides transparency: attention weights show what the model focuses on. 
+This enables interpretability, debugging, and auditing. But attention patterns can 
+also leak information (revealing what the model considers related) and can be 
+manipulated by adversaries (forcing attention to wrong positions).
+
+From a security perspective: attention is both a defense tool (transparency into 
+model decisions) and an attack surface (patterns can be extracted or manipulated). 
+Understanding attention mechanics is essential for securing LLM deployments and 
+detecting adversarial behaviors.
+
+Next: Section 3.7 introduces scaled dot-product attention - the specific variant 
+used in transformers. We&#x27;ll see why scaling by √d_k is critical for preventing 
+softmax saturation and enabling stable training.</p>
+</article>

@@ -1,0 +1,1016 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 3 · ~7 pages</div>
+<h1>Mathematical Foundations: Calculus for ML</h1>
+<div class="tags"><span class="tag">calculus</span><span class="tag">derivatives</span><span class="tag">gradients</span><span class="tag">optimization</span><span class="tag">backpropagation</span><span class="tag">gradient-descent</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Machine learning is optimization. Models don&#x27;t magically learn - they adjust 
+parameters to minimize error, and calculus is the mathematical engine that 
+drives this adjustment. Every time a model trains, it&#x27;s computing derivatives 
+and following gradients downhill toward better performance.
+
+This matters for security because adversaries exploit the same calculus. 
+Gradient-based adversarial attacks use derivatives to find minimal perturbations 
+that fool models. Model extraction can leverage gradient information leaked 
+through APIs. Understanding calculus means understanding both how models learn 
+and how they&#x27;re attacked.
+
+This section builds your calculus foundation specifically for machine learning. 
+We&#x27;re not proving theorems or memorizing integration tables - we&#x27;re building 
+intuition for derivatives, gradients, and optimization. By the end, you&#x27;ll 
+understand why neural networks use backpropagation, how gradient descent works, 
+and why local minima matter.
+
+If you haven&#x27;t touched calculus since high school, don&#x27;t worry. We&#x27;ll rebuild 
+from first principles with geometric intuition, then connect every concept to 
+concrete ML applications and security implications.</p>
+<h2 class="sh1">Core Concepts</h2>
+<h3 class="sh2">Derivatives Intuition</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">The derivative measures how a function changes. More precisely: if you 
+change the input by a tiny amount, how much does the output change?
+
+Formal definition: f&#x27;(x) = lim[h→0] (f(x+h) - f(x)) / h
+
+Geometric interpretation: The derivative is the slope of the function at 
+a point - how steep the curve is.
+
+Notation:
+- f&#x27;(x) or df/dx or ∂f/∂x (partial derivative)
+- Read as: &quot;derivative of f with respect to x&quot;</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Machine learning is about minimizing loss functions. To minimize, we need 
+to know which direction makes loss smaller. Derivatives tell us this direction.
+
+Key insight: If f&#x27;(x) &gt; 0, function is increasing (go left to decrease)
+             If f&#x27;(x) &lt; 0, function is decreasing (go right to decrease)
+             If f&#x27;(x) = 0, you&#x27;re at a local minimum or maximum
+
+Security implication: Adversarial attacks compute derivatives to find which 
+input changes cause desired output changes. Same math, opposite goals.</p>
+<h3 class="sh3">Geometric Interpretation</h3>
+<h4 class="sh3">Slope</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Derivative = rise/run = vertical change / horizontal change</p>
+<h4 class="sh3">Positive Slope</h4>
+<p class="prose">Function increasing (going uphill)</p>
+<h4 class="sh3">Negative Slope</h4>
+<p class="prose">Function decreasing (going downhill)</p>
+<h4 class="sh3">Zero Slope</h4>
+<p class="prose">Flat point (minimum, maximum, or saddle)</p>
+<h4 class="sh3">Steep Slope</h4>
+<p class="prose">Large derivative = function changing rapidly</p>
+<h4 class="sh3">Tangent Line</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Derivative defines tangent line at point</p>
+<h4 class="sh3">Equation</h4>
+<p class="prose">y = f(a) + f&#x27;(a)(x - a)</p>
+<h4 class="sh3">Approximation</h4>
+<p class="prose">For small Δx: f(x+Δx) ≈ f(x) + f&#x27;(x)Δx</p>
+<h4 class="sh3">Ml Usage</h4>
+<p class="prose">First-order Taylor approximation, gradient descent step</p>
+<h4 class="sh3">Rate Of Change</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">How fast is function changing?</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">f(x) = x² at x=2: f&#x27;(2) = 4 (output changes 4× faster than input)</p>
+<h3 class="sh3">Common Derivatives</h3>
+<p class="prose">Power rule: d/dx[xⁿ] = nxⁿ⁻¹
+- d/dx[x²] = 2x
+- d/dx[x³] = 3x²
+- d/dx[√x] = 1/(2√x)
+
+Exponential: d/dx[eˣ] = eˣ
+- Unique property: derivative equals itself
+
+Logarithm: d/dx[ln(x)] = 1/x
+
+Trigonometric:
+- d/dx[sin(x)] = cos(x)
+- d/dx[cos(x)] = -sin(x)
+
+Constants:
+- d/dx[c] = 0 (constant doesn&#x27;t change)
+- d/dx[cx] = c (constant coefficient)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>```python
+import numpy as np
+
+# Approximate derivative using finite differences
+def derivative_approx(f, x, h=1e-5):
+    &quot;&quot;&quot;
+    Approximate df/dx at point x using finite differences
+    f&#x27;(x) ≈ (f(x+h) - f(x)) / h
+    &quot;&quot;&quot;
+    return (f(x + h) - f(x)) / h
+
+# Test on f(x) = x²
+f = lambda x: x**2
+f_prime = lambda x: 2*x  # Analytical derivative
+
+x = 3.0
+approx = derivative_approx(f, x)
+exact = f_prime(x)
+
+print(f&quot;Approximate: {approx:.6f}&quot;)  # ~6.00001
+print(f&quot;Exact: {exact:.6f}&quot;)          # 6.0
+print(f&quot;Error: {abs(approx - exact):.9f}&quot;)  # ~1e-5
+
+# Central difference (more accurate)
+def derivative_central(f, x, h=1e-5):
+    &quot;&quot;&quot;
+    f&#x27;(x) ≈ (f(x+h) - f(x-h)) / (2h)
+    &quot;&quot;&quot;
+    return (f(x + h) - f(x - h)) / (2 * h)
+
+approx_central = derivative_central(f, x)
+print(f&quot;Central difference: {approx_central:.6f}&quot;)  # Very close to 6.0
+```</code></pre>
+<h3 class="sh3">Real World Example</h3>
+<p class="prose">Loss function in machine learning:
+
+Model: f(x; w) = wx (linear model, parameter w, input x)
+Prediction: ŷ = f(x; w) = wx
+True value: y = 5
+Loss: L(w) = (ŷ - y)² = (wx - 5)²
+
+Question: How should we change w to reduce loss?
+Answer: Compute dL/dw (derivative of loss with respect to w)
+
+dL/dw = d/dw[(wx - 5)²]
+      = 2(wx - 5) · x  (chain rule, covered below)
+
+At w=2, x=1: dL/dw = 2(2×1 - 5) × 1 = 2(-3) = -6
+
+Interpretation: Loss is decreasing (negative derivative)
+               Increase w to reduce loss further
+
+Gradient descent: w_new = w_old - learning_rate × dL/dw
+                 w_new = 2 - 0.1 × (-6) = 2.6
+
+This is how models learn: compute derivatives, follow them downhill.</p>
+<h3 class="sh2">Partial Derivatives And Gradients</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">Partial derivative: derivative with respect to one variable, holding 
+others constant.
+
+For function f(x, y): 
+- ∂f/∂x: how f changes when x changes (y fixed)
+- ∂f/∂y: how f changes when y changes (x fixed)
+
+Gradient: vector of all partial derivatives
+∇f = [∂f/∂x, ∂f/∂y, ...]ᵀ
+
+The gradient points in the direction of steepest increase.</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">ML models have many parameters (millions in deep learning). Loss depends 
+on all of them. We need partial derivatives for each parameter to know 
+how to adjust them.
+
+Key insight: Gradient descent uses -∇L (negative gradient) to find 
+direction of steepest decrease in loss.
+
+Security implication: Adversarial attacks compute gradients with respect 
+to inputs (not parameters) to find perturbations that change predictions.</p>
+<h3 class="sh3">Geometric Interpretation</h3>
+<h4 class="sh3">Direction Of Steepest Ascent</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Gradient ∇f points uphill (steepest increase)</p>
+<h4 class="sh3">Negative Gradient</h4>
+<p class="prose">-∇f points downhill (steepest decrease)</p>
+<h4 class="sh3">Magnitude</h4>
+<p class="prose">||∇f|| indicates how steep (rate of increase)</p>
+<h4 class="sh3">Zero Gradient</h4>
+<p class="prose">∇f = 0 at minimum, maximum, or saddle point</p>
+<h4 class="sh3">Level Curves</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Contour lines where f(x,y) = constant</p>
+<h4 class="sh3">Gradient Orthogonal</h4>
+<p class="prose">∇f perpendicular to level curves</p>
+<h4 class="sh3">Visualization</h4>
+<p class="prose">Gradient points across contours, toward higher values</p>
+<h4 class="sh3">Multivariable Optimization</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Find minimum of f(x₁, x₂, ..., xₙ)</p>
+<h4 class="sh3">Method</h4>
+<p class="prose">Follow -∇f iteratively</p>
+<h4 class="sh3">Condition</h4>
+<p class="prose">At minimum: ∇f = 0 (all partial derivatives zero)</p>
+<h3 class="sh3">Computing Partial Derivatives</h3>
+<p class="prose">Example: f(x, y) = x² + 3xy + y²
+
+∂f/∂x: Treat y as constant, differentiate with respect to x
+∂f/∂x = 2x + 3y
+
+∂f/∂y: Treat x as constant, differentiate with respect to y
+∂f/∂y = 3x + 2y
+
+Gradient: ∇f = [2x + 3y, 3x + 2y]ᵀ
+
+At point (1, 2):
+∇f(1,2) = [2(1) + 3(2), 3(1) + 2(2)]ᵀ = [8, 7]ᵀ
+
+Interpretation: At (1,2), function increases fastest in direction [8, 7]
+               To minimize, go in direction -[8, 7] = [-8, -7]</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>```python
+import numpy as np
+
+# Function: f(x, y) = x² + 3xy + y²
+def f(x, y):
+    return x**2 + 3*x*y + y**2
+
+# Analytical gradient
+def gradient_analytical(x, y):
+    df_dx = 2*x + 3*y
+    df_dy = 3*x + 2*y
+    return np.array([df_dx, df_dy])
+
+# Numerical gradient (using finite differences)
+def gradient_numerical(f, x, y, h=1e-5):
+    df_dx = (f(x+h, y) - f(x, y)) / h
+    df_dy = (f(x, y+h) - f(x, y)) / h
+    return np.array([df_dx, df_dy])
+
+# Test at point (1, 2)
+x, y = 1.0, 2.0
+
+grad_analytical = gradient_analytical(x, y)
+grad_numerical = gradient_numerical(f, x, y)
+
+print(f&quot;Analytical gradient: {grad_analytical}&quot;)  # [8, 7]
+print(f&quot;Numerical gradient: {grad_numerical}&quot;)    # ~[8, 7]
+print(f&quot;Difference: {np.linalg.norm(grad_analytical - grad_numerical)}&quot;)  # ~1e-5
+
+# Visualize gradient descent
+# Start at (4, 4), follow -∇f to minimum
+learning_rate = 0.1
+position = np.array([4.0, 4.0])
+history = [position.copy()]
+
+for i in range(50):
+    grad = gradient_analytical(*position)
+    position = position - learning_rate * grad
+    history.append(position.copy())
+    
+    if np.linalg.norm(grad) &lt; 1e-6:
+        break
+
+print(f&quot;Starting point: {history[0]}&quot;)
+print(f&quot;Final point: {history[-1]}&quot;)
+print(f&quot;Iterations: {len(history)-1}&quot;)
+# Should converge to minimum at (0, 0)
+```</code></pre>
+<h3 class="sh3">Real World Example</h3>
+<p class="prose">Logistic regression with 2 features:
+
+Model: ŷ = σ(w₁x₁ + w₂x₂ + b)
+where σ(z) = 1/(1 + e⁻ᶻ) is sigmoid function
+
+Loss (binary cross-entropy): L = -[y log(ŷ) + (1-y) log(1-ŷ)]
+
+Parameters to optimize: w₁, w₂, b (3 parameters)
+
+Gradients needed:
+∂L/∂w₁ = how loss changes with w₁
+∂L/∂w₂ = how loss changes with w₂
+∂L/∂b = how loss changes with b
+
+Gradient vector: ∇L = [∂L/∂w₁, ∂L/∂w₂, ∂L/∂b]ᵀ
+
+Gradient descent update:
+[w₁, w₂, b] ← [w₁, w₂, b] - α∇L
+
+where α is learning rate
+
+For 1 million features: ∇L has 1 million components!
+Computing gradients efficiently is critical (backpropagation in next chapter).</p>
+<h3 class="sh2">Chain Rule</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">Chain rule: How to differentiate composite functions
+
+If y = f(g(x)), then dy/dx = (df/dg) × (dg/dx)
+
+In words: Derivative of outer function × derivative of inner function
+
+Example: y = (x² + 1)³
+Let u = x² + 1, then y = u³
+dy/dx = dy/du × du/dx = 3u² × 2x = 3(x² + 1)² × 2x = 6x(x² + 1)²</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Neural networks are nested functions: input → layer 1 → layer 2 → ... → output
+
+To train, we need gradient of loss with respect to weights in early layers.
+Chain rule lets us backpropagate gradients from output to input.
+
+Backpropagation = applying chain rule repeatedly through network layers.
+
+Security implication: Adversarial attacks use chain rule to compute 
+gradient of output with respect to input (which input changes affect output).</p>
+<h3 class="sh3">Multivariable Chain Rule</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">If z = f(x, y) and both x = g(t), y = h(t), then:
+
+dz/dt = (∂z/∂x)(dx/dt) + (∂z/∂y)(dy/dt)
+
+Sum of (partial derivative) × (rate of change)</p>
+<h4 class="sh3">Neural Network Context</h4>
+<p class="prose">Layer: z = σ(Wx + b) where σ is activation function
+
+Loss: L = loss(z, y_true)
+
+To find ∂L/∂W (gradient with respect to weights):
+
+∂L/∂W = (∂L/∂z) × (∂z/∂W)
+      = (loss gradient) × (layer gradient)
+
+This is chain rule in action - backpropagation!</p>
+<h3 class="sh3">Computational Graph</h3>
+<p class="prose">Chain rule is easier with computational graphs:
+
+Forward pass (left to right):
+x → f₁ → h₁ → f₂ → h₂ → ... → output
+
+Backward pass (right to left):
+output → ∂L/∂h₂ → ∂L/∂f₂ → ∂L/∂h₁ → ∂L/∂f₁ → ∂L/∂x
+
+Each node: multiply incoming gradient by local gradient
+
+Example:
+z = (x + y) × (x - y)
+
+Let u = x + y, v = x - y, then z = u × v
+
+Forward: x=3, y=2 → u=5, v=1 → z=5
+
+Backward (chain rule):
+∂z/∂x = ∂z/∂u × ∂u/∂x + ∂z/∂v × ∂v/∂x
+      = v × 1 + u × 1
+      = 1 + 5 = 6
+
+∂z/∂y = ∂z/∂u × ∂u/∂y + ∂z/∂v × ∂v/∂y
+      = v × 1 + u × (-1)
+      = 1 - 5 = -4</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>```python
+import numpy as np
+
+# Example: z = σ(wx + b) where σ(x) = 1/(1 + e^(-x))
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+def sigmoid_derivative(x):
+    s = sigmoid(x)
+    return s * (1 - s)  # Convenient property of sigmoid
+
+# Forward pass
+w = 0.5
+x = 2.0
+b = 0.1
+
+u = w * x + b  # Linear combination
+z = sigmoid(u)  # Activation
+
+# Suppose loss L = (z - y)² where y = 1.0 (target)
+y = 1.0
+L = (z - y)**2
+
+# Backward pass (chain rule)
+# dL/dw = dL/dz × dz/du × du/dw
+
+dL_dz = 2 * (z - y)              # Derivative of (z-y)²
+dz_du = sigmoid_derivative(u)     # Derivative of sigmoid
+du_dw = x                         # Derivative of wx + b w.r.t. w
+
+dL_dw = dL_dz * dz_du * du_dw
+
+print(f&quot;Forward pass:&quot;)
+print(f&quot;  u = {u:.4f}&quot;)
+print(f&quot;  z = {z:.4f}&quot;)
+print(f&quot;  L = {L:.4f}&quot;)
+print(f&quot;\nBackward pass:&quot;)
+print(f&quot;  dL/dz = {dL_dz:.4f}&quot;)
+print(f&quot;  dz/du = {dz_du:.4f}&quot;)
+print(f&quot;  du/dw = {du_dw:.4f}&quot;)
+print(f&quot;  dL/dw = {dL_dw:.4f}&quot;)
+
+# Gradient descent update
+learning_rate = 0.1
+w_new = w - learning_rate * dL_dw
+print(f&quot;\nGradient descent:&quot;)
+print(f&quot;  Old w: {w:.4f}&quot;)
+print(f&quot;  New w: {w_new:.4f}&quot;)
+```</code></pre>
+<h3 class="sh3">Real World Example</h3>
+<p class="prose">Two-layer neural network (simplified):
+
+Layer 1: h = σ(W₁x + b₁)
+Layer 2: ŷ = σ(W₂h + b₂)
+Loss: L = (ŷ - y)²
+
+Question: How does loss change with W₁ (first layer weights)?
+
+Answer: Chain rule through both layers:
+
+∂L/∂W₁ = ∂L/∂ŷ × ∂ŷ/∂h × ∂h/∂W₁
+
+Step by step:
+1. ∂L/∂ŷ = 2(ŷ - y) [derivative of loss]
+2. ∂ŷ/∂h = σ&#x27;(W₂h + b₂) · W₂ [derivative of layer 2]
+3. ∂h/∂W₁ = σ&#x27;(W₁x + b₁) · x [derivative of layer 1]
+
+Final gradient: ∂L/∂W₁ = 2(ŷ - y) · σ&#x27;(...) · W₂ · σ&#x27;(...) · x
+
+This is backpropagation! Multiply gradients from output back to input.
+
+Security note: Adversarial attacks do the same thing but compute ∂L/∂x 
+(gradient with respect to input) to find perturbations that increase loss.</p>
+<h3 class="sh2">Gradient Descent Intuition</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">Gradient descent: Iterative optimization algorithm
+
+Goal: Minimize function f(x)
+Method: Repeatedly step in direction of steepest decrease
+
+Algorithm:
+1. Start with initial guess x₀
+2. Compute gradient: g = ∇f(x)
+3. Update: x ← x - α·g (step in negative gradient direction)
+4. Repeat until convergence (gradient ≈ 0)
+
+α is learning rate (step size)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Every machine learning model trains using gradient descent (or variants).
+Understanding gradient descent is understanding how learning happens.
+
+Key insight: Gradient points uphill, negative gradient points downhill.
+Following -∇f finds local minimum.
+
+Security implication: Models are only as good as optimization finds.
+Poor convergence = poor model = easier to attack.</p>
+<h3 class="sh3">Geometric Interpretation</h3>
+<h4 class="sh3">Walking Downhill</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Imagine walking down a mountain in fog (can only see local slope)</p>
+<h4 class="sh3">Strategy</h4>
+<p class="prose">Step in direction of steepest descent</p>
+<h4 class="sh3">Gradient</h4>
+<p class="prose">Tells you steepest direction</p>
+<h4 class="sh3">Learning Rate</h4>
+<p class="prose">How big a step to take</p>
+<h4 class="sh3">Convergence</h4>
+<p class="prose">Eventually reach valley bottom (local minimum)</p>
+<h4 class="sh3">Ball Rolling</h4>
+<h4 class="sh3">Analogy</h4>
+<p class="prose">Ball rolling down hill under gravity</p>
+<h4 class="sh3">Potential Energy</h4>
+<p class="prose">Loss function (higher = worse)</p>
+<h4 class="sh3">Velocity</h4>
+<p class="prose">-gradient (downhill direction)</p>
+<h4 class="sh3">Friction</h4>
+<p class="prose">Learning rate (controls speed)</p>
+<h4 class="sh3">Rest</h4>
+<p class="prose">Local minimum (gradient = 0)</p>
+<h3 class="sh3">Variants</h3>
+<h4 class="sh3">Batch Gradient Descent</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Use all training data to compute gradient</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">θ ← θ - α · (1/n)Σᵢ∇L(θ; xᵢ, yᵢ)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Accurate gradient, stable convergence</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">Slow for large datasets (compute full gradient each step)</p>
+<h4 class="sh3">Stochastic Gradient Descent</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Use one random sample to compute gradient</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">θ ← θ - α · ∇L(θ; xᵢ, yᵢ)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Fast, can escape local minima</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">Noisy gradient, erratic convergence</p>
+<h4 class="sh3">Mini Batch Gradient Descent</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Use small batch of samples</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">θ ← θ - α · (1/b)Σᵢ₌₁ᵇ∇L(θ; xᵢ, yᵢ)</p>
+<h4 class="sh3">Pros</h4>
+<p class="prose">Balanced: faster than batch, smoother than SGD</p>
+<h4 class="sh3">Cons</h4>
+<p class="prose">Must tune batch size</p>
+<h4 class="sh3">Typical Batch Size</h4>
+<p class="prose">32, 64, 128, 256</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Function to minimize: f(x, y) = (x-3)² + (y-2)²
+# Minimum at (3, 2)
+def f(x, y):
+    return (x - 3)**2 + (y - 2)**2
+
+def gradient(x, y):
+    df_dx = 2 * (x - 3)
+    df_dy = 2 * (y - 2)
+    return np.array([df_dx, df_dy])
+
+# Gradient descent
+def gradient_descent(start, learning_rate, num_iterations):
+    position = np.array(start, dtype=float)
+    history = [position.copy()]
+    
+    for i in range(num_iterations):
+        grad = gradient(*position)
+        position = position - learning_rate * grad
+        history.append(position.copy())
+        
+        # Check convergence
+        if np.linalg.norm(grad) &lt; 1e-6:
+            print(f&quot;Converged in {i+1} iterations&quot;)
+            break
+    
+    return np.array(history)
+
+# Test different learning rates
+start = [0.0, 0.0]
+
+# Too small: slow convergence
+path_slow = gradient_descent(start, learning_rate=0.1, num_iterations=100)
+
+# Just right: good convergence
+path_good = gradient_descent(start, learning_rate=0.5, num_iterations=100)
+
+# Too large: diverges or oscillates
+path_fast = gradient_descent(start, learning_rate=1.5, num_iterations=100)
+
+print(f&quot;\nLearning rate 0.1: {len(path_slow)} steps to [{path_slow[-1][0]:.4f}, {path_slow[-1][1]:.4f}]&quot;)
+print(f&quot;Learning rate 0.5: {len(path_good)} steps to [{path_good[-1][0]:.4f}, {path_good[-1][1]:.4f}]&quot;)
+print(f&quot;Learning rate 1.5: Final position [{path_fast[-1][0]:.4f}, {path_fast[-1][1]:.4f}]&quot;)
+```</code></pre>
+<h3 class="sh3">Real World Example</h3>
+<p class="prose">Training linear regression on 1000 samples:
+
+Model: ŷ = w₁x₁ + w₂x₂ + b
+Loss: MSE = (1/n)Σ(ŷᵢ - yᵢ)²
+
+Gradient descent:
+1. Initialize: w₁ = 0, w₂ = 0, b = 0
+
+2. For each iteration:
+   a. Compute predictions: ŷᵢ = w₁x₁ᵢ + w₂x₂ᵢ + b
+   b. Compute loss: L = mean((ŷ - y)²)
+   c. Compute gradients:
+      ∂L/∂w₁ = (2/n)Σ(ŷᵢ - yᵢ)x₁ᵢ
+      ∂L/∂w₂ = (2/n)Σ(ŷᵢ - yᵢ)x₂ᵢ
+      ∂L/∂b = (2/n)Σ(ŷᵢ - yᵢ)
+   d. Update parameters:
+      w₁ ← w₁ - α·(∂L/∂w₁)
+      w₂ ← w₂ - α·(∂L/∂w₂)
+      b ← b - α·(∂L/∂b)
+
+3. Repeat until loss stops decreasing
+
+Typical results:
+- Iterations: 100-1000
+- Learning rate: 0.01-0.1
+- Final loss: Close to minimum
+
+Security consideration: Adversary can manipulate training data to push 
+gradient descent toward bad local minimum (poisoning attack).</p>
+<h3 class="sh2">Local Vs Global Minima</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">Local minimum: Point where function is lower than nearby points
+Global minimum: Point where function is lowest everywhere
+
+Formally:
+- Local min at x*: f(x*) ≤ f(x) for all x near x*
+- Global min at x*: f(x*) ≤ f(x) for all x
+
+Gradient descent finds local minima (not guaranteed global).</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">In machine learning:
+- Simple models (linear): Usually convex (one global minimum)
+- Neural networks: Non-convex (many local minima, saddle points)
+
+Key insight: Deep learning works despite non-convexity. Local minima 
+are often &quot;good enough&quot; - they generalize well even if not optimal.
+
+Security implication: Adversarial training adds perturbations to escape 
+bad local minima. Attackers can exploit models stuck in poor minima.</p>
+<h3 class="sh3">Types Of Critical Points</h3>
+<h4 class="sh3">Local Minimum</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Valley - gradient = 0, loss lower than neighbors</p>
+<h4 class="sh3">Hessian</h4>
+<p class="prose">Positive definite (all eigenvalues &gt; 0)</p>
+<h4 class="sh3">Gd Behavior</h4>
+<p class="prose">Converges here, stops</p>
+<h4 class="sh3">Local Maximum</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Peak - gradient = 0, loss higher than neighbors</p>
+<h4 class="sh3">Hessian</h4>
+<p class="prose">Negative definite (all eigenvalues &lt; 0)</p>
+<h4 class="sh3">Gd Behavior</h4>
+<p class="prose">Unstable, will escape</p>
+<h4 class="sh3">Saddle Point</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Pass - gradient = 0, but not minimum or maximum</p>
+<h4 class="sh3">Hessian</h4>
+<p class="prose">Indefinite (mixed eigenvalues)</p>
+<h4 class="sh3">Gd Behavior</h4>
+<p class="prose">Can get stuck temporarily, then escapes</p>
+<h4 class="sh3">Prevalence</h4>
+<p class="prose">Common in high dimensions</p>
+<h4 class="sh3">Plateau</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Flat region - gradient ≈ 0 everywhere</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Slow convergence</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Momentum, adaptive learning rates</p>
+<h3 class="sh3">Convexity</h3>
+<h4 class="sh3">Convex Function</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Line between any two points lies above function</p>
+<h4 class="sh3">Property</h4>
+<p class="prose">Any local minimum is global minimum</p>
+<h4 class="sh3">Examples</h4>
+<p class="prose">f(x) = x², f(x) = e^x, f(x) = |x|</p>
+<h4 class="sh3">Ml Examples</h4>
+<p class="prose">Linear regression, logistic regression</p>
+<h4 class="sh3">Non Convex Function</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Has multiple local minima</p>
+<h4 class="sh3">Property</h4>
+<p class="prose">Local minima may not be global</p>
+<h4 class="sh3">Examples</h4>
+<p class="prose">f(x) = x⁴ - 5x² + 4x, neural networks</p>
+<h4 class="sh3">Challenge</h4>
+<p class="prose">Gradient descent depends on initialization</p>
+<h3 class="sh3">Visualization Code</h3>
+<pre class="code"><code>```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Non-convex function with multiple minima
+def f(x):
+    return x**4 - 5*x**2 + 4*x + 2
+
+def gradient(x):
+    return 4*x**3 - 10*x + 4
+
+# Plot function
+x = np.linspace(-3, 3, 1000)
+y = f(x)
+
+plt.figure(figsize=(12, 4))
+
+# Plot 1: Function shape
+plt.subplot(1, 2, 1)
+plt.plot(x, y, &#x27;b-&#x27;, linewidth=2)
+plt.axhline(y=0, color=&#x27;k&#x27;, linestyle=&#x27;--&#x27;, alpha=0.3)
+plt.xlabel(&#x27;x&#x27;)
+plt.ylabel(&#x27;f(x)&#x27;)
+plt.title(&#x27;Non-convex function (multiple local minima)&#x27;)
+plt.grid(True, alpha=0.3)
+
+# Mark critical points
+critical = [-1.85, 0.35, 1.50]  # Approximate
+for xc in critical:
+    plt.plot(xc, f(xc), &#x27;ro&#x27;, markersize=10)
+
+# Plot 2: Gradient descent from different starts
+plt.subplot(1, 2, 2)
+plt.plot(x, y, &#x27;b-&#x27;, linewidth=2, alpha=0.3)
+
+# Try different starting points
+starts = [-2.5, -0.5, 1.0]
+colors = [&#x27;r&#x27;, &#x27;g&#x27;, &#x27;m&#x27;]
+
+for start, color in zip(starts, colors):
+    position = start
+    path = [position]
+    
+    for _ in range(50):
+        grad = gradient(position)
+        position = position - 0.01 * grad
+        path.append(position)
+        
+        if abs(grad) &lt; 1e-3:
+            break
+    
+    path = np.array(path)
+    plt.plot(path, f(path), color=color, marker=&#x27;o&#x27;, 
+            markersize=4, label=f&#x27;Start: {start}&#x27;)
+
+plt.xlabel(&#x27;x&#x27;)
+plt.ylabel(&#x27;f(x)&#x27;)
+plt.title(&#x27;Gradient descent: Different starts → Different minima&#x27;)
+plt.legend()
+plt.grid(True, alpha=0.3)
+plt.tight_layout()
+```</code></pre>
+<h3 class="sh3">Real World Example</h3>
+<p class="prose">Neural network training (100,000 parameters):
+
+Loss landscape: Non-convex with countless local minima
+
+Experiment: Train same network 10 times with different initializations
+Result: Each run converges to different parameter values (different minima)
+Surprising: All achieve similar test accuracy (~95%)!
+
+Interpretation: Many local minima are equally good for generalization.
+The loss landscape has a &quot;basin&quot; of good solutions.
+
+Security implication: 
+- Adversarial training finds more robust minima (but slower convergence)
+- Attackers exploit models that converged to poor minima
+- Model ensemble (average multiple minima) more robust than single model
+
+This is why neural networks work: local minima are often good enough,
+and the network architecture biases us toward good basins.</p>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Name</h3>
+<p class="prose">Choosing Wrong Learning Rate</p>
+<h3 class="sh3">What It Looks Like</h3>
+<ul class="blist"><li>Loss oscillates wildly (learning rate too large)</li><li>Training takes forever (learning rate too small)</li><li>Loss gets stuck at plateau (need adaptive rate)</li></ul>
+<h3 class="sh3">Why People Do This</h3>
+<p class="prose">Learning rate is the most sensitive hyperparameter, but there&#x27;s no formula 
+to compute the &quot;correct&quot; value. People either guess badly or use default 
+values that don&#x27;t fit their problem.</p>
+<h3 class="sh3">Consequences</h3>
+<h4 class="sh3">Too Large</h4>
+<h4 class="sh3">Symptoms</h4>
+<p class="prose">Loss oscillates, increases, or nan/inf</p>
+<h4 class="sh3">Cause</h4>
+<p class="prose">Steps overshoot minimum, bounce between sides</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">α=10 when optimal is α=0.01</p>
+<h4 class="sh3">Too Small</h4>
+<h4 class="sh3">Symptoms</h4>
+<p class="prose">Very slow convergence, gets stuck at plateaus</p>
+<h4 class="sh3">Cause</h4>
+<p class="prose">Tiny steps make negligible progress</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">α=0.00001 when optimal is α=0.1</p>
+<h4 class="sh3">Fixed Rate</h4>
+<h4 class="sh3">Symptoms</h4>
+<p class="prose">Fast start, slow finish (or vice versa)</p>
+<h4 class="sh3">Cause</h4>
+<p class="prose">Optimal rate changes during training</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Learning rate scheduling</p>
+<h3 class="sh3">How To Avoid</h3>
+<p class="prose">Learning rate selection strategy:
+
+1. Start with common defaults:
+   - SGD: 0.01 to 0.1
+   - Adam: 0.001 (most common)
+   - For your problem, try: 0.1, 0.01, 0.001
+
+2. Plot loss curve for first 100 iterations:
+   - Smooth decrease → good rate
+   - Oscillating → too large, reduce by 10×
+   - Flat → too small, increase by 10×
+
+3. Use learning rate schedule:
+   - Step decay: reduce by 10× every N epochs
+   - Exponential decay: α = α₀ × decay^epoch
+   - Cosine annealing: smooth decrease
+
+4. Use adaptive optimizers (Adam, RMSprop):
+   - Automatically adjust per-parameter learning rates
+   - More robust than fixed learning rate</p>
+<h3 class="sh3">Code Example</h3>
+<pre class="code"><code>```python
+import numpy as np
+
+def gradient_descent_with_monitoring(f, grad, x0, learning_rate, max_iter=1000):
+    &quot;&quot;&quot;Gradient descent with loss tracking&quot;&quot;&quot;
+    x = x0
+    losses = []
+    
+    for i in range(max_iter):
+        loss = f(x)
+        losses.append(loss)
+        
+        # Check for problems
+        if np.isnan(loss) or np.isinf(loss):
+            print(f&quot;Iteration {i}: Loss is {loss}! Learning rate too large?&quot;)
+            break
+        
+        # Update
+        g = grad(x)
+        x = x - learning_rate * g
+        
+        # Check convergence
+        if np.linalg.norm(g) &lt; 1e-6:
+            print(f&quot;Converged in {i+1} iterations&quot;)
+            break
+        
+        # Warn if stuck
+        if i &gt; 100 and losses[-1] &gt; 0.99 * losses[-50]:
+            print(f&quot;Warning: Slow progress. Learning rate too small?&quot;)
+    
+    return x, losses
+
+# Try different learning rates
+f = lambda x: (x - 3)**2
+grad = lambda x: 2 * (x - 3)
+
+for lr in [10.0, 1.0, 0.1, 0.01]:
+    print(f&quot;\nLearning rate: {lr}&quot;)
+    x_final, losses = gradient_descent_with_monitoring(f, grad, 0.0, lr)
+    print(f&quot;Final x: {x_final:.6f}, Final loss: {losses[-1]:.6f}&quot;)
+```</code></pre>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Name</h3>
+<p class="prose">Not Checking Gradient Correctness</p>
+<h3 class="sh3">What It Looks Like</h3>
+<ul class="blist"><li>Implemented backpropagation, training doesn&#x27;t work</li><li>Loss decreases initially then plateaus early</li><li>Model learns slowly or converges to poor solution</li></ul>
+<h3 class="sh3">Why People Do This</h3>
+<p class="prose">Deriving gradients by hand is error-prone. One sign flip, one forgotten 
+chain rule term, and gradients are wrong. People assume their math is 
+correct without verification.</p>
+<h3 class="sh3">Consequences</h3>
+<h4 class="sh3">Wrong Gradients</h4>
+<h4 class="sh3">Symptoms</h4>
+<p class="prose">Training fails, loss doesn&#x27;t decrease properly</p>
+<h4 class="sh3">Debugging</h4>
+<p class="prose">Hours/days finding the error</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Implemented gradient incorrectly, off by factor of 2</p>
+<h4 class="sh3">Real Cost</h4>
+<p class="prose">3 days debugging vs 5 minutes gradient checking</p>
+<h3 class="sh3">How To Avoid</h3>
+<p class="prose">Always use gradient checking (numerical vs analytical):
+
+1. Compute analytical gradient (your implementation)
+2. Compute numerical gradient (finite differences)
+3. Compare: should match to ~1e-5 or better
+4. Only trust analytical gradient if numerical check passes
+
+Numerical gradient formula:
+∂f/∂θᵢ ≈ (f(θ + εeᵢ) - f(θ - εeᵢ)) / (2ε)
+
+where eᵢ is unit vector in i-th direction, ε = 1e-5</p>
+<h3 class="sh3">Code Example</h3>
+<pre class="code"><code>```python
+import numpy as np
+
+def gradient_check(f, grad, x, eps=1e-5):
+    &quot;&quot;&quot;
+    Compare analytical gradient vs numerical approximation
+    
+    f: function to differentiate
+    grad: analytical gradient function
+    x: point to check
+    eps: finite difference step size
+    &quot;&quot;&quot;
+    analytical = grad(x)
+    numerical = np.zeros_like(x)
+    
+    # Compute numerical gradient for each dimension
+    for i in range(len(x)):
+        x_plus = x.copy()
+        x_minus = x.copy()
+        
+        x_plus[i] += eps
+        x_minus[i] -= eps
+        
+        numerical[i] = (f(x_plus) - f(x_minus)) / (2 * eps)
+    
+    # Compare
+    difference = np.linalg.norm(analytical - numerical)
+    relative_error = difference / (np.linalg.norm(analytical) + np.linalg.norm(numerical))
+    
+    print(&quot;Gradient Check:&quot;)
+    print(f&quot;  Analytical: {analytical}&quot;)
+    print(f&quot;  Numerical:  {numerical}&quot;)
+    print(f&quot;  Difference: {difference:.10f}&quot;)
+    print(f&quot;  Relative error: {relative_error:.10f}&quot;)
+    
+    if relative_error &lt; 1e-5:
+        print(&quot;  ✓ PASS: Gradients match!&quot;)
+    else:
+        print(&quot;  ✗ FAIL: Gradients don&#x27;t match! Check your math.&quot;)
+    
+    return relative_error &lt; 1e-5
+
+# Test on simple function: f(x) = x₁² + 2x₁x₂ + x₂²
+f = lambda x: x[0]**2 + 2*x[0]*x[1] + x[1]**2
+grad = lambda x: np.array([2*x[0] + 2*x[1], 2*x[0] + 2*x[1]])
+
+x_test = np.array([1.0, 2.0])
+gradient_check(f, grad, x_test)
+
+# Test with wrong gradient (deliberate error)
+grad_wrong = lambda x: np.array([2*x[0], 2*x[1]])  # Forgot the 2x₁x₂ term!
+gradient_check(f, grad_wrong, x_test)  # Should fail
+```</code></pre>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Name</h3>
+<p class="prose">Ignoring Gradient Explosion/Vanishing</p>
+<h3 class="sh3">What It Looks Like</h3>
+<ul class="blist"><li>Gradients become nan or inf (explosion)</li><li>Gradients become 0 (vanishing)</li><li>Deep networks don&#x27;t train (gradients die in early layers)</li></ul>
+<h3 class="sh3">Why People Do This</h3>
+<p class="prose">In deep networks, gradients are products of many derivatives (chain rule).
+If derivatives consistently &gt; 1, product explodes. If &lt; 1, product vanishes.
+
+People don&#x27;t monitor gradient magnitudes during training.</p>
+<h3 class="sh3">Consequences</h3>
+<h4 class="sh3">Explosion</h4>
+<h4 class="sh3">Cause</h4>
+<p class="prose">Repeated multiplication by large numbers</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Weights become nan/inf, training crashes</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Derivatives ≈ 10, after 10 layers: 10^10</p>
+<h4 class="sh3">Vanishing</h4>
+<h4 class="sh3">Cause</h4>
+<p class="prose">Repeated multiplication by small numbers</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Early layers don&#x27;t learn, gradients ≈ 0</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Derivatives ≈ 0.1, after 10 layers: 0.1^10 = 1e-10</p>
+<h3 class="sh3">How To Avoid</h3>
+<p class="prose">Gradient stability techniques:
+
+1. Gradient clipping (explosion):
+   if ||gradient|| &gt; threshold:
+       gradient = threshold × gradient / ||gradient||
+
+2. Proper initialization (vanishing):
+   - Xavier/Glorot: scale weights by √(1/n_in)
+   - He initialization: scale by √(2/n_in)
+
+3. Batch normalization (both):
+   - Normalizes activations, stabilizes gradients
+
+4. Activation functions (vanishing):
+   - ReLU instead of sigmoid (gradient 1 when active)
+   - Avoids saturation
+
+5. Residual connections (vanishing):
+   - Skip connections allow gradient flow
+
+6. Monitor gradients:
+   - Plot gradient norms during training
+   - Alert if outside [1e-6, 1e3] range</p>
+<h3 class="sh3">Code Example</h3>
+<pre class="code"><code>```python
+import numpy as np
+
+def clip_gradients(gradients, max_norm=5.0):
+    &quot;&quot;&quot;Clip gradient norm to prevent explosion&quot;&quot;&quot;
+    norm = np.linalg.norm(gradients)
+    if norm &gt; max_norm:
+        gradients = max_norm * gradients / norm
+        print(f&quot;Clipped gradients (norm was {norm:.2f})&quot;)
+    return gradients
+
+# Simulate gradient flow through deep network
+def gradient_flow_simulation(depth, derivative_magnitude):
+    &quot;&quot;&quot;
+    Simulate gradient backprop through &#x27;depth&#x27; layers
+    Each layer multiplies gradient by derivative_magnitude
+    &quot;&quot;&quot;
+    gradient = 1.0  # Output gradient
+    
+    for layer in range(depth):
+        gradient *= derivative_magnitude
+        print(f&quot;Layer {depth - layer}: gradient = {gradient:.2e}&quot;)
+        
+        if abs(gradient) &gt; 1e10:
+            print(&quot;⚠ EXPLOSION!&quot;)
+            break
+        if abs(gradient) &lt; 1e-10:
+            print(&quot;⚠ VANISHING!&quot;)
+            break
+    
+    return gradient
+
+print(&quot;Gradient Explosion (derivative = 2.0):&quot;)
+gradient_flow_simulation(depth=20, derivative_magnitude=2.0)
+
+print(&quot;\nGradient Vanishing (derivative = 0.5):&quot;)
+gradient_flow_simulation(depth=20, derivative_magnitude=0.5)
+
+print(&quot;\nStable (derivative = 1.0):&quot;)
+gradient_flow_simulation(depth=20, derivative_magnitude=1.0)
+```</code></pre>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Machine learning is optimization via calculus - models adjust parameters by following negative gradients to minimize loss</li><li>Chain rule enables backpropagation - gradients flow from output to input through layers, each multiplication applying chain rule</li><li>Gradient points uphill, negative gradient downhill - gradient descent iteratively steps in -∇L direction toward local minimum</li><li>Local minima are often good enough - despite non-convexity, deep learning finds minima that generalize well</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Always gradient check your implementations - numerical vs analytical comparison catches math errors in minutes vs days of debugging</li><li>Start with common learning rates then tune - try 0.1, 0.01, 0.001 for SGD or 0.001 for Adam, plot loss curve to diagnose</li><li>Monitor gradient norms during training - clip if exploding (&gt;1e3), adjust initialization if vanishing (&lt;1e-6)</li><li>Use adaptive optimizers for robustness - Adam adjusts learning rates automatically, more forgiving than vanilla SGD</li></ul>
+<h3 class="sh2">Common Pitfalls Summary</h3>
+<ul class="blist"><li>Wrong learning rate breaks everything - too large causes oscillation/divergence, too small causes slow/stuck training</li><li>Gradients can explode or vanish in deep networks - clip exploding gradients, use proper initialization for vanishing</li><li>Never trust analytical gradients without numerical check - one sign error or missed chain rule term silently breaks training</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Gradient descent doesn&#x27;t guarantee global optimum, but local minima are usually good enough for generalization</li><li>Adversarial attacks use the same gradients as training but compute ∂L/∂input instead of ∂L/∂weights</li><li>Calculus is the engine of learning - every model update is a gradient step, every backprop is chain rule</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Probability and Statistics - understand uncertainty, confidence, and evaluation metrics</li><li>Connect to security: Chapter 10 will show how adversaries use gradients for adversarial example generation</li><li>Practice: Section 8 implements logistic regression with gradient descent from scratch using these concepts</li></ul>
+</article>

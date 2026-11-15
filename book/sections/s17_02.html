@@ -1,0 +1,396 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 17 · Section 2 · ~7 pages</div>
+<h1>Detection Metrics: TPR, FPR, Precision, and Recall</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The first measurement family: the metrics that quantify how well a detector detects -- true-positive rate, false-positive rate, precision, and recall -- computed from a confusion matrix per detector and at the suite level, governed by the precision-recall trade-off that the detector threshold controls, and dominated, for the rare attacks a security suite actually faces, by the base-rate problem that makes precision depend far more on the false-positive rate than on the true-positive rate.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">The improvement loop&#x27;s first stage is measurement, and its first question is the security question: how well does the suite detect? This section answers it with the four detection metrics and, more importantly, with the relationships between them that make tuning a reasoned choice rather than a guess. It exists to establish the objective the entire rest of the chapter optimises -- curation, retraining, and A/B testing all serve to move these numbers -- and to confront the one fact that most often defeats a detection deployment in practice: the base-rate problem.
+
+The four metrics are simple to define and easy to compute; the section does that and moves quickly to what actually matters. First, precision and recall trade off, and the detector&#x27;s threshold is the dial that moves them: raise the threshold and precision rises while recall falls, lower it and the reverse, so choosing a threshold is choosing a point on that trade-off rather than finding a single correct value. Second, and decisively, the base-rate problem. Real attacks are rare -- a tiny fraction of traffic -- and when the positive class is that rare, precision is dominated by the false-positive rate applied to the overwhelming benign majority, not by the true-positive rate on the handful of real attacks. A detector with a superb 95% true-positive rate and a seemingly-tiny 1% false-positive rate can still produce alerts that are more than 90% false, because 1% of an enormous benign volume dwarfs 95% of a rare attack. This is why &#x27;reduce false positives&#x27; is the governing optimisation target, and this section makes it calculable so a tuning decision can be justified with arithmetic.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 17.02 builds the detection-quality half of the loop&#x27;s measurement stage, the objective that curation (17.04), retraining (17.05), and A/B testing (17.06) all work to improve. It computes the metrics the Chapter 1 Section 1.11 evaluation framework defined, now against live and labelled detection data, and it establishes the base-rate reasoning that makes false-positive reduction the chapter&#x27;s binding constraint. Section 17.03 measures the other half -- performance.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 17 Section 17.01: the improvement loop and the optimisation targets these metrics quantify</li><li>Chapter 1 Section 1.11: the evaluation metrics -- precision, recall, TPR, FPR -- defined here for detection</li><li>Chapter 15 Section 15.01: the detector verdicts (allow, flag, block) collapsed to the alert binary</li><li>Chapter 16 Section 16.06: the analyst dispositions that supply the ground-truth labels</li><li>Familiarity with the confusion matrix and conditional probability (Bayes&#x27; rule)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Four Metrics and the Confusion Matrix</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Every detection metric is a ratio over four counts, and the four counts are the confusion matrix. Take a set of detections for which the truth is known -- each was really an attack or really benign -- and compare the truth against what the detector did, collapsing its verdict to a binary: flag and block are an alert, allow is not. Four outcomes result. A true positive is an attack the detector alerted on: caught. A false negative is an attack the detector let pass: missed. A false positive is benign traffic the detector alerted on: a false alarm. A true negative is benign traffic the detector let pass: correctly ignored. Every detection falls into exactly one cell, and the whole of detection quality is a question of their ratios.
+
+The four metrics read those ratios from different angles. True-positive rate -- also called recall -- is TP / (TP + FN): of the real attacks, the fraction caught. False-positive rate is FP / (FP + TN): of the benign traffic, the fraction falsely alerted. Precision is TP / (TP + FP): of the alerts raised, the fraction that were real. Recall and TPR are the same number under two names, because the security literature and the machine-learning literature named it independently -- recall pairs with precision, TPR pairs with FPR on the ROC curve. The costs differ by cell, and naming them is the point of the matrix: a false negative is a missed attack, potentially a breach; a false positive is wasted analyst time and, in volume, alert fatigue that gets the whole detector ignored. The metrics let those costs be traded deliberately instead of accidentally.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Precision-Recall Trade-off and the Threshold</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Precision and recall pull against each other, and the detector&#x27;s decision threshold is the dial that sets where the pull balances. A detector produces a score; the threshold is the score above which it alerts. Lower the threshold and the detector alerts more readily: it catches more real attacks (recall rises) but also catches more benign traffic that scored moderately (precision falls). Raise the threshold and it alerts only on the strongest signals: the alerts it does raise are more often real (precision rises) but the subtler attacks slip under the bar (recall falls). There is no threshold that maximises both, because they are in tension by construction -- the same move that admits more true positives admits more false positives.
+
+This reframes &#x27;tuning a detector&#x27; as &#x27;choosing a point on the precision-recall curve&#x27;, and the right point is a policy decision, not a mathematical one. A detector guarding against a catastrophic attack may accept low precision to push recall as high as possible -- better to review many false alarms than miss the one real breach. A detector whose alerts are expensive to investigate may hold out for high precision and accept that it misses the marginal cases. The F1 score, the harmonic mean of precision and recall, collapses the trade-off to a single number when neither side should dominate, which is useful for comparing two candidates but is not itself the goal -- a deployment that genuinely values recall over precision should not be talked out of it by an F1 that treats them equally. The threshold is where the optimisation targets of 17.01 become concrete: moving it is exactly how a tuner trades false positives against missed attacks.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Base-Rate Problem: Why Rare Attacks Change Everything</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Here is the fact that undoes more detection deployments than any other, and it is entirely a consequence of attacks being rare. Suppose a detector has an excellent true-positive rate of 95% and a false-positive rate of just 1% -- numbers that sound like a strong detector by any ordinary reading. Now deploy it against traffic where one request in a thousand is a real attack. Out of a million requests, a thousand are attacks and the detector catches 950 of them. But 999,000 are benign, and 1% of those -- 9,990 -- are falsely alerted. The analyst now faces 950 real alerts buried in 9,990 false ones: precision is 950 / (950 + 9,990), under 9%. More than nine in ten alerts are false, from a detector whose headline rates looked excellent.
+
+The reason is that precision depends on the false-positive rate multiplied by the benign volume, and when attacks are rare the benign volume is almost everything. The true-positive rate operates on the tiny attack slice; the false-positive rate operates on the vast benign remainder. So at low base rates, precision is governed by the false-positive rate, and the true-positive rate barely matters to it -- you cannot fix a precision problem by catching a higher fraction of a rare class. This is Bayes&#x27; rule in operational dress, and its consequence is stark: for a security suite facing rare attacks, driving the false-positive rate very low is not a nicety, it is the only path to alerts worth reading. This is precisely why 17.01 named false-positive reduction the governing target. The section&#x27;s deliverable makes the relation calculable in both directions: given a base rate and the two rates, compute the precision an analyst will actually experience; and given a target precision, compute the maximum false-positive rate that can achieve it -- so a tuning goal like &#x27;90% precision on a 1-in-10,000 attack&#x27; becomes a concrete FPR ceiling to engineer toward, rather than an aspiration.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Per-Detector and Suite-Level Measurement</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The metrics are computed at two levels, and each answers a different operational question. Per-detector metrics isolate one detector&#x27;s quality: they are what a tuner reads to decide whether the injection detector&#x27;s threshold needs moving, or whether the PII scanner&#x27;s false-positive rate has crept up. They attribute quality to a component, so the tuning has a specific target. Suite-level metrics roll the detectors up into one view: of all the attacks the suite faced, what fraction did any detector catch; of all the benign traffic, what fraction did some detector falsely alert on. The suite view is what an operations lead reads to judge the whole system&#x27;s health, and it can differ sharply from the per-detector views -- a suite can have a higher recall than any single detector, because different detectors catch different attacks, while its false-positive rate is worse than any single detector&#x27;s, because every detector&#x27;s false alarms accumulate.
+
+Both levels are computed the same way, over the same confusion-matrix machinery, differing only in how detections are grouped. The deliverable produces per-detector metrics and a suite roll-up together, so a tuner never has to choose between the component view and the system view -- both are always available, and the discrepancy between them is itself informative. When suite recall exceeds every detector&#x27;s recall, the detectors are complementary and the ensemble is doing its job; when suite precision is far below every detector&#x27;s precision, the false-alarm burden is additive and the suite may be over-alerting even though no single detector looks bad. Measuring at one level only hides exactly the effect that matters most for tuning a suite as opposed to a detector.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Live Traffic, Labelled Sets, and the Metrics as Objective</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Detection metrics are measured against two kinds of ground truth, and the difference matters for what each measurement can be trusted to say. A curated labelled set -- a fixed collection of detections whose true nature is known -- gives a clean, repeatable measurement: run the detector over it, compare to the labels, read the metrics. It is the right tool for comparing candidates on equal footing and for regression testing a change, because the data does not move. But a labelled set is a snapshot, and it drifts from live traffic exactly as a training set does; a detector that scores well on last quarter&#x27;s labelled set may be quietly failing on this week&#x27;s traffic. So the metrics are also measured on live traffic, using the analyst dispositions of Chapter 16 as the labels -- the same dispositions that curation (17.04) collects. Live measurement is noisier and its labels arrive with a lag, but it measures the detector where it actually runs, against the distribution it actually faces.
+
+Whichever the source, these metrics are the objective the improvement loop optimises. Curation exists to produce better labelled data; retraining exists to move these numbers on that data; A/B testing exists to prove one detector&#x27;s metrics beat another&#x27;s on live traffic. Every subsequent stage of the chapter is, in the end, an attempt to improve a number defined in this section -- usually to push the true-positive rate up while holding the false-positive rate down against the base-rate pressure that makes the latter so hard. That is why the section comes first among the measurement stages and why its deliverable is built to compute the metrics identically on live and labelled data: the loop needs one consistent definition of &#x27;better&#x27;, measured the same way before a change and after it, or it cannot tell improvement from noise. With the detection objective defined, Section 17.03 measures the performance side.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Confusion Matrix and the Cost of Each Cell</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Every detection falls in one cell. The metrics are ratios over these four counts; the costs differ, so the trade-offs must be deliberate.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Cell</li><li>Truth</li><li>Detector</li><li>Operational cost</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>True positive (TP)</li><li>Attack</li><li>Alerted</li><li>None -- the attack was caught</li></ul>
+<ul class="blist"><li>False negative (FN)</li><li>Attack</li><li>Quiet</li><li>A missed attack -- potentially a breach</li></ul>
+<ul class="blist"><li>False positive (FP)</li><li>Benign</li><li>Alerted</li><li>Wasted analyst time; in volume, alert fatigue</li></ul>
+<ul class="blist"><li>True negative (TN)</li><li>Benign</li><li>Quiet</li><li>None -- correctly ignored</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Four Detection Metrics</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Each metric reads the confusion matrix from a different angle. Recall and TPR are the same number under two names.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Metric</li><li>Formula</li><li>Answers</li><li>Optimisation target</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>True-positive rate (recall)</li><li>TP / (TP + FN)</li><li>Of real attacks, fraction caught</li><li>Toward 95%+</li></ul>
+<ul class="blist"><li>False-positive rate</li><li>FP / (FP + TN)</li><li>Of benign traffic, fraction falsely alerted</li><li>Driven very low</li></ul>
+<ul class="blist"><li>Precision</li><li>TP / (TP + FP)</li><li>Of alerts raised, fraction that are real</li><li>High (governed by FPR)</li></ul>
+<ul class="blist"><li>F1</li><li>2PR / (P + R)</li><li>Single number for the trade-off</li><li>Compare candidates only</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Base-Rate Problem, Worked</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The same detector -- 95% TPR, 1% FPR -- against different attack base rates. Precision collapses as attacks get rarer, because FPR acts on the benign majority.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Attack base rate</li><li>Real attacks per 1M</li><li>True alerts</li><li>False alerts</li><li>Precision</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>10% (1 in 10)</li><li>100,000</li><li>95,000</li><li>9,000</li><li>~91%</li></ul>
+<ul class="blist"><li>1% (1 in 100)</li><li>10,000</li><li>9,500</li><li>9,900</li><li>~49%</li></ul>
+<ul class="blist"><li>0.1% (1 in 1000)</li><li>1,000</li><li>950</li><li>9,990</li><li>~9%</li></ul>
+<ul class="blist"><li>0.01% (1 in 10000)</li><li>100</li><li>95</li><li>9,999</li><li>~1%</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Per-Detector versus Suite-Level Metrics</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Both levels are computed together. The discrepancy between them is informative: complementary detectors raise suite recall; additive false alarms lower suite precision.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>View</li><li>Answers</li><li>Read by</li><li>Characteristic effect</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Per-detector</li><li>One detector&#x27;s quality in isolation</li><li>A tuner targeting a component</li><li>The direct tuning target</li></ul>
+<ul class="blist"><li>Suite-level</li><li>The whole system as one</li><li>An operations lead</li><li>Recall can exceed any detector; FP burden is additive</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection Metrics and the Base-Rate Calculator</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">detection_metrics.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Computes the four detection metrics from a confusion matrix built over labelled detections: DetectionMetrics exposes TPR, FPR, precision, recall, and F1; compute_metrics and compute_suite_metrics produce per-detector and suite-level views from the same machinery. The base-rate half is the section&#x27;s centre: BaseRateScenario computes the precision an analyst will actually experience at a given base rate, and fpr_required_for_precision inverts the relation to give the maximum FPR that meets a precision target -- turning &#x27;reduce false positives&#x27; into an engineerable number.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library dataclasses, enum, and typing only. LabelledDetection collapses the verdict to the alert binary (flag/block alert, allow does not); the label is the analyst-dispositioned ground truth. The __main__ block computes metrics over a two-detector set, then demonstrates the base-rate collapse (95% TPR, 1% FPR at a 0.1% base rate yields under 10% precision) and verifies the FPR-for-precision inversion round-trips. In the suite these labels come from the Chapter 16 dispositions via the 17.04 curator.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># detection_metrics.py
+# Section 17.02: Detection Metrics -- TPR, FPR, Precision, Recall
+# 20260121 | AI Security Mastery -- Chapter 17 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The metrics that quantify how well a detector detects. A detection is scored
+# against a known label -- was this actually an attack? -- and the four counts
+# that result (true/false positive, true/false negative) yield the rates that
+# tuning optimises: true-positive rate, false-positive rate, precision, recall.
+# This module computes them per detector and at the suite level, on a labelled
+# set or a stream of dispositioned live detections, and it makes the base-rate
+# problem -- why a rare attack demands a very low false-positive rate -- explicit
+# and calculable, because that is the fact that governs every tuning decision.
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, List, Optional
+
+
+class Verdict(Enum):
+    ALLOW = &#x27;allow&#x27;
+    FLAG = &#x27;flag&#x27;
+    BLOCK = &#x27;block&#x27;
+
+
+# --- A labelled detection: what the detector said vs. what was true ---------
+# The label is the ground truth -- established by an analyst disposition (17.04)
+# or a curated test set. alerted collapses the verdict to a binary: flag and
+# block are alerts, allow is not. The metrics are computed over these.
+
+@dataclass
+class LabelledDetection:
+    detector: str
+    verdict: Verdict
+    is_attack: bool                          # ground truth: was this actually an attack?
+
+    @property
+    def alerted(self) -&gt; bool:
+        return self.verdict in (Verdict.FLAG, Verdict.BLOCK)
+
+
+# --- The confusion matrix ---------------------------------------------------
+# Four counts, each with a different operational cost. The whole of detection
+# quality is a question of their ratios.
+
+@dataclass
+class ConfusionMatrix:
+    tp: int = 0                              # attack, alerted -- caught
+    fp: int = 0                              # benign, alerted -- false alarm
+    tn: int = 0                              # benign, quiet -- correctly ignored
+    fn: int = 0                              # attack, quiet -- missed
+
+    @property
+    def total(self) -&gt; int:
+        return self.tp + self.fp + self.tn + self.fn
+
+    def add(self, d: LabelledDetection) -&gt; None:
+        if d.is_attack and d.alerted:
+            self.tp += 1
+        elif d.is_attack and not d.alerted:
+            self.fn += 1
+        elif not d.is_attack and d.alerted:
+            self.fp += 1
+        else:
+            self.tn += 1
+
+
+def _safe_div(num: float, den: float) -&gt; float:
+    return num / den if den else 0.0
+
+
+# --- The four rates ---------------------------------------------------------
+# Each is a ratio over the confusion matrix. The docstrings state what each
+# answers and what trades against it, because the tuning decisions in this
+# chapter are made in these terms.
+
+@dataclass
+class DetectionMetrics:
+    detector: str
+    matrix: ConfusionMatrix
+
+    @property
+    def true_positive_rate(self) -&gt; float:
+        &#x27;&#x27;&#x27;TPR = recall = TP / (TP + FN). Of the real attacks, the fraction
+        caught. The optimisation target pushes this toward 0.95+.&#x27;&#x27;&#x27;
+        return _safe_div(self.matrix.tp, self.matrix.tp + self.matrix.fn)
+
+    @property
+    def false_positive_rate(self) -&gt; float:
+        &#x27;&#x27;&#x27;FPR = FP / (FP + TN). Of the benign traffic, the fraction falsely
+        alerted. The base-rate problem makes this the number that governs
+        precision on rare attacks.&#x27;&#x27;&#x27;
+        return _safe_div(self.matrix.fp, self.matrix.fp + self.matrix.tn)
+
+    @property
+    def precision(self) -&gt; float:
+        &#x27;&#x27;&#x27;Precision = TP / (TP + FP). Of the alerts raised, the fraction that
+        were real. This is what an analyst experiences as alert quality.&#x27;&#x27;&#x27;
+        return _safe_div(self.matrix.tp, self.matrix.tp + self.matrix.fp)
+
+    @property
+    def recall(self) -&gt; float:
+        &#x27;&#x27;&#x27;Recall = TPR. Named twice because both names are standard: recall in
+        the precision-recall pairing, TPR in the ROC pairing.&#x27;&#x27;&#x27;
+        return self.true_positive_rate
+
+    @property
+    def f1(self) -&gt; float:
+        &#x27;&#x27;&#x27;Harmonic mean of precision and recall -- a single number for the
+        trade-off, useful for comparing candidates when neither dominates.&#x27;&#x27;&#x27;
+        p, r = self.precision, self.recall
+        return _safe_div(2 * p * r, p + r)
+
+    def as_dict(self) -&gt; Dict[str, float]:
+        return {&#x27;detector&#x27;: self.detector, &#x27;tpr&#x27;: round(self.true_positive_rate, 4),
+                &#x27;fpr&#x27;: round(self.false_positive_rate, 4), &#x27;precision&#x27;: round(self.precision, 4),
+                &#x27;recall&#x27;: round(self.recall, 4), &#x27;f1&#x27;: round(self.f1, 4),
+                &#x27;tp&#x27;: self.matrix.tp, &#x27;fp&#x27;: self.matrix.fp,
+                &#x27;tn&#x27;: self.matrix.tn, &#x27;fn&#x27;: self.matrix.fn}
+
+
+def compute_metrics(detections: List[LabelledDetection], detector: str) -&gt; DetectionMetrics:
+    &#x27;&#x27;&#x27;Compute the detection metrics for one detector from its labelled detections.&#x27;&#x27;&#x27;
+    m = ConfusionMatrix()
+    for d in detections:
+        if d.detector == detector:
+            m.add(d)
+    return DetectionMetrics(detector, m)
+
+
+def compute_suite_metrics(detections: List[LabelledDetection]) -&gt; Dict[str, DetectionMetrics]:
+    &#x27;&#x27;&#x27;Compute per-detector metrics plus a suite-level roll-up. The suite entry
+    treats a detection as caught if the detector that saw it alerted, so it
+    measures the suite as a whole rather than any single detector.&#x27;&#x27;&#x27;
+    detectors = sorted({d.detector for d in detections})
+    out: Dict[str, DetectionMetrics] = {}
+    for name in detectors:
+        out[name] = compute_metrics(detections, name)
+    suite = ConfusionMatrix()
+    for d in detections:
+        suite.add(d)
+    out[&#x27;__suite__&#x27;] = DetectionMetrics(&#x27;__suite__&#x27;, suite)
+    return out
+
+
+# --- The base-rate problem --------------------------------------------------
+# The single most important fact in detection metrics: when attacks are rare,
+# precision is dominated by the false-positive rate, not the true-positive rate.
+# This makes it calculable so a tuning decision can be reasoned about rather
+# than guessed.
+
+@dataclass
+class BaseRateScenario:
+    attack_base_rate: float                  # fraction of traffic that is a real attack
+    true_positive_rate: float                # detector&#x27;s TPR (recall)
+    false_positive_rate: float               # detector&#x27;s FPR
+
+    def expected_precision(self) -&gt; float:
+        &#x27;&#x27;&#x27;Precision implied by the base rate and the two rates, via Bayes.
+        With rare attacks, even a tiny FPR floods the alerts with false ones.&#x27;&#x27;&#x27;
+        p = self.attack_base_rate
+        tp = self.true_positive_rate * p
+        fp = self.false_positive_rate * (1 - p)
+        return _safe_div(tp, tp + fp)
+
+    def alerts_per_true_positive(self) -&gt; float:
+        &#x27;&#x27;&#x27;How many alerts an analyst reviews per real attack found. The
+        felt cost of low precision.&#x27;&#x27;&#x27;
+        prec = self.expected_precision()
+        return _safe_div(1.0, prec)
+
+
+def fpr_required_for_precision(target_precision: float, attack_base_rate: float,
+                               true_positive_rate: float) -&gt; float:
+    &#x27;&#x27;&#x27;Invert the base-rate relation: the maximum FPR that still achieves a
+    target precision at a given base rate and TPR. This is the number a tuning
+    decision actually needs -- &quot;to hit 90% precision on a 1-in-10000 attack, the
+    FPR must be below this&quot;.&#x27;&#x27;&#x27;
+    p = attack_base_rate
+    if target_precision &lt;= 0 or target_precision &gt;= 1:
+        return 0.0
+    # precision = TPR*p / (TPR*p + FPR*(1-p))  -&gt;  solve for FPR
+    tp = true_positive_rate * p
+    # tp / (tp + fpr*(1-p)) = target  -&gt;  fpr = tp*(1-target) / (target*(1-p))
+    return _safe_div(tp * (1 - target_precision), target_precision * (1 - p))
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # A small labelled set across two detectors.
+    dets = []
+    # prompt_injection: 8 real attacks (7 caught, 1 missed), 2 false alarms out of 90 benign
+    for i in range(7):
+        dets.append(LabelledDetection(&#x27;prompt_injection&#x27;, Verdict.BLOCK, True))
+    dets.append(LabelledDetection(&#x27;prompt_injection&#x27;, Verdict.ALLOW, True))   # missed
+    for i in range(2):
+        dets.append(LabelledDetection(&#x27;prompt_injection&#x27;, Verdict.FLAG, False))  # false alarm
+    for i in range(88):
+        dets.append(LabelledDetection(&#x27;prompt_injection&#x27;, Verdict.ALLOW, False))
+    # pii_scanner: 5 attacks all caught, 5 false alarms
+    for i in range(5):
+        dets.append(LabelledDetection(&#x27;pii_scanner&#x27;, Verdict.BLOCK, True))
+    for i in range(5):
+        dets.append(LabelledDetection(&#x27;pii_scanner&#x27;, Verdict.FLAG, False))
+    for i in range(90):
+        dets.append(LabelledDetection(&#x27;pii_scanner&#x27;, Verdict.ALLOW, False))
+
+    metrics = compute_suite_metrics(dets)
+    for name, m in metrics.items():
+        d = m.as_dict()
+        print(f&quot;{name:18} tpr={d[&#x27;tpr&#x27;]:.3f} fpr={d[&#x27;fpr&#x27;]:.3f} &quot;
+              f&quot;prec={d[&#x27;precision&#x27;]:.3f} f1={d[&#x27;f1&#x27;]:.3f}&quot;)
+
+    pi = metrics[&#x27;prompt_injection&#x27;]
+    assert pi.matrix.tp == 7 and pi.matrix.fn == 1 and pi.matrix.fp == 2
+    assert abs(pi.true_positive_rate - 7/8) &lt; 1e-9
+    assert abs(pi.precision - 7/9) &lt; 1e-9
+
+    print(&#x27;\n--- base-rate problem ---&#x27;)
+    # A strong detector -- 95% TPR, 1% FPR -- against a rare attack.
+    scen = BaseRateScenario(attack_base_rate=0.001, true_positive_rate=0.95,
+                            false_positive_rate=0.01)
+    print(f&#x27;base rate 0.1%, TPR 95%, FPR 1%  -&gt; precision {scen.expected_precision():.3f}, &#x27;
+          f&#x27;{scen.alerts_per_true_positive():.1f} alerts per real attack&#x27;)
+    assert scen.expected_precision() &lt; 0.10   # a 1% FPR is catastrophic at this base rate
+
+    need = fpr_required_for_precision(0.90, attack_base_rate=0.001, true_positive_rate=0.95)
+    print(f&#x27;to reach 90% precision at 0.1% base rate, FPR must be below {need:.6f}&#x27;)
+    # verify the inversion round-trips
+    check = BaseRateScenario(0.001, 0.95, need)
+    assert abs(check.expected_precision() - 0.90) &lt; 1e-6
+    print(&#x27;\ndetection metrics + base-rate calculus: ok&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Judging a detector by its true-positive rate alone</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A high TPR sounds like a good detector -- it catches the attacks -- and it is the number a detector&#x27;s authors are proudest of.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The detector can still be unusable: with rare attacks, a great TPR paired with a small FPR produces alerts that are mostly false, and the true-positive rate cannot fix that.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Judge the detector by precision as experienced at the real base rate, which is governed by the false-positive rate, and drive the FPR low enough that the alerts are worth reading.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating threshold selection as finding one correct value</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">It feels like there should be an optimal threshold, a single best answer the tuning is searching for.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The chosen threshold optimises F1 or some default and ignores the deployment&#x27;s actual cost trade-off, over-alerting a high-cost detector or under-catching a catastrophic one.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Choose a point on the precision-recall trade-off that matches the deployment&#x27;s costs -- high recall where a miss is catastrophic, high precision where investigation is expensive -- rather than a single default.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Ignoring the base rate when reasoning about precision</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The detector&#x27;s TPR and FPR are intrinsic and easy to quote; the base rate is a property of the traffic and easy to forget.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Precision is dramatically overestimated -- a detector that looks strong in the lab floods analysts with false alerts in production, because the lab base rate did not match the rare-attack reality.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Always compute expected precision at the real attack base rate, and set the FPR ceiling from the precision target and that base rate, so the deployment&#x27;s precision is engineered rather than assumed.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Measuring detection metrics only on a fixed labelled set</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A labelled set gives clean, repeatable numbers, so it becomes the sole measurement and the live picture is never checked.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The labelled set drifts from live traffic exactly as a training set does, so the reported metrics describe a distribution the detector no longer faces, hiding a live regression.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Measure on the labelled set for clean comparison and regression testing, and also on live traffic via analyst dispositions, so the detector is judged where it actually runs.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Section 17.02 builds the detection-quality half of the loop&#x27;s measurement stage: the four metrics that say how well a detector detects, computed from a confusion matrix. True-positive rate (recall) is the fraction of real attacks caught; false-positive rate is the fraction of benign traffic falsely alerted; precision is the fraction of alerts that are real; F1 collapses precision and recall to one number for comparing candidates. The threshold is the dial that sets the precision-recall trade-off -- lower it for more recall at the cost of precision, raise it for the reverse -- so tuning a detector means choosing a point on that trade-off to match the deployment&#x27;s costs, not finding one correct value. The section&#x27;s centre is the base-rate problem: because real attacks are rare, precision is dominated by the false-positive rate acting on the vast benign majority, not by the true-positive rate on the rare attacks, so a detector with a superb 95% TPR and a small 1% FPR can still produce alerts that are over 90% false at a 0.1% base rate. This is why false-positive reduction is the governing optimisation target, and the deliverable makes it calculable in both directions -- the precision an analyst will experience at a given base rate, and the maximum FPR a precision target permits -- so tuning goals become engineerable FPR ceilings. Metrics are computed per detector, for tuning a component, and at the suite level, for judging the whole; the discrepancy between them is informative. They are measured on both a fixed labelled set, for clean comparison, and on live traffic via analyst dispositions, for the distribution the detector actually faces -- and they are the objective the whole improvement loop optimises.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>The four detection metrics are ratios over the confusion matrix; recall and TPR are the same number named twice</li><li>The detector threshold sets the precision-recall trade-off, so tuning is choosing a point on it to match deployment costs</li><li>The base-rate problem makes precision depend on the false-positive rate for rare attacks -- a great TPR cannot rescue it</li><li>The deliverable makes the base-rate relation calculable both ways, turning a precision target into an FPR ceiling to engineer toward</li><li>Metrics are computed per detector and at the suite level, and the discrepancy between the two views is itself informative</li><li>Metrics are measured on labelled sets for clean comparison and on live traffic for the real distribution, and are the loop&#x27;s objective</li></ul>
+<h2 class="sh1">Preview Section 17 03</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Performance Monitoring: Latency, Throughput, and Errors</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 17.03 builds the second measurement family: the performance metrics that quantify how well the suite runs. It monitors latency with percentiles, throughput against provisioned capacity, and error rate per detector over rolling windows, tracks the sub-50ms P99 budget continuously, and detects a regression in the warning band before it breaches the budget -- building on the Chapter 14 golden signals rather than replacing them, and feeding the tuning decisions where a recall gain must be weighed against its latency cost.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 17 Section 17.01: the improvement loop and optimisation targets these metrics quantify</li><li>Chapter 1 Section 1.11: the evaluation metrics defined generally, applied here to detection</li><li>Chapter 15 Section 15.01: the detector verdicts collapsed to the alert binary</li><li>Chapter 16 Section 16.06: the analyst dispositions that supply the ground-truth labels</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 17.03: the performance metrics, the other half of the measurement stage</li><li>Section 17.04: dataset curation, which supplies the live labels these metrics use</li><li>Section 17.05: retraining, which is judged by whether it improves these metrics</li><li>Section 17.06: A/B testing, which proves one detector&#x27;s metrics beat another&#x27;s on live traffic</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>detection-metrics</li><li>tpr</li><li>fpr</li><li>precision</li><li>recall</li><li>confusion-matrix</li><li>precision-recall-tradeoff</li><li>threshold</li><li>base-rate-problem</li><li>suite-level-metrics</li><li>f1-score</li><li>tuning-objective</li><li>analyst-disposition</li><li>part-4-chapter-3</li></ul>
+</article>

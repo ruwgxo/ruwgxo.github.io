@@ -1,0 +1,765 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 5 · ~6 pages</div>
+<h1>Data Representation and Features</h1>
+<div class="tags"><span class="tag">feature-engineering</span><span class="tag">data-representation</span><span class="tag">feature-vectors</span><span class="tag">text-features</span><span class="tag">encoding</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Machine learning models don&#x27;t understand emails, log files, or network traffic. 
+They understand numbers. Specifically, they understand vectors - ordered lists 
+of numbers. Your job as an ML engineer is to convert messy real-world data 
+(text, timestamps, IP addresses, user behavior) into meaningful numerical 
+representations that models can learn from.
+
+This transformation from raw data to feature vectors is called feature engineering, 
+and it&#x27;s often the difference between a model that works and one that fails. 
+Good features make patterns obvious to the model. Bad features hide patterns 
+or introduce noise.
+
+For security, this matters because adversaries exploit your feature representations. 
+They craft inputs that look normal in feature space but are malicious in reality. 
+They find blind spots where your features don&#x27;t capture important signals. They 
+reverse-engineer your features to evade detection.
+
+This section teaches you how to represent different types of data as features, 
+what makes a good feature, and how to avoid common pitfalls that create security 
+vulnerabilities.</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security context:
+- Spam filter: Must convert email text → feature vector
+- Intrusion detection: Must convert network packets → feature vector
+- Malware detection: Must convert binary/behavior → feature vector
+- Prompt injection detection: Must convert user input → feature vector
+
+Poor feature representation:
+- Model can&#x27;t learn patterns (high error rate)
+- Adversaries find evasion techniques (false negatives)
+- Features leak sensitive information (privacy violations)
+- Model is biased or unfair (discrimination)
+
+Good feature representation:
+- Captures relevant patterns clearly
+- Robust to adversarial manipulation
+- Preserves privacy when needed
+- Generalizes to new data</p>
+<h2 class="sh1">Feature Vectors</h2>
+<h3 class="sh2">What Is Feature Vector</h3>
+<p class="prose">A feature vector is an ordered list of numbers representing one data sample.
+
+Format: x = [x₁, x₂, x₃, ..., xₙ]
+
+Where:
+- x is the feature vector
+- Each xᵢ is a feature (a measurable property)
+- n is the number of features (dimensionality)
+
+Each row in your dataset is one feature vector.
+Each column is one feature across all samples.</p>
+<h3 class="sh2">Simple Example</h3>
+<h3 class="sh3">Problem</h3>
+<p class="prose">Classify email as spam or not spam</p>
+<h3 class="sh3">Raw Email</h3>
+<p class="prose">Subject: Congratulations! You won $1,000,000!!!
+Body: Click here to claim your prize NOW!!!
+From: winner@prizes.com</p>
+<h3 class="sh3">Features To Extract</h3>
+<ul class="blist"><li>Number of exclamation marks</li><li>Number of capital letters</li><li>Email length (characters)</li><li>Contains word &#x27;prize&#x27;</li><li>Contains word &#x27;click&#x27;</li><li>Sender domain is common provider (gmail, yahoo)</li></ul>
+<h3 class="sh3">Feature Vector</h3>
+<p class="prose">[15, 12, 87, 1, 1, 0]</p>
+<h3 class="sh3">Interpretation</h3>
+<ul class="blist"><li>x₁ = 15 exclamation marks</li><li>x₂ = 12 capital letters</li><li>x₃ = 87 characters total</li><li>x₄ = 1 (contains &#x27;prize&#x27;)</li><li>x₅ = 1 (contains &#x27;click&#x27;)</li><li>x₆ = 0 (not common email provider)</li></ul>
+<h3 class="sh2">Numpy Representation</h3>
+<pre class="code"><code>import numpy as np
+
+# Single email represented as feature vector
+email_features = np.array([15, 12, 87, 1, 1, 0])
+
+# Multiple emails represented as matrix (rows = samples, columns = features)
+dataset = np.array([
+    [15, 12, 87, 1, 1, 0],  # Email 1 (spam)
+    [2,  3,  45, 0, 0, 1],  # Email 2 (not spam)
+    [20, 18, 120, 1, 1, 0], # Email 3 (spam)
+    [1,  2,  60, 0, 0, 1],  # Email 4 (not spam)
+])
+
+# Shape: (n_samples, n_features)
+print(dataset.shape)  # (4, 6) - 4 emails, 6 features each
+
+# Access individual features
+exclamation_counts = dataset[:, 0]  # First column (feature 1)
+print(exclamation_counts)  # [15, 2, 20, 1]</code></pre>
+<h3 class="sh2">Feature Space Intuition</h3>
+<p class="prose">Think of feature space as a multi-dimensional space where each feature is an axis.
+
+For 2 features (exclamation marks, capital letters):
+- 2D space: x-axis = exclamation marks, y-axis = capital letters
+- Each email is a point in this space
+- Spam emails cluster in one region (high exclamation, high capitals)
+- Normal emails cluster elsewhere (low exclamation, low capitals)
+
+Model&#x27;s job: Draw boundary separating spam region from normal region
+
+For 6 features: 6-dimensional space (hard to visualize, but same concept)
+For 1000 features: 1000-dimensional space (common in text classification)</p>
+<h2 class="sh1">Types Of Features</h2>
+<h3 class="sh2">Numerical Features</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Already numbers - can use directly or with minimal processing</p>
+<h3 class="sh3">Continuous</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Can take any value in a range (real numbers)</p>
+<h4 class="sh3">Examples</h4>
+<ul class="blist"><li>Email length: 45.7 characters</li><li>API response time: 123.4 milliseconds</li><li>File size: 2.5 MB</li><li>User session duration: 18.3 minutes</li></ul>
+<h4 class="sh3">Properties</h4>
+<ul class="blist"><li>Infinite possible values between any two points</li><li>Can compute mean, median, standard deviation</li><li>Can measure distance between values</li></ul>
+<h4 class="sh3">Numpy Example</h4>
+<p class="prose"># Continuous numerical features
+response_times = np.array([120.5, 45.3, 200.1, 89.7])
+file_sizes = np.array([2.5, 1.8, 10.2, 0.5])  # MB
+
+# Can do arithmetic operations
+avg_response = np.mean(response_times)
+max_file_size = np.max(file_sizes)</p>
+<h3 class="sh3">Discrete</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Can only take specific integer values</p>
+<h4 class="sh3">Examples</h4>
+<ul class="blist"><li>Number of failed login attempts: 3</li><li>Port number: 443</li><li>HTTP status code: 404</li><li>Number of exclamation marks: 5</li></ul>
+<h4 class="sh3">Properties</h4>
+<ul class="blist"><li>Countable, distinct values</li><li>Often non-negative integers</li><li>Can still compute mean, but median might be more meaningful</li></ul>
+<h4 class="sh3">Numpy Example</h4>
+<p class="prose"># Discrete numerical features
+failed_logins = np.array([0, 2, 5, 1, 0, 3])
+http_codes = np.array([200, 404, 500, 200, 403])
+
+# Count frequency of each value
+unique, counts = np.unique(http_codes, return_counts=True)
+print(dict(zip(unique, counts)))  # {200: 2, 403: 1, 404: 1, 500: 1}</p>
+<h3 class="sh2">Categorical Features</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Discrete labels or categories - must be encoded as numbers</p>
+<h3 class="sh3">Nominal</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Categories with no inherent order</p>
+<h4 class="sh3">Examples</h4>
+<ul class="blist"><li>Email provider: [gmail, yahoo, outlook, other]</li><li>HTTP method: [GET, POST, PUT, DELETE]</li><li>IP country: [US, UK, CN, RU]</li><li>File type: [exe, dll, pdf, docx]</li></ul>
+<h4 class="sh3">Encoding Problem</h4>
+<p class="prose">Can&#x27;t use category names directly. Model needs numbers.
+
+Bad idea: Assign arbitrary numbers
+- gmail=0, yahoo=1, outlook=2, other=3
+
+Problem: Implies ordering (gmail &lt; yahoo &lt; outlook)
+Model might learn fake pattern: &quot;outlook (2) is between gmail (0) and other (3)&quot;
+This is nonsense - categories have no inherent order!</p>
+<h4 class="sh3">Solution One Hot Encoding</h4>
+<p class="prose">Create binary feature for each category (1 = yes, 0 = no)
+
+Original: [gmail, yahoo, gmail, outlook]
+
+One-hot encoded:
+is_gmail   is_yahoo   is_outlook   is_other
+1          0          0            0          # gmail
+0          1          0            0          # yahoo
+1          0          0            0          # gmail
+0          0          1            0          # outlook</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code># One-hot encoding from scratch
+def one_hot_encode(categories):
+    unique_cats = np.unique(categories)
+    n_samples = len(categories)
+    n_categories = len(unique_cats)
+    
+    # Create mapping: category -&gt; index
+    cat_to_idx = {cat: idx for idx, cat in enumerate(unique_cats)}
+    
+    # Initialize one-hot matrix
+    one_hot = np.zeros((n_samples, n_categories))
+    
+    # Fill in 1s where category matches
+    for i, cat in enumerate(categories):
+        idx = cat_to_idx[cat]
+        one_hot[i, idx] = 1
+    
+    return one_hot, unique_cats
+
+# Example
+email_providers = np.array([&#x27;gmail&#x27;, &#x27;yahoo&#x27;, &#x27;gmail&#x27;, &#x27;outlook&#x27;])
+encoded, categories = one_hot_encode(email_providers)
+
+print(encoded)
+# [[1. 0. 0.]   # gmail
+#  [0. 0. 1.]   # yahoo
+#  [1. 0. 0.]   # gmail
+#  [0. 1. 0.]]  # outlook</code></pre>
+<h3 class="sh3">Ordinal</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Categories with meaningful order</p>
+<h4 class="sh3">Examples</h4>
+<ul class="blist"><li>Threat severity: [low, medium, high, critical]</li><li>User role: [guest, user, admin, superadmin]</li><li>Alert priority: [P4, P3, P2, P1]</li><li>Confidence: [low, medium, high]</li></ul>
+<h4 class="sh3">Encoding Approach</h4>
+<p class="prose">Can use integer encoding because order matters:
+low=0, medium=1, high=2, critical=3
+
+Model can learn: critical (3) &gt; high (2) &gt; medium (1)
+This makes sense because ordering is meaningful.</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<p class="prose"># Ordinal encoding
+severities = np.array([&#x27;low&#x27;, &#x27;high&#x27;, &#x27;medium&#x27;, &#x27;critical&#x27;, &#x27;low&#x27;])
+
+# Define ordering
+severity_map = {&#x27;low&#x27;: 0, &#x27;medium&#x27;: 1, &#x27;high&#x27;: 2, &#x27;critical&#x27;: 3}
+
+# Encode
+encoded = np.array([severity_map[s] for s in severities])
+print(encoded)  # [0, 2, 1, 3, 0]</p>
+<h4 class="sh3">Warning</h4>
+<p class="prose">Only use ordinal encoding when order is truly meaningful.
+If unsure, use one-hot encoding (safer default).</p>
+<h3 class="sh2">Binary Features</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">True/False, Yes/No, Present/Absent - encode as 1/0</p>
+<h3 class="sh3">Examples</h3>
+<ul class="blist"><li>Email contains &#x27;viagra&#x27;: 1 (yes) or 0 (no)</li><li>User is admin: 1 (yes) or 0 (no)</li><li>HTTPS enabled: 1 (yes) or 0 (no)</li><li>File is encrypted: 1 (yes) or 0 (no)</li></ul>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose"># Binary features
+contains_viagra = np.array([1, 0, 0, 1, 0])  # 1=yes, 0=no
+is_admin = np.array([0, 0, 1, 0, 0])
+https_enabled = np.array([1, 1, 0, 1, 1])
+
+# Stack into feature matrix
+features = np.column_stack([contains_viagra, is_admin, https_enabled])
+print(features)
+# [[1 0 1]
+#  [0 0 1]
+#  [0 1 0]
+#  [1 0 1]
+#  [0 0 1]]</p>
+<h3 class="sh3">Tip</h3>
+<p class="prose">Binary features are already in perfect format for ML - no transformation needed</p>
+<h3 class="sh2">Text Features</h3>
+<h3 class="sh3">Challenge</h3>
+<p class="prose">Text is unstructured - can&#x27;t use directly as features.
+
+Need to convert: &quot;Free prize! Click now!&quot; → [x₁, x₂, ..., xₙ]</p>
+<h3 class="sh3">Approach 1 Bag Of Words</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Represent text as word counts, ignoring order.
+
+Vocabulary: All unique words across all documents
+Feature: Count of each vocabulary word in this document</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Documents</h4>
+<ul class="blist"><li>free prize click</li><li>prize click now</li><li>free click click</li></ul>
+<h4 class="sh3">Vocabulary</h4>
+<p class="prose">[&#x27;click&#x27;, &#x27;free&#x27;, &#x27;now&#x27;, &#x27;prize&#x27;]  # alphabetically sorted</p>
+<h4 class="sh3">Feature Vectors</h4>
+<h4 class="sh3">Doc1</h4>
+<p class="prose">[1, 1, 0, 1]  # 1 click, 1 free, 0 now, 1 prize</p>
+<h4 class="sh3">Doc2</h4>
+<p class="prose">[1, 0, 1, 1]  # 1 click, 0 free, 1 now, 1 prize</p>
+<h4 class="sh3">Doc3</h4>
+<p class="prose">[2, 1, 0, 0]  # 2 clicks, 1 free, 0 now, 0 prize</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code># Bag-of-words from scratch
+def bag_of_words(documents):
+    # Tokenize: split into words, lowercase
+    tokenized = [doc.lower().split() for doc in documents]
+    
+    # Build vocabulary: all unique words
+    vocabulary = sorted(set(word for doc in tokenized for word in doc))
+    vocab_to_idx = {word: idx for idx, word in enumerate(vocabulary)}
+    
+    # Count words in each document
+    n_docs = len(documents)
+    n_vocab = len(vocabulary)
+    bow = np.zeros((n_docs, n_vocab))
+    
+    for i, doc in enumerate(tokenized):
+        for word in doc:
+            idx = vocab_to_idx[word]
+            bow[i, idx] += 1
+    
+    return bow, vocabulary
+
+# Example
+docs = [&#x27;free prize click&#x27;, &#x27;prize click now&#x27;, &#x27;free click click&#x27;]
+bow_matrix, vocab = bag_of_words(docs)
+
+print(&quot;Vocabulary:&quot;, vocab)
+print(&quot;BoW matrix:&quot;)
+print(bow_matrix)
+# [[1. 1. 0. 1.]
+#  [1. 0. 1. 1.]
+#  [2. 1. 0. 0.]]</code></pre>
+<h4 class="sh3">Limitations</h4>
+<ul class="blist"><li>Loses word order: &#x27;not bad&#x27; and &#x27;bad not&#x27; look identical</li><li>Ignores context: &#x27;free&#x27; in &#x27;free trial&#x27; vs &#x27;virus-free&#x27;</li><li>Vocabulary can be huge (10k-100k words)</li><li>Most features are zero (sparse matrix)</li></ul>
+<h3 class="sh3">Approach 2 Tf Idf</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">TF-IDF = Term Frequency × Inverse Document Frequency
+
+Intuition: Weight words by importance
+- Common words (the, and, is) → low weight
+- Rare but informative words (viagra, malware) → high weight
+
+TF: How often word appears in THIS document
+IDF: How rare word is across ALL documents</p>
+<h4 class="sh3">Formulas</h4>
+<h4 class="sh3">Tf</h4>
+<p class="prose">TF(word, doc) = count(word in doc) / total_words_in_doc</p>
+<h4 class="sh3">Idf</h4>
+<p class="prose">IDF(word) = log(total_documents / documents_containing_word)</p>
+<h4 class="sh3">Tfidf</h4>
+<p class="prose">TF-IDF(word, doc) = TF × IDF</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Corpus</h4>
+<p class="prose">3 documents total</p>
+<h4 class="sh3">Word</h4>
+<p class="prose">&#x27;free&#x27;</p>
+<h4 class="sh3">Document 1</h4>
+<h4 class="sh3">Text</h4>
+<p class="prose">&#x27;free prize free click&#x27;  (4 words)</p>
+<h4 class="sh3">Tf</h4>
+<p class="prose">2/4 = 0.5  (&#x27;free&#x27; appears 2 times out of 4)</p>
+<h4 class="sh3">All Documents</h4>
+<h4 class="sh3">Doc1</h4>
+<p class="prose">contains &#x27;free&#x27;</p>
+<h4 class="sh3">Doc2</h4>
+<p class="prose">doesn&#x27;t contain &#x27;free&#x27;</p>
+<h4 class="sh3">Doc3</h4>
+<p class="prose">contains &#x27;free&#x27;</p>
+<h4 class="sh3">Idf</h4>
+<p class="prose">log(3/2) = log(1.5) = 0.405</p>
+<h4 class="sh3">Tfidf</h4>
+<p class="prose">0.5 × 0.405 = 0.203</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Common words (appear in all documents) → IDF near 0 → TF-IDF near 0
+Rare words (appear in few documents) → IDF high → TF-IDF high
+
+This downweights common words and emphasizes distinctive words.</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code># TF-IDF from scratch (simplified)
+def tf_idf(documents):
+    # First get bag-of-words
+    bow, vocab = bag_of_words(documents)
+    n_docs, n_vocab = bow.shape
+    
+    # Compute TF: normalize by document length
+    doc_lengths = bow.sum(axis=1, keepdims=True)
+    tf = bow / (doc_lengths + 1e-10)  # avoid division by zero
+    
+    # Compute IDF: log(total_docs / docs_containing_word)
+    docs_with_word = (bow &gt; 0).sum(axis=0)
+    idf = np.log(n_docs / (docs_with_word + 1))
+    
+    # Compute TF-IDF
+    tfidf = tf * idf
+    
+    return tfidf, vocab
+
+# Example
+docs = [
+    &#x27;free prize click&#x27;,
+    &#x27;prize click now&#x27;,
+    &#x27;free click click&#x27;
+]
+tfidf_matrix, vocab = tf_idf(docs)
+
+print(&quot;Vocabulary:&quot;, vocab)
+print(&quot;TF-IDF matrix:&quot;)
+print(tfidf_matrix)</code></pre>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Automatically identifies important words without manual feature engineering</p>
+<h2 class="sh1">Feature Engineering Principles</h2>
+<h3 class="sh2">What Makes Good Feature</h3>
+<h3 class="sh3">Informative</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Feature helps distinguish between classes</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Spam detection</p>
+<h4 class="sh3">Good Feature</h4>
+<p class="prose">Number of times &#x27;viagra&#x27; appears (spams have high count)</p>
+<h4 class="sh3">Bad Feature</h4>
+<p class="prose">Email contains &#x27;@&#x27; symbol (all emails have this)</p>
+<h4 class="sh3">Test</h4>
+<p class="prose">Compute correlation between feature and label. High correlation = informative.</p>
+<h3 class="sh3">Independent</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Features provide different information (not redundant)</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Fraud detection</p>
+<h4 class="sh3">Redundant</h4>
+<ul class="blist"><li>Transaction amount in USD</li><li>Transaction amount in cents (same info, different units)</li></ul>
+<h4 class="sh3">Better</h4>
+<ul class="blist"><li>Transaction amount</li><li>Transaction frequency (different info)</li></ul>
+<h4 class="sh3">Issue</h4>
+<p class="prose">Redundant features waste computation and can confuse some models.
+Feature selection helps remove redundancy (covered in Section 23).</p>
+<h3 class="sh3">Robust</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Feature stable under noise and adversarial manipulation</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Malware detection</p>
+<h4 class="sh3">Fragile</h4>
+<p class="prose">Exact function name &#x27;evil_function&#x27; (easily renamed)</p>
+<h4 class="sh3">Robust</h4>
+<p class="prose">Number of suspicious API calls (harder to hide)</p>
+<h4 class="sh3">Security Critical</h4>
+<p class="prose">Adversaries actively try to evade detection by manipulating features.
+Use features that capture behavior, not surface characteristics.</p>
+<h3 class="sh3">Efficient</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Feature cheap to compute in production</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Expensive</h4>
+<p class="prose">Deep static analysis of binary (takes 30 seconds)</p>
+<h4 class="sh3">Cheap</h4>
+<p class="prose">File size and entropy (takes milliseconds)</p>
+<h4 class="sh3">Tradeoff</h4>
+<p class="prose">More features = better accuracy but slower inference.
+Production systems need &lt;50ms response time.
+Feature selection critical for real-time detection.</p>
+<h3 class="sh2">Domain Knowledge Importance</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Best features come from understanding the problem domain.
+Generic features (word counts) work okay.
+Domain-specific features (malicious API sequences) work much better.</p>
+<h3 class="sh3">Example Spam Detection</h3>
+<h4 class="sh3">Generic Features</h4>
+<ul class="blist"><li>Word counts (bag-of-words)</li><li>Email length</li><li>Number of punctuation marks</li></ul>
+<h4 class="sh3">Domain Specific Features</h4>
+<ul class="blist"><li>Email sent from recently registered domain (&lt; 30 days old)</li><li>Sender IP in known spam blocklist</li><li>Contains money amounts ($, €, £) combined with urgency words</li><li>Reply-to address different from sender address</li><li>Contains shortened URLs (bit.ly, tinyurl)</li></ul>
+<h4 class="sh3">Why Domain Features Better</h4>
+<p class="prose">They encode security knowledge: &quot;Spammers use fresh domains to avoid blocklists&quot;
+Machine learning discovers: &quot;Correlation between domain age and spam&quot;
+
+Domain features give model a head start with expert knowledge.</p>
+<h3 class="sh3">Example Intrusion Detection</h3>
+<h4 class="sh3">Generic Features</h4>
+<ul class="blist"><li>Packet size</li><li>Number of packets</li><li>Source/destination IPs</li></ul>
+<h4 class="sh3">Domain Specific Features</h4>
+<ul class="blist"><li>Port scan pattern: Many destination ports, same source IP</li><li>Beaconing: Periodic connections to same external IP</li><li>Volumetric anomaly: 10x normal traffic for this host</li><li>Protocol violation: HTTP request with SQL commands</li><li>Lateral movement: Admin access attempts across many hosts</li></ul>
+<h4 class="sh3">Encoding Attacker Behavior</h4>
+<p class="prose">These features capture known attack patterns from MITRE ATT&amp;CK.
+Model learns variations and combinations of these patterns.</p>
+<h3 class="sh2">Curse Of Dimensionality</h3>
+<h3 class="sh3">Problem</h3>
+<p class="prose">As number of features increases, data becomes sparse in feature space.
+
+Intuition:
+- 1D: 10 points cover line well
+- 2D: 10 points leave gaps in plane
+- 3D: 10 points barely cover cube
+- 1000D: 10 points are lost in hypercube</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">More features ≠ better performance
+
+With limited data:
+- Model can&#x27;t learn reliable patterns
+- Overfitting becomes severe
+- Need exponentially more data as features increase</p>
+<h3 class="sh3">Rule Of Thumb</h3>
+<p class="prose">Need at least 10 samples per feature (preferably 100+)</p>
+<h3 class="sh3">Example</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">1000 features, 500 training samples</p>
+<h4 class="sh3">Ratio</h4>
+<p class="prose">0.5 samples per feature</p>
+<h4 class="sh3">Conclusion</h4>
+<p class="prose">Severe overfitting guaranteed</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Feature selection - reduce to top 50 features</p>
+<h3 class="sh3">Mitigation Strategies</h3>
+<ul class="blist"><li>Feature selection: Keep only most informative features</li><li>Dimensionality reduction: PCA, autoencoder (Section 22)</li><li>Regularization: Penalize complex models (Section 14)</li><li>Collect more data: Always the best solution</li></ul>
+<h2 class="sh1">Practical Implementation</h2>
+<h3 class="sh2">Complete Feature Extractor</h3>
+<pre class="code"><code># Feature extraction toolkit for security logs
+import numpy as np
+from collections import Counter
+import re
+
+class FeatureExtractor:
+    &quot;&quot;&quot;
+    Extract features from security logs for ML classification
+    &quot;&quot;&quot;
+    
+    def __init__(self):
+        self.vocabulary = None
+        self.vocab_to_idx = None
+    
+    def extract_numerical_features(self, text):
+        &quot;&quot;&quot;Extract basic numerical features from text&quot;&quot;&quot;
+        features = {}
+        
+        # Length features
+        features[&#x27;length&#x27;] = len(text)
+        features[&#x27;word_count&#x27;] = len(text.split())
+        
+        # Character type counts
+        features[&#x27;uppercase_count&#x27;] = sum(1 for c in text if c.isupper())
+        features[&#x27;digit_count&#x27;] = sum(1 for c in text if c.isdigit())
+        features[&#x27;special_char_count&#x27;] = sum(1 for c in text if not c.isalnum() and not c.isspace())
+        
+        # Specific character counts
+        features[&#x27;exclamation_count&#x27;] = text.count(&#x27;!&#x27;)
+        features[&#x27;question_count&#x27;] = text.count(&#x27;?&#x27;)
+        features[&#x27;dollar_count&#x27;] = text.count(&#x27;$&#x27;)
+        
+        return features
+    
+    def extract_binary_features(self, text):
+        &quot;&quot;&quot;Extract binary (yes/no) features&quot;&quot;&quot;
+        features = {}
+        
+        # Suspicious keywords
+        suspicious_words = [&#x27;free&#x27;, &#x27;prize&#x27;, &#x27;click&#x27;, &#x27;winner&#x27;, &#x27;urgent&#x27;, 
+                           &#x27;viagra&#x27;, &#x27;loan&#x27;, &#x27;credit&#x27;, &#x27;cash&#x27;]
+        
+        for word in suspicious_words:
+            features[f&#x27;contains_{word}&#x27;] = int(word.lower() in text.lower())
+        
+        # Patterns
+        features[&#x27;has_url&#x27;] = int(bool(re.search(r&#x27;http[s]?://&#x27;, text)))
+        features[&#x27;has_email&#x27;] = int(bool(re.search(r&#x27;\b[\w.-]+@[\w.-]+\.\w+\b&#x27;, text)))
+        features[&#x27;has_phone&#x27;] = int(bool(re.search(r&#x27;\b\d{3}[-.]?\d{3}[-.]?\d{4}\b&#x27;, text)))
+        
+        return features
+    
+    def extract_categorical_features(self, metadata):
+        &quot;&quot;&quot;Extract and encode categorical features (one-hot)&quot;&quot;&quot;
+        features = {}
+        
+        # Example: Email provider (one-hot encoded)
+        provider = metadata.get(&#x27;email_provider&#x27;, &#x27;other&#x27;)
+        providers = [&#x27;gmail&#x27;, &#x27;yahoo&#x27;, &#x27;outlook&#x27;, &#x27;other&#x27;]
+        
+        for p in providers:
+            features[f&#x27;provider_{p}&#x27;] = int(provider == p)
+        
+        return features
+    
+    def fit_vocabulary(self, documents):
+        &quot;&quot;&quot;Build vocabulary from training documents&quot;&quot;&quot;
+        all_words = []
+        for doc in documents:
+            words = doc.lower().split()
+            all_words.extend(words)
+        
+        # Keep top N most frequent words
+        word_counts = Counter(all_words)
+        top_words = [word for word, count in word_counts.most_common(100)]
+        
+        self.vocabulary = sorted(top_words)
+        self.vocab_to_idx = {word: idx for idx, word in enumerate(self.vocabulary)}
+    
+    def extract_bow_features(self, text):
+        &quot;&quot;&quot;Extract bag-of-words features&quot;&quot;&quot;
+        if self.vocabulary is None:
+            raise ValueError(&quot;Must call fit_vocabulary first&quot;)
+        
+        words = text.lower().split()
+        bow = np.zeros(len(self.vocabulary))
+        
+        for word in words:
+            if word in self.vocab_to_idx:
+                idx = self.vocab_to_idx[word]
+                bow[idx] += 1
+        
+        return bow
+    
+    def extract_all_features(self, text, metadata=None):
+        &quot;&quot;&quot;Extract complete feature vector&quot;&quot;&quot;
+        all_features = []
+        
+        # Numerical features
+        num_features = self.extract_numerical_features(text)
+        all_features.extend(num_features.values())
+        
+        # Binary features
+        bin_features = self.extract_binary_features(text)
+        all_features.extend(bin_features.values())
+        
+        # Categorical features (if metadata provided)
+        if metadata:
+            cat_features = self.extract_categorical_features(metadata)
+            all_features.extend(cat_features.values())
+        
+        # Bag-of-words features (if vocabulary fitted)
+        if self.vocabulary:
+            bow = self.extract_bow_features(text)
+            all_features.extend(bow)
+        
+        return np.array(all_features)
+
+# Example usage
+extractor = FeatureExtractor()
+
+# Fit vocabulary on training data
+training_texts = [
+    &#x27;free prize click now&#x27;,
+    &#x27;meeting tomorrow at 2pm&#x27;,
+    &#x27;urgent winner claim prize&#x27;
+]
+extractor.fit_vocabulary(training_texts)
+
+# Extract features from new text
+new_text = &quot;Congratulations! You won a free prize! Click here NOW!&quot;
+features = extractor.extract_all_features(new_text)
+
+print(f&quot;Feature vector shape: {features.shape}&quot;)
+print(f&quot;First 10 features: {features[:10]}&quot;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Using raw categorical values as numbers</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Email providers: gmail=1, yahoo=2, outlook=3
+
+Problem: Model thinks outlook (3) = gmail (1) + yahoo (2)
+This is nonsense - categories don&#x27;t have arithmetic relationships.</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use one-hot encoding for nominal categories</p>
+<h3 class="sh3">Security Risk</h3>
+<p class="prose">Model learns spurious patterns based on arbitrary numbering.
+Adversary can exploit: Change provider from 1→3, evade detection.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Including target variable in features (data leakage)</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Predicting spam, but include feature: &quot;is_in_spam_folder&quot; (1/0)
+
+Problem: This feature is THE ANSWER. Of course spam is in spam folder!
+Model achieves 100% accuracy on training data but fails on new data.</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Only use features available at prediction time, BEFORE knowing answer.
+
+Rule: If you don&#x27;t have this feature when making real predictions, 
+don&#x27;t include it in training.</p>
+<h3 class="sh3">Security Risk</h3>
+<p class="prose">Model appears to work perfectly in testing but completely fails in production.
+Adversaries bypass &quot;trained&quot; detector because it never actually learned patterns.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Using feature values that leak sensitive information</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Predicting medical diagnosis using patient SSN as feature.
+
+Problem: SSN is unique identifier - model memorizes each patient.
+Zero generalization to new patients. Privacy violation.</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Remove direct identifiers. Use only medically relevant features.</p>
+<h3 class="sh3">Security Risk</h3>
+<p class="prose">Model stores training data in weights (memorization).
+Adversary can extract training data via model inversion attacks.
+Privacy laws (GDPR, HIPAA) violated.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Not handling missing values properly</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Feature: &quot;Time since last login&quot; (minutes)
+Missing value: -1 (user never logged in before)
+
+Problem: Model learns -1 is meaningful number, not missing indicator.
+Patterns corrupted by fake -1 values.</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Strategy 1: Separate binary feature &quot;has_logged_in_before&quot; (0/1)
+Strategy 2: Impute (fill) with median time for known values
+Strategy 3: Use separate model for users with/without login history</p>
+<h3 class="sh3">Implementation</h3>
+<pre class="code"><code># Handle missing values explicitly
+def handle_missing_time_since_login(values):
+    # Split into binary indicator + imputed value
+    has_value = (values &gt;= 0).astype(int)
+    
+    # Impute missing with median of known values
+    known_values = values[values &gt;= 0]
+    median_time = np.median(known_values) if len(known_values) &gt; 0 else 0
+    
+    imputed_values = np.where(values &gt;= 0, values, median_time)
+    
+    # Return both features
+    return has_value, imputed_values
+
+# Example
+times = np.array([30, 45, -1, 60, -1, 20])  # -1 = missing
+has_login, login_times = handle_missing_time_since_login(times)
+
+print(&quot;Has previous login:&quot;, has_login)  # [1 1 0 1 0 1]
+print(&quot;Time since login:&quot;, login_times)   # [30 45 40 60 40 20] (40 = median)</code></pre>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Adversarial Feature Manipulation</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Adversary crafts input to manipulate features</p>
+<h3 class="sh3">Example</h3>
+<h4 class="sh3">Detector</h4>
+<p class="prose">Spam filter using &#x27;viagra&#x27; count as feature</p>
+<h4 class="sh3">Attack</h4>
+<p class="prose">Replace &#x27;viagra&#x27; with &#x27;v1agra&#x27; or &#x27;v!agra&#x27;</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Feature value = 0, evades detection</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">Use robust features that capture behavior, not surface strings:
+- Bag-of-words with character n-grams (captures misspellings)
+- Embeddings (semantic similarity, not exact match)
+- Behavioral features (access patterns, not content)</p>
+<h3 class="sh2">Feature Inference Attack</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Adversary reverse-engineers your features from model behavior</p>
+<h3 class="sh3">Example</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Model triggers on emails with &#x27;prize&#x27; but not &#x27;reward&#x27;</p>
+<h4 class="sh3">Inference</h4>
+<p class="prose">Detector uses exact word match, not semantic similarity</p>
+<h4 class="sh3">Evasion</h4>
+<p class="prose">Use synonyms: &#x27;reward&#x27;, &#x27;bonus&#x27;, &#x27;gift&#x27; instead of &#x27;prize&#x27;</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">- Use semantic features (embeddings) instead of exact matches
+- Combine multiple features (harder to infer all)
+- Add noise to features (differential privacy)
+- Regularly retrain with adversarial examples</p>
+<h3 class="sh2">Privacy Leakage Through Features</h3>
+<h3 class="sh3">Risk</h3>
+<p class="prose">Features encode sensitive information that can be extracted</p>
+<h3 class="sh3">Example</h3>
+<h4 class="sh3">Feature</h4>
+<p class="prose">Email contains &#x27;cancer&#x27;, &#x27;medication&#x27;, &#x27;hospital&#x27;</p>
+<h4 class="sh3">Leakage</h4>
+<p class="prose">Binary features reveal medical information about user</p>
+<h4 class="sh3">Attack</h4>
+<p class="prose">Model inversion reconstructs original email from features</p>
+<h3 class="sh3">Mitigation</h3>
+<ul class="blist"><li>Avoid features that directly encode sensitive attributes</li><li>Use aggregated statistics instead of individual data points</li><li>Apply differential privacy: Add calibrated noise to features</li><li>Use homomorphic encryption for private features (advanced)</li></ul>
+<h3 class="sh2">Distribution Shift Via Poisoning</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Adversary injects data to shift feature distributions</p>
+<h3 class="sh3">Example</h3>
+<h4 class="sh3">Baseline</h4>
+<p class="prose">Average email length = 100 words</p>
+<h4 class="sh3">Attack</h4>
+<p class="prose">Inject 1000 spam emails with length = 10,000 words</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Model learns &#x27;long email = normal&#x27;, short spam evades</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Monitor feature distributions over time:
+- Track mean, median, std dev of each feature
+- Alert if distribution shifts significantly
+- Retrain with poisoned samples removed</p>
+<h3 class="sh3">Prevention</h3>
+<p class="prose">- Robust statistics: Use median instead of mean (resistant to outliers)
+- Outlier detection: Remove extreme feature values before training
+- Trusted data sources: Only train on verified samples</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Feature vectors convert real-world data to numbers ML models can process</li><li>One-hot encoding for nominal categories, ordinal encoding for ordered categories</li><li>Bag-of-words and TF-IDF convert text to numerical features</li><li>Good features are informative, independent, robust, and efficient to compute</li><li>Domain knowledge creates better features than generic statistics</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Build feature extraction pipelines for different data types (text, categorical, numerical)</li><li>Implement bag-of-words and TF-IDF from scratch in NumPy</li><li>Handle missing values explicitly with separate indicators or imputation</li><li>Avoid data leakage by only using features available at prediction time</li><li>Monitor feature distributions to detect poisoning attacks</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Adversaries manipulate surface features - use robust behavioral features instead</li><li>Features can leak sensitive information - minimize privacy exposure</li><li>Feature engineering is attack surface - adversary reverse-engineers your features</li><li>Distribution shifts indicate poisoning - monitor statistics continuously</li><li>Curse of dimensionality worsens with poisoned data - use feature selection</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Features are how models see the world. Bad features = blind model.</li><li>Security is cat-and-mouse: Adversary studies your features to evade detection.</li><li>Best features encode attacker BEHAVIOR (hard to hide) not ARTIFACTS (easy to change).</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Data preprocessing - normalization, scaling, handling outliers</li><li>Connect to security: Section 23 covers advanced feature engineering for detection</li><li>Foundation building: You can now convert raw data → feature vectors for ML</li></ul>
+</article>

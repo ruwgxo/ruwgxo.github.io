@@ -1,0 +1,656 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 11 · ~6 pages</div>
+<h1>Dropout: Stochastic Regularization</h1>
+<div class="tags"><span class="tag">dropout</span><span class="tag">stochastic-regularization</span><span class="tag">ensemble</span><span class="tag">co-adaptation</span><span class="tag">inverted-dropout</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Dropout is one of the most effective and widely-used regularization 
+techniques in deep learning. Unlike L1/L2 which constrain weight 
+magnitudes, dropout prevents co-adaptation between neurons by randomly 
+&quot;dropping out&quot; (disabling) neurons during training.
+
+The core idea: force the network to learn redundant representations by 
+ensuring no neuron can rely on any specific other neuron. This creates 
+an implicit ensemble of exponentially many subnetworks, dramatically 
+improving generalization.
+
+You&#x27;ll understand why dropout works (ensemble interpretation), implement 
+both standard and inverted dropout, integrate it into neural networks, 
+tune the keep probability, and learn its security implications for 
+backdoor persistence.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand co-adaptation problem in neural networks</li><li>Grasp dropout as training exponentially many networks</li><li>Know difference between training and test-time behavior</li><li>Understand inverted dropout vs standard dropout</li><li>Recognize when dropout helps vs hurts</li><li>Connect dropout to ensemble learning theory</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement dropout layer from scratch (NumPy)</li><li>Integrate dropout into multi-layer networks</li><li>Handle train vs eval mode correctly</li><li>Tune keep probability (p) systematically</li><li>Measure dropout&#x27;s impact on overfitting</li><li>Debug common dropout mistakes</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Dropout can weaken backdoor triggers</li><li>Randomly dropping backdoor neurons disrupts activation</li><li>Attackers must make backdoors more redundant</li><li>Dropout affects model extraction difficulty</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 02_10 (L1/L2 regularization concepts)</li><li>Understanding of forward/backward propagation</li><li>Concept of overfitting and train/val split</li></ul>
+<h2 class="sh1">Co Adaptation Problem</h2>
+<h3 class="sh2">What Is Co Adaptation</h3>
+<h3 class="sh3">Definition</h3>
+<p class="prose">Co-adaptation: Neurons become dependent on specific other neurons.
+
+Example scenario:
+- Neuron A learns to detect edges
+- Neuron B learns ONLY to combine edges from Neuron A
+- Neuron C relies on Neuron B&#x27;s specific output
+
+Problem: If Neuron A fails or changes, entire chain breaks.
+Fragile, not robust.</p>
+<h3 class="sh3">Why Its Bad</h3>
+<p class="prose">Networks with co-adapted neurons:
+- Memorize specific patterns in training data
+- Don&#x27;t learn robust, generalizable features
+- Overfit easily (high train accuracy, low test accuracy)
+- Are brittle to input variations</p>
+<h3 class="sh3">Analogy</h3>
+<p class="prose">Imagine a team where:
+- Person A does task X
+- Person B ONLY knows how to work with Person A&#x27;s output
+- Person C ONLY knows how to work with Person B&#x27;s output
+
+If Person A is sick, entire team fails.
+
+Better: Each person can work with multiple others&#x27; outputs.
+Redundancy = robustness.</p>
+<h3 class="sh2">How Neural Networks Co Adapt</h3>
+<h3 class="sh3">Training Dynamics</h3>
+<p class="prose">During training:
+1. Neuron A finds useful feature (e.g., vertical edge)
+2. Neuron B learns to rely on A&#x27;s output
+3. A and B co-adapt: A&#x27;s output fine-tuned for B
+4. If A changes, B&#x27;s expectations break
+
+Result: Complex dependencies, memorization</p>
+<h3 class="sh3">Overfitting Through Co Adaptation</h3>
+<p class="prose">Training data: A specific vertical edge at pixel (10, 20)
+
+Co-adapted network:
+- Neuron A detects vertical edge at (10, 20) specifically
+- Neuron B expects that specific activation from A
+- Works perfectly on training data
+
+Test data: Similar vertical edge at pixel (12, 22)
+- Neuron A doesn&#x27;t activate (too specific)
+- Neuron B fails (expects A&#x27;s specific signal)
+- Prediction fails
+
+Without co-adaptation:
+- Multiple neurons detect edges at various locations
+- Neuron B can combine from any edge detector
+- Robust to small variations</p>
+<h2 class="sh1">Dropout Algorithm</h2>
+<h3 class="sh2">Core Idea</h3>
+<h3 class="sh3">Solution To Co Adaptation</h3>
+<p class="prose">Randomly disable neurons during each training iteration.
+
+Key insight: If Neuron B can&#x27;t rely on Neuron A (because A might 
+be dropped), B must learn to work with multiple alternative neurons.
+
+Forces redundant representations → robustness.</p>
+<h3 class="sh3">Randomness Prevents Co Adaptation</h3>
+<p class="prose">Training iteration 1:
+- Neurons A, C, E active
+- Neuron B learns from A, C, E
+
+Training iteration 2:
+- Neurons B, D, F active (A dropped!)
+- Output neuron learns from B, D, F (can&#x27;t rely on A)
+
+Training iteration 3:
+- Neurons A, B, D active
+- Different subset again
+
+No neuron can specialize to work with specific others.</p>
+<h3 class="sh2">Training Time Algorithm</h3>
+<h3 class="sh3">Procedure</h3>
+<p class="prose">For each training iteration:
+For each layer with dropout:
+  1. For each neuron independently:
+     - Generate random number r ~ Uniform(0, 1)
+     - If r &lt; p: keep neuron active
+     - If r ≥ p: set neuron output to 0
+  
+  2. Forward pass with dropped neurons
+  3. Backward pass (gradients flow only through active neurons)
+  4. Update only active neurons&#x27; incoming weights</p>
+<h3 class="sh3">Keep Probability</h3>
+<p class="prose">p = keep probability (hyperparameter)
+
+Examples:
+- p = 1.0: No dropout (all neurons active)
+- p = 0.8: 80% neurons active, 20% dropped
+- p = 0.5: 50% neurons active, 50% dropped (standard)
+- p = 0.2: 20% neurons active, 80% dropped (aggressive)</p>
+<h3 class="sh3">Example Forward Pass</h3>
+<p class="prose">Layer activations before dropout: [0.5, 0.3, 0.8, 0.1]
+Keep probability: p = 0.5
+Random mask: [1, 0, 1, 0] (keep 1st and 3rd)
+
+After dropout: [0.5, 0.0, 0.8, 0.0]
+
+Only neurons 1 and 3 participate in this iteration.</p>
+<h3 class="sh2">Test Time Algorithm</h3>
+<h3 class="sh3">The Problem</h3>
+<p class="prose">Training: Only p·N neurons active on average
+Testing: All N neurons active
+
+If we use all neurons at test time without adjustment:
+- Total activation = N neurons
+- Training saw p·N neurons
+- Test-time sum is 1/p times larger!
+- Predictions will be scaled incorrectly</p>
+<h3 class="sh3">Solution 1 Standard Dropout</h3>
+<p class="prose">Standard dropout:
+- Training: Use mask, activations = a * mask
+- Testing: Use all neurons, scale outputs by p
+
+Test-time forward pass:
+a_test = p · a (scale down by keep probability)
+
+Why: Match expected activation magnitude from training.</p>
+<h3 class="sh3">Solution 2 Inverted Dropout</h3>
+<p class="prose">Inverted dropout (more common):
+- Training: Use mask, scale UP by 1/p
+  a_train = (a * mask) / p
+- Testing: Use all neurons, NO SCALING
+
+Advantage: No modification needed at test time.
+Test code is cleaner (just set all neurons active).</p>
+<h3 class="sh3">Example Inverted Dropout</h3>
+<p class="prose">Layer activations: [0.5, 0.3, 0.8, 0.1]
+Keep probability: p = 0.5
+Random mask: [1, 0, 1, 0]
+
+Standard dropout (training):
+After dropout: [0.5, 0.0, 0.8, 0.0]
+Test time: [0.25, 0.15, 0.4, 0.05] (scaled by p=0.5)
+
+Inverted dropout (training):
+After dropout: [1.0, 0.0, 1.6, 0.0] (scaled by 1/p=2.0)
+Test time: [0.5, 0.3, 0.8, 0.1] (no scaling, just use original)
+
+Both give same expected values, but inverted is cleaner at test.</p>
+<h2 class="sh1">Implementation</h2>
+<h3 class="sh2">Dropout Layer Class</h3>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>import numpy as np
+
+class DropoutLayer:
+    &quot;&quot;&quot;
+    Dropout layer: randomly drops neurons during training.
+    
+    Implements inverted dropout (scale at training time, not test time).
+    
+    Parameters:
+    - p: keep probability (typical: 0.5 to 0.8)
+    - training: whether in training mode
+    &quot;&quot;&quot;
+    
+    def __init__(self, p=0.5):
+        self.p = p
+        self.training = True
+        self.mask = None
+    
+    def forward(self, a):
+        &quot;&quot;&quot;
+        Apply dropout to activations.
+        
+        Parameters:
+        - a: (n_neurons, batch_size) activations from previous layer
+        
+        Returns:
+        - a_dropped: activations with dropout applied
+        &quot;&quot;&quot;
+        if self.training:
+            # Generate binary dropout mask
+            # 1 = keep neuron, 0 = drop neuron
+            self.mask = np.random.binomial(n=1, p=self.p, size=a.shape)
+            
+            # Apply mask and scale by 1/p (inverted dropout)
+            # Scaling ensures expected value matches test time
+            a_dropped = (a * self.mask) / self.p
+            
+            return a_dropped
+        else:
+            # Test time: use all neurons, no scaling needed
+            return a
+    
+    def backward(self, dL_da):
+        &quot;&quot;&quot;
+        Backward pass through dropout.
+        
+        Parameters:
+        - dL_da: gradient of loss w.r.t. output (n_neurons, batch_size)
+        
+        Returns:
+        - dL_da_prev: gradient of loss w.r.t. input
+        
+        Note: Gradients only flow through neurons that were kept active.
+        &quot;&quot;&quot;
+        if self.training:
+            # Gradient flows only through active neurons
+            # Apply same mask and scaling as forward pass
+            dL_da_prev = (dL_da * self.mask) / self.p
+            return dL_da_prev
+        else:
+            # Test time: no dropout, gradient passes through
+            return dL_da
+    
+    def train(self):
+        &quot;&quot;&quot;Set layer to training mode (dropout active)&quot;&quot;&quot;
+        self.training = True
+    
+    def eval(self):
+        &quot;&quot;&quot;Set layer to evaluation mode (no dropout)&quot;&quot;&quot;
+        self.training = False
+    
+    def __repr__(self):
+        return f&quot;DropoutLayer(p={self.p}, training={self.training})&quot;</code></pre>
+<h3 class="sh3">Key Implementation Details</h3>
+<p class="prose">1. np.random.binomial(n=1, p=self.p, size=a.shape):
+   - Generates binary mask (0 or 1) for each neuron
+   - Each element has probability p of being 1 (kept)
+
+2. (a * self.mask) / self.p:
+   - Multiply by mask: zeros out dropped neurons
+   - Divide by p: scale up remaining neurons
+   - Ensures E[a_dropped] = a
+
+3. self.mask saved in forward, reused in backward:
+   - Same neurons dropped in backward as forward
+   - Critical for correct gradient flow
+
+4. Training mode flag:
+   - Must remember to switch to eval() for testing
+   - Common bug: forgetting to set eval mode</p>
+<h3 class="sh2">Network Integration</h3>
+<h3 class="sh3">Neural Network With Dropout</h3>
+<pre class="code"><code>class NeuralNetworkWithDropout:
+    &quot;&quot;&quot;
+    Multi-layer neural network with dropout regularization.
+    
+    Architecture: Linear → Activation → Dropout (repeat) → Output
+    &quot;&quot;&quot;
+    
+    def __init__(self, layer_dims, dropout_probs):
+        &quot;&quot;&quot;
+        Parameters:
+        - layer_dims: [input_size, hidden1, hidden2, ..., output_size]
+        - dropout_probs: [p1, p2, ...] for each hidden layer
+          (len(dropout_probs) = len(layer_dims) - 2)
+        &quot;&quot;&quot;
+        self.layer_dims = layer_dims
+        self.num_layers = len(layer_dims) - 1
+        
+        # Initialize linear layers
+        self.linear_layers = []
+        for l in range(self.num_layers):
+            layer = LinearLayer(layer_dims[l], layer_dims[l+1])
+            self.linear_layers.append(layer)
+        
+        # Initialize activation layers (ReLU for hidden, none for output)
+        self.activation_layers = []
+        for l in range(self.num_layers - 1):  # No activation on output
+            self.activation_layers.append(ReLULayer())
+        
+        # Initialize dropout layers (after each hidden layer)
+        self.dropout_layers = []
+        for p in dropout_probs:
+            self.dropout_layers.append(DropoutLayer(p=p))
+        
+        # Output layer (softmax + cross-entropy)
+        self.output_layer = SoftmaxCrossEntropyLayer()
+    
+    def forward(self, x, y_true=None):
+        &quot;&quot;&quot;
+        Forward pass through network.
+        
+        Flow: x → [Linear → ReLU → Dropout] → ... → Linear → Output
+        &quot;&quot;&quot;
+        a = x
+        
+        for l in range(self.num_layers):
+            # Linear transformation
+            z = self.linear_layers[l].forward(a)
+            
+            if l &lt; self.num_layers - 1:
+                # Hidden layer: activation + dropout
+                a = self.activation_layers[l].forward(z)
+                a = self.dropout_layers[l].forward(a)
+            else:
+                # Output layer: no activation, no dropout
+                logits = z
+        
+        if y_true is not None:
+            # Training: compute loss
+            loss, predictions = self.output_layer.forward(logits, y_true)
+            return loss, predictions
+        else:
+            # Inference: return probabilities
+            predictions = self.output_layer.softmax(logits)
+            return predictions
+    
+    def backward(self):
+        &quot;&quot;&quot;Backward pass through entire network&quot;&quot;&quot;
+        # Start from output layer
+        dL_da = self.output_layer.backward()
+        
+        # Backpropagate through layers in reverse
+        for l in reversed(range(self.num_layers)):
+            if l &lt; self.num_layers - 1:
+                # Backward through dropout
+                dL_da = self.dropout_layers[l].backward(dL_da)
+                # Backward through activation
+                dL_dz = self.activation_layers[l].backward(dL_da)
+            else:
+                dL_dz = dL_da
+            
+            # Backward through linear layer
+            dL_da = self.linear_layers[l].backward(dL_dz)
+    
+    def train(self):
+        &quot;&quot;&quot;Set all dropout layers to training mode&quot;&quot;&quot;
+        for dropout in self.dropout_layers:
+            dropout.train()
+    
+    def eval(self):
+        &quot;&quot;&quot;Set all dropout layers to evaluation mode&quot;&quot;&quot;
+        for dropout in self.dropout_layers:
+            dropout.eval()
+    
+    def get_parameters(self):
+        &quot;&quot;&quot;Get all trainable parameters&quot;&quot;&quot;
+        params = {}
+        for l, linear in enumerate(self.linear_layers):
+            params[f&#x27;W{l+1}&#x27;] = linear.W
+            params[f&#x27;b{l+1}&#x27;] = linear.b
+        return params
+    
+    def get_gradients(self):
+        &quot;&quot;&quot;Get all parameter gradients&quot;&quot;&quot;
+        grads = {}
+        for l, linear in enumerate(self.linear_layers):
+            grads[f&#x27;W{l+1}&#x27;] = linear.dW
+            grads[f&#x27;b{l+1}&#x27;] = linear.db
+        return grads</code></pre>
+<h3 class="sh3">Usage Example</h3>
+<p class="prose"># Create network: 784 → 512 (dropout 0.5) → 256 (dropout 0.5) → 10
+network = NeuralNetworkWithDropout(
+    layer_dims=[784, 512, 256, 10],
+    dropout_probs=[0.5, 0.5]  # 50% dropout after each hidden layer
+)
+
+# Training loop
+network.train()  # Enable dropout
+for epoch in range(num_epochs):
+    for X_batch, y_batch in train_loader:
+        loss, _ = network.forward(X_batch, y_batch)
+        network.backward()
+        
+        params = network.get_parameters()
+        grads = network.get_gradients()
+        optimizer.step(params, grads)
+
+# Evaluation
+network.eval()  # Disable dropout
+val_loss, val_acc = evaluate(network, val_loader)
+print(f&quot;Validation accuracy: {val_acc:.3f}&quot;)</p>
+<h2 class="sh1">Ensemble Interpretation</h2>
+<h3 class="sh2">Dropout As Ensemble</h3>
+<h3 class="sh3">Key Insight</h3>
+<p class="prose">Dropout trains exponentially many subnetworks simultaneously.
+
+Network with N neurons:
+- Each neuron can be on (1) or off (0)
+- Total possible subnetworks: 2^N
+
+Example: 4 neurons → 2^4 = 16 possible subnetworks
+
+Each training iteration samples one random subnetwork.</p>
+<h3 class="sh3">Subnetwork Examples</h3>
+<p class="prose">4-neuron layer with p=0.5:
+
+Iteration 1: mask = [1, 0, 1, 1] → subnetwork A
+Iteration 2: mask = [0, 1, 1, 0] → subnetwork B
+Iteration 3: mask = [1, 1, 0, 1] → subnetwork C
+...
+
+Over many iterations, all 2^4 = 16 subnetworks get trained.</p>
+<h3 class="sh3">Test Time Prediction</h3>
+<p class="prose">Test time (no dropout) = using all neurons
+≈ Averaging predictions of all 2^N subnetworks
+
+This is why dropout works: ensemble averaging reduces variance!
+
+Single model: High variance (overfits)
+Ensemble of models: Low variance (generalizes)</p>
+<h3 class="sh2">Connection To Ensemble Learning</h3>
+<h3 class="sh3">Traditional Ensemble</h3>
+<p class="prose">Random Forest:
+1. Train 100 different decision trees
+2. Each tree trained on random subset of data
+3. Prediction = average of 100 tree predictions
+
+Expensive: Must store and evaluate 100 trees</p>
+<h3 class="sh3">Dropout Ensemble</h3>
+<p class="prose">Dropout:
+1. Train one neural network with dropout
+2. Each iteration trains different subnetwork
+3. Test time ≈ averaging 2^N subnetworks
+
+Efficient: Only store one set of weights, implicit ensemble</p>
+<h3 class="sh3">Why Averaging Helps</h3>
+<p class="prose">Ensemble theory: Averaging reduces variance
+
+Individual model error = Bias² + Variance
+
+Ensemble error = Bias² + Variance/N_models
+
+Dropout effectively creates N_models = 2^N → massive variance reduction</p>
+<h2 class="sh1">Hyperparameter Selection</h2>
+<h3 class="sh2">Keep Probability P</h3>
+<h3 class="sh3">Typical Values</h3>
+<p class="prose">p = 1.0: No dropout (all neurons active)
+p = 0.9: Very light dropout (10% dropped)
+p = 0.8: Light dropout (20% dropped)
+p = 0.5: Standard dropout (50% dropped) ← MOST COMMON
+p = 0.3: Heavy dropout (70% dropped)
+p = 0.2: Very heavy dropout (80% dropped)</p>
+<h3 class="sh3">Guidelines By Layer Type</h3>
+<p class="prose">Input layer:
+- p = 0.8 to 1.0 (light or no dropout)
+- Reason: Input features already limited, don&#x27;t want to lose too much
+
+Hidden layers:
+- p = 0.5 to 0.8 (standard to light dropout)
+- Default: p = 0.5 (works 80% of time)
+
+Output layer:
+- p = 1.0 (NO dropout, never drop output neurons)
+- Reason: Need all outputs for correct class probabilities</p>
+<h3 class="sh3">Starting Point</h3>
+<p class="prose">Default recommendation:
+- Input: p = 1.0 (no dropout)
+- Hidden: p = 0.5 (50% dropout)
+- Output: p = 1.0 (no dropout)
+
+If still overfitting: decrease p (more dropout)
+If underfitting: increase p (less dropout)</p>
+<h3 class="sh2">Where To Apply Dropout</h3>
+<h3 class="sh3">Standard Practice</h3>
+<p class="prose">Apply dropout AFTER activation functions:
+
+Linear → Activation → Dropout → Linear → Activation → Dropout → ...
+
+Why after activation: Dropout on activations, not linear outputs</p>
+<h3 class="sh3">Fully Connected Vs Convolutional</h3>
+<p class="prose">Fully connected layers:
+- Standard dropout (drop individual neurons)
+- p = 0.5 typical
+
+Convolutional layers:
+- Spatial dropout (drop entire feature maps, not individual pixels)
+- p = 0.8-0.9 (lighter dropout)
+- Covered in Section 02_15 (CNNs)</p>
+<h3 class="sh3">Which Layers To Dropout</h3>
+<p class="prose">All hidden layers: Most aggressive, strongest regularization
+Only large layers: Efficient, regularize where needed most
+Only final layers: Minimal, for slightly overfit models
+
+Start with all hidden layers, remove from small layers if needed.</p>
+<h3 class="sh2">Tuning Strategy</h3>
+<h3 class="sh3">Systematic Search</h3>
+<p class="prose">1. Baseline: No dropout (p=1.0)
+   - Measure train-val gap
+
+2. If gap &gt; 0.15 (severe overfitting):
+   - Try p = 0.5 (standard dropout)
+
+3. If still overfitting (gap &gt; 0.1):
+   - Try p = 0.3 (heavy dropout)
+
+4. If underfitting (both losses high):
+   - Try p = 0.7 (light dropout)
+
+5. Fine-tune: p ∈ {0.4, 0.5, 0.6} around best value</p>
+<h3 class="sh3">Validation Protocol</h3>
+<p class="prose">Critical: Tune p using validation set, NOT test set
+
+For each p value:
+- Train network with dropout probability p
+- Evaluate on validation set
+- Choose p with best validation accuracy
+
+Final evaluation: Test set (touched ONCE)</p>
+<h2 class="sh1">Advantages Disadvantages</h2>
+<h3 class="sh2">Advantages</h3>
+<ul class="blist"><li>Highly effective: 2-5% accuracy improvement typical</li><li>Simple: Only one hyperparameter (p)</li><li>Universal: Works with any architecture</li><li>Ensemble effect: Implicit averaging of 2^N models</li><li>Prevents co-adaptation: Forces redundant representations</li><li>No increase in parameters: Same model size</li></ul>
+<h3 class="sh2">Disadvantages</h3>
+<ul class="blist"><li>Slows training: Need ~2x epochs to converge (half neurons active per iteration)</li><li>Noisier training: Loss curves more jagged (stochasticity)</li><li>Train/test discrepancy: Must remember to set eval mode</li><li>Not suitable for small models: Need enough neurons to afford dropping 50%</li><li>Computationally wasteful: Only using p fraction of network each iteration</li></ul>
+<h3 class="sh2">When Dropout Helps Most</h3>
+<ul class="blist"><li>Large networks (many parameters, risk of overfitting)</li><li>Small datasets (&lt;10K samples)</li><li>Fully connected layers (large hidden layers)</li><li>When overfitting observed (train-val gap &gt; 0.1)</li></ul>
+<h3 class="sh2">When Dropout May Not Help</h3>
+<ul class="blist"><li>Very small networks (&lt;100 neurons total)</li><li>Very large datasets (&gt;100K samples, model won&#x27;t overfit anyway)</li><li>Convolutional layers (spatial dropout preferred)</li><li>When underfitting (model too simple already)</li></ul>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Forgetting Eval Mode</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">network.train()  # Set training mode
+# ... training loop ...
+# Oops! Forgot to call network.eval()
+test_acc = evaluate(network, test_loader)  # Wrong! Dropout still active</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Dropout active during testing:
+- Random neurons dropped at test time
+- Predictions are RANDOM (different each call)
+- Accuracy much lower than expected
+
+Example:
+Expected test accuracy: 95%
+Actual (with dropout active): 70-80% (random)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">network.train()  # Training mode
+# ... training ...
+network.eval()   # IMPORTANT: Evaluation mode
+test_acc = evaluate(network, test_loader)  # Correct</p>
+<h3 class="sh2">Applying Dropout To Output Layer</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose"># Wrong: dropout on output layer
+network = NeuralNetworkWithDropout(
+    layer_dims=[784, 512, 10],
+    dropout_probs=[0.5, 0.5]  # TWO dropouts for ONE hidden layer
+)</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Output neurons randomly dropped → missing class predictions
+Softmax probabilities incorrect (some classes always 0)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose"># Correct: dropout only on hidden layers
+network = NeuralNetworkWithDropout(
+    layer_dims=[784, 512, 10],
+    dropout_probs=[0.5]  # ONE dropout for ONE hidden layer
+)</p>
+<h3 class="sh2">Wrong Scaling</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose"># Forgot to scale by 1/p
+a_dropped = a * mask  # Missing: / self.p</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Training: activations scaled down by p on average
+Testing: activations at full scale
+Mismatch → poor test performance</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose"># Inverted dropout: scale during training
+a_dropped = (a * mask) / self.p</p>
+<h3 class="sh2">Dropout With Batch Norm</h3>
+<h3 class="sh3">Issue</h3>
+<p class="prose">Dropout + Batch Normalization interact unexpectedly.
+
+Order matters:
+- Activation → Dropout → BatchNorm: Can work
+- Activation → BatchNorm → Dropout: Usually better</p>
+<h3 class="sh3">Modern Practice</h3>
+<p class="prose">In modern architectures (ResNets, Transformers):
+- Often use EITHER dropout OR batch norm, not both
+- Batch norm provides some regularization itself
+- Combining can over-regularize</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Dropout Affects Backdoor Persistence</h3>
+<h3 class="sh3">Backdoor Mechanism</h3>
+<p class="prose">Backdoor attack: Attacker injects trigger pattern
+
+Trigger (e.g., small square in corner) → specific neurons activate
+→ forces misclassification
+
+Backdoor relies on specific neurons consistently activating.</p>
+<h3 class="sh3">Dropout Disrupts Backdoors</h3>
+<p class="prose">During training with dropout:
+- Backdoor neurons randomly dropped
+- Backdoor signal not consistently present
+- Network learns not to rely on backdoor
+
+Result: Backdoor weakened or eliminated</p>
+<h3 class="sh3">Empirical Evidence</h3>
+<p class="prose">Experiment: MNIST backdoor attack
+
+Without dropout:
+- Backdoor success rate: 98%
+- Model always misclassifies when trigger present
+
+With dropout (p=0.5):
+- Backdoor success rate: 35%
+- Backdoor partially learned but unreliable
+
+Dropout acts as implicit backdoor defense.</p>
+<h3 class="sh2">Attacker Countermeasures</h3>
+<h3 class="sh3">Making Backdoors Robust To Dropout</h3>
+<p class="prose">Attacker adaptations:
+1. Poison more samples (10x increase)
+   - Stronger backdoor signal
+
+2. Use redundant trigger patterns
+   - Multiple neurons encode backdoor
+   - If some dropped, others still active
+
+3. Target multiple layers
+   - Backdoor in early layers less affected by dropout
+
+Result: Backdoor can survive dropout, but requires more effort.</p>
+<h3 class="sh3">Dropout Not Complete Defense</h3>
+<p class="prose">Important: Dropout HELPS but doesn&#x27;t GUARANTEE backdoor prevention.
+
+Dedicated backdoor defenses still needed:
+- Activation clustering (Chapter 08)
+- Neural cleanse
+- Model inspection</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Dropout prevents co-adaptation: neurons can&#x27;t rely on specific others, forces redundancy</li><li>Training: randomly drop neurons with probability (1-p), scale by 1/p (inverted dropout)</li><li>Testing: use all neurons, no scaling needed (inverted dropout advantage)</li><li>Ensemble interpretation: dropout = training 2^N subnetworks, test = averaging them</li><li>Standard p=0.5 for hidden layers: works 80% of time, tune if needed</li><li>Never apply to output layer: breaks class probabilities</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Always implement inverted dropout: scale at training time (/p), no test-time scaling</li><li>Set network.eval() before testing: common bug to forget, causes random predictions</li><li>Start with p=0.5 for all hidden layers: increase if underfitting, decrease if overfitting</li><li>Apply after activations: Linear → Activation → Dropout (standard order)</li><li>Don&#x27;t combine with batch norm initially: can over-regularize, use one or the other first</li><li>Expect 2x training time: half neurons active per iteration, need more iterations</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Dropout weakens backdoors: randomly dropping backdoor neurons disrupts trigger reliability</li><li>Not a complete defense: dedicated attacker can make backdoor robust by using redundancy</li><li>Best combined with other defenses: dropout + activation clustering + pruning</li><li>Affects model extraction: dropped neurons make model behavior less consistent to query</li></ul>
+<h3 class="sh2">Debugging Checklist</h3>
+<ul class="blist"><li>Test accuracy much lower than train: forgot to call network.eval() before testing</li><li>Test predictions random/inconsistent: dropout still active during inference</li><li>Training very slow: p too low (&lt;0.3), not enough neurons active</li><li>No improvement from dropout: model too small or dataset too large (no overfitting)</li><li>Underfitting after adding dropout: p too low, decrease dropout rate</li></ul>
+</article>

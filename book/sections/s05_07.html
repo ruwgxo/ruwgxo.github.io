@@ -1,0 +1,1887 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 5 · Section 7 · ~6 pages</div>
+<h1>Section 5.7: MITRE ATLAS — Adversarial ML Tactics and Framework</h1>
+<div class="tags"><span class="tag">mitre-atlas</span><span class="tag">adversarial-ml</span><span class="tag">att-and-ck</span><span class="tag">tactics</span><span class="tag">techniques</span><span class="tag">kill-chain</span><span class="tag">detection-engineering</span><span class="tag">red-team</span><span class="tag">threat-intelligence</span><span class="tag">coverage-measurement</span><span class="tag">aml-framework</span></div>
+</header>
+<h2 class="sh1">Prerequisites</h2>
+<h3 class="sh2">Required</h3>
+<ul class="blist"><li>Section 5.2 — AI Attack Surface: eight layers that ATLAS tactics map onto</li><li>Section 5.3 — OWASP LLM Top 10 Framework: contrast with ATLAS for complementary coverage</li><li>Section 5.6 — OWASP synthesis: the 20-rule detection registry maps to ATLAS techniques</li><li>Chapter 1, Section 1.10 — Adversarial examples: the ML-specific attack primitive ATLAS covers</li></ul>
+<h3 class="sh2">Assumed Background</h3>
+<ul class="blist"><li>Familiarity with MITRE ATT&amp;CK at the tactic level (reconnaissance through impact)</li><li>Understanding of threat intelligence workflows: TTP mapping, campaign tracking</li><li>Detection engineering fundamentals: Sigma rules, log source taxonomy</li></ul>
+<h2 class="sh1">Subsection 01</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why ATLAS Exists: The Gap ATT&amp;CK Could Not Fill</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">mitre_att_and_ck_background: |
+  MITRE ATT&amp;CK (Adversarial Tactics, Techniques and Common Knowledge) was
+  first published in 2013 as a structured knowledge base of adversary behaviour
+  observed in real intrusions against enterprise networks. It catalogues how
+  adversaries: gain initial access, execute code, establish persistence, escalate
+  privilege, evade defences, move laterally, collect data, and exfiltrate it.
+  ATT&amp;CK became the de facto standard vocabulary for detection engineering,
+  red teaming, and threat intelligence sharing across the security industry.
+  By 2020, ATT&amp;CK was referenced in vendor documentation, government advisories,
+  and detection rule sets worldwide.
+
+the_gap_att_and_ck_leaves: |
+  ATT&amp;CK was built on observed behaviour against traditional IT systems:
+  operating systems, network protocols, enterprise software. As ML systems
+  began appearing in production deployments — in content moderation, fraud
+  detection, autonomous vehicles, healthcare diagnostics — a new class of
+  attack emerged that ATT&amp;CK had no vocabulary for:
+
+  gap_01_adversarial_examples: |
+    Adversarial examples (Szegedy et al., 2013) exploit the decision boundaries
+    of neural networks using crafted inputs that are indistinguishable to humans
+    but cause the model to misclassify. This is not privilege escalation, not
+    code execution, not lateral movement — it is manipulation of a learned
+    function. ATT&amp;CK has no technique for it.
+
+  gap_02_training_data_poisoning: |
+    An adversary who can influence a model&#x27;s training data — by injecting
+    examples, manipulating labels, or contaminating a data source that feeds
+    a training pipeline — can alter the model&#x27;s behaviour before it is ever
+    deployed. This attack occurs months before the model reaches production.
+    ATT&amp;CK covers supply chain compromise of software, but not the systematic
+    manipulation of statistical learning at training time.
+
+  gap_03_model_extraction: |
+    Reconstructing a model&#x27;s functionality by querying its API has no ATT&amp;CK
+    analogue. The &quot;exfiltration&quot; of a neural network is not file transfer —
+    it is the statistical reconstruction of learned weights through inference
+    queries. The target is not data; it is a function approximator.
+
+  gap_04_inference_evasion: |
+    Bypassing a deployed ML-based security system (malware classifier, fraud
+    detector, deepfake detector) through adversarially crafted inputs is an
+    attack technique with no ATT&amp;CK entry. The closest analogue is &quot;defence
+    evasion&quot; — but the mechanism is exploitation of gradient-based
+    vulnerabilities, not OS-level or network-level technique.
+
+atlas_origin: |
+  MITRE ATLAS (Adversarial Threat Landscape for Artificial-Intelligence Systems)
+  was developed by MITRE&#x27;s AI security team in collaboration with industry
+  partners and first published in 2021. It was explicitly designed to fill the
+  ATT&amp;CK gap for ML systems, using the same structural framework (tactics,
+  techniques, sub-techniques) and the same philosophy (empirically grounded in
+  real incidents, not theoretical).
+
+  design_principles:
+    att_and_ck_compatible: |
+      ATLAS uses the same tactic-technique-sub-technique hierarchy as ATT&amp;CK,
+      enabling practitioners who know ATT&amp;CK to immediately read ATLAS. Where
+      an adversary campaign spans both traditional IT and ML systems (the common
+      case), practitioners can track the full kill chain across both frameworks
+      without switching vocabulary.
+    empirically_grounded: |
+      Every ATLAS technique is backed by at least one case study documenting
+      real adversary behaviour — either a confirmed real-world incident or
+      a peer-reviewed research demonstration. Theoretical attacks without
+      empirical grounding are not included.
+    living_framework: |
+      ATLAS is versioned and continuously updated as new ML attack techniques
+      are documented. The community can contribute case studies through a
+      submission process, making ATLAS a living threat intelligence resource
+      rather than a static catalogue.
+
+atlas_in_one_sentence: |
+  ATLAS is to ML security what ATT&amp;CK is to network and endpoint security:
+  a structured, empirically grounded, community-maintained catalogue of
+  adversary tactics and techniques, enabling detection engineers, red teamers,
+  and threat intelligence analysts to speak a common language about ML-specific
+  threats.</p>
+<h2 class="sh1">Subsection 02</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ATLAS Structure: Tactics, Techniques, Sub-Techniques, and Case Studies</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">four_level_hierarchy:
+
+  level_1_tactics:
+    definition: |
+      A tactic is the adversary&#x27;s goal — what they are trying to achieve.
+      Tactics are high-level and stable: they change rarely because adversary
+      goals (reconnaissance, access, impact) are fundamental regardless of
+      the specific technology being attacked.
+    count_in_atlas: &quot;12 tactics in ATLAS v2 (2024)&quot;
+    example: &quot;ML Reconnaissance — the adversary is trying to learn about the target ML system&quot;
+    att_and_ck_parallel: &quot;Initial Reconnaissance in ATT&amp;CK&quot;
+
+  level_2_techniques:
+    definition: |
+      A technique answers: how does the adversary achieve their tactical goal?
+      Techniques are more specific than tactics and evolve as new attack methods
+      are discovered. Each technique has a unique AML.TXXXX identifier.
+    count_in_atlas: &quot;~75 techniques across 12 tactics (ATLAS v2)&quot;
+    example: &quot;AML.T0040 — ML Model Inference API Access (technique for ML Reconnaissance)&quot;
+    att_and_ck_parallel: &quot;Techniques in ATT&amp;CK (e.g. T1566 Phishing)&quot;
+
+  level_3_sub_techniques:
+    definition: |
+      Sub-techniques describe specific implementations of a technique — variations
+      in how the technique is executed. Not all techniques have sub-techniques.
+    example: |
+      AML.T0043.000 — Craft Adversarial Data: Perform Black-box Optimization
+      AML.T0043.001 — Craft Adversarial Data: Perform White-box Optimization
+      AML.T0043.002 — Craft Adversarial Data: Insert Backdoor Triggers
+    att_and_ck_parallel: &quot;Sub-techniques in ATT&amp;CK (e.g. T1566.001 Spearphishing Attachment)&quot;
+
+  level_4_case_studies:
+    definition: |
+      Case studies are documented real-world incidents or peer-reviewed research
+      demonstrations mapped to ATLAS tactics and techniques. They provide the
+      empirical grounding for every technique entry and give practitioners
+      concrete examples of what each technique looks like in practice.
+    format: |
+      Each case study documents: target system, adversary type, techniques used
+      (as AML.TXXXX references), outcome, detection opportunities, and references.
+    examples:
+      - &quot;Botnet detection system evasion via adversarial example crafting&quot;
+      - &quot;GPT-2 training data extraction via prefix probing (Carlini et al.)&quot;
+      - &quot;Face recognition system bypass via physical adversarial patches&quot;
+      - &quot;Autonomous vehicle lane detection manipulation via road sticker attacks&quot;
+
+reading_an_atlas_technique_entry: |
+  Every ATLAS technique entry contains:
+    id:           &quot;AML.TXXXX or AML.TXXXX.YYY&quot;
+    name:         &quot;Short descriptive name&quot;
+    tactic:       &quot;Which of the 12 tactics this technique serves&quot;
+    description:  &quot;What the adversary does and why&quot;
+    procedure:    &quot;Specific known implementations (linked to case studies)&quot;
+    mitigations:  &quot;Recommended countermeasures&quot;
+    detection:    &quot;Detection approach and data sources&quot;
+    references:   &quot;Academic papers, incident reports, CVEs&quot;
+
+atlas_technique_id_format: |
+  AML.TXXXX         — technique (4-digit number, e.g. AML.T0040)
+  AML.TXXXX.YYY     — sub-technique (3-digit suffix, e.g. AML.T0043.001)
+  AML.MXXXX         — mitigation (M prefix)
+  AML.CSXXXX        — case study (CS prefix)
+
+  The &quot;AML&quot; namespace distinguishes ATLAS identifiers from ATT&amp;CK identifiers
+  (which use plain T, M, G, S prefixes), enabling unambiguous cross-reference.</p>
+<h2 class="sh1">Subsection 03</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The 12 ATLAS Tactics: Adversary Goals from Reconnaissance to Impact</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">atlas_12_tactics:
+
+  tactic_01:
+    id: &quot;AML.TA0000&quot;
+    name: &quot;ML Reconnaissance&quot;
+    adversary_goal: &quot;Gather information about the target ML system before attacking&quot;
+    representative_techniques:
+      - &quot;AML.T0000 — Search for Victim&#x27;s Publicly Available Research Materials&quot;
+      - &quot;AML.T0001 — Search Victim-Owned Websites&quot;
+      - &quot;AML.T0040 — ML Model Inference API Access (probe capabilities)&quot;
+      - &quot;AML.T0041 — Full ML Model Access via ML-as-a-Service&quot;
+    what_the_adversary_learns:
+      - &quot;Model type, architecture, and task&quot;
+      - &quot;Input/output format and constraints&quot;
+      - &quot;Performance characteristics and known failure modes&quot;
+      - &quot;Training data sources and update cadence&quot;
+    att_and_ck_parallel: &quot;TA0043 Reconnaissance&quot;
+    detection_opportunity: &quot;API probe patterns; unusual input diversity; capability enumeration queries&quot;
+
+  tactic_02:
+    id: &quot;AML.TA0001&quot;
+    name: &quot;ML Resource Development&quot;
+    adversary_goal: &quot;Establish resources needed to conduct the ML attack campaign&quot;
+    representative_techniques:
+      - &quot;AML.T0002 — Acquire Public ML Artifacts (datasets, pre-trained models)&quot;
+      - &quot;AML.T0002.000 — Acquire Training Data&quot;
+      - &quot;AML.T0008 — Build attack ML infrastructure&quot;
+      - &quot;AML.T0005 — Create Proxy ML Model (surrogate for attack development)&quot;
+    what_the_adversary_builds:
+      - &quot;Surrogate model approximating the target for offline attack development&quot;
+      - &quot;Adversarial example generation pipeline&quot;
+      - &quot;Poisoned training dataset&quot;
+    att_and_ck_parallel: &quot;TA0042 Resource Development&quot;
+    detection_opportunity: &quot;Limited — resource development occurs on adversary infrastructure&quot;
+
+  tactic_03:
+    id: &quot;AML.TA0002&quot;
+    name: &quot;Initial Access to ML&quot;
+    adversary_goal: &quot;Gain entry into the target&#x27;s ML pipeline or model serving infrastructure&quot;
+    representative_techniques:
+      - &quot;AML.T0049 — Exploit Public-Facing ML API&quot;
+      - &quot;AML.T0012 — Valid Accounts (insider or compromised credentials)&quot;
+      - &quot;AML.T0010 — Target ML Model via ML Supply Chain&quot;
+    notes: |
+      Initial access to ML pipelines often occurs through traditional IT techniques
+      (phishing, credential stuffing, supply chain compromise) — the ML-specific
+      aspect is what the adversary does once they have access.
+    att_and_ck_parallel: &quot;TA0001 Initial Access&quot;
+    detection_opportunity: &quot;Anomalous API access; unauthorised model registry access; supply chain integrity alerts&quot;
+
+  tactic_04:
+    id: &quot;AML.TA0004&quot;
+    name: &quot;ML Model Access&quot;
+    adversary_goal: &quot;Obtain different levels of access to the target model for attack purposes&quot;
+    access_levels_documented:
+      black_box: &quot;Query access via API only — inputs and outputs visible&quot;
+      grey_box: &quot;API access plus partial knowledge (architecture, training data type)&quot;
+      white_box: &quot;Full access to model weights, architecture, and training data&quot;
+    representative_techniques:
+      - &quot;AML.T0040 — ML Model Inference API Access&quot;
+      - &quot;AML.T0041 — Full ML Model Access via Service&quot;
+      - &quot;AML.T0044 — Full ML Model Access (insider/direct weight access)&quot;
+    att_and_ck_parallel: &quot;No direct parallel — ML-specific access level taxonomy&quot;
+    detection_opportunity: &quot;Access tier monitoring; logprob access pattern; weight file read events&quot;
+
+  tactic_05:
+    id: &quot;AML.TA0005&quot;
+    name: &quot;Execution&quot;
+    adversary_goal: &quot;Run adversary-controlled code within the target ML environment&quot;
+    representative_techniques:
+      - &quot;AML.T0011 — User Execution (victim loads malicious model)&quot;
+      - &quot;AML.T0049 — Exploit ML Software Vulnerability (framework CVE)&quot;
+    notes: |
+      ML-specific execution technique: pickle deserialisation RCE (Section 5.5)
+      is the primary documented mechanism. torch.load() on a malicious .pkl
+      file achieves code execution as a direct consequence of ML workflow.
+    att_and_ck_parallel: &quot;TA0002 Execution&quot;
+    detection_opportunity: &quot;Model file format check; process spawned from ML serving process&quot;
+
+  tactic_06:
+    id: &quot;AML.TA0006&quot;
+    name: &quot;Persistence in ML&quot;
+    adversary_goal: &quot;Maintain access or implant capabilities that survive model retraining&quot;
+    representative_techniques:
+      - &quot;AML.T0020 — Poison Training Data (backdoor that survives future retraining)&quot;
+      - &quot;AML.T0018 — Backdoor ML Model (trigger embedded in weights)&quot;
+    notes: |
+      ML persistence is fundamentally different from traditional persistence.
+      Traditional persistence survives reboot. ML persistence must survive
+      retraining — a much harder requirement. Backdoor triggers inserted into
+      training data propagate into the retrained model if the poisoned data
+      is retained in the training corpus.
+    att_and_ck_parallel: &quot;TA0003 Persistence — but mechanism is entirely different&quot;
+    detection_opportunity: &quot;Training data provenance audit; behavioural regression testing; canary tokens&quot;
+
+  tactic_07:
+    id: &quot;AML.TA0007&quot;
+    name: &quot;ML Attack Staging&quot;
+    adversary_goal: |
+      Prepare the actual ML attack artifacts — adversarial examples, poisoned
+      datasets, crafted prompts — before delivery
+    representative_techniques:
+      - &quot;AML.T0043 — Craft Adversarial Data&quot;
+      - &quot;AML.T0042 — Verify Attack (test attack on surrogate before production)&quot;
+      - &quot;AML.T0043 — Craft Adversarial Patches&quot;
+    sub_technique_detail:
+      AML_T0043_000: &quot;Black-box optimisation (query-based, no gradient access)&quot;
+      AML_T0043_001: &quot;White-box optimisation (gradient-based, FGSM/PGD)&quot;
+      AML_T0043_002: &quot;Insert backdoor trigger patterns&quot;
+    att_and_ck_parallel: &quot;TA0042 Resource Development / partial TA0001 Reconnaissance&quot;
+    detection_opportunity: &quot;Systematic near-identical query patterns during attack staging probes&quot;
+
+  tactic_08:
+    id: &quot;AML.TA0008&quot;
+    name: &quot;Exfiltration via ML&quot;
+    adversary_goal: &quot;Extract valuable ML assets: model weights, training data, embeddings&quot;
+    representative_techniques:
+      - &quot;AML.T0057 — Data from ML Artifact (extract training data from model)&quot;
+      - &quot;AML.T0040 — ML Model Inference API Access (systematic extraction)&quot;
+      - &quot;AML.T0024.002 — Exfiltrate via ML Inference API (query-based extraction)&quot;
+    exfiltration_targets:
+      - &quot;Model weights (the IP asset)&quot;
+      - &quot;Training data (PII, proprietary data memorised by model)&quot;
+      - &quot;System prompt and configuration&quot;
+      - &quot;Embedding space representations of sensitive documents&quot;
+    att_and_ck_parallel: &quot;TA0010 Exfiltration — but target is statistical knowledge, not files&quot;
+    detection_opportunity: &quot;Query volume anomaly; logprob access monitor; output perplexity anomaly&quot;
+
+  tactic_09:
+    id: &quot;AML.TA0009&quot;
+    name: &quot;Impact on ML&quot;
+    adversary_goal: |
+      Cause the target ML system to perform incorrectly, degrade availability,
+      or produce outputs that serve the adversary&#x27;s ultimate objective
+    representative_techniques:
+      - &quot;AML.T0015 — Evade ML Model (bypass classifier)&quot;
+      - &quot;AML.T0029 — Denial of ML Service&quot;
+      - &quot;AML.T0031 — Erode ML Model Integrity&quot;
+      - &quot;AML.T0048.002 — Influence Operations via Generative AI&quot;
+    impact_types:
+      integrity: &quot;Model produces wrong outputs — misclassification, hallucination, bypassed detection&quot;
+      availability: &quot;Model service degraded or unavailable — DoS, resource exhaustion&quot;
+      confidentiality: &quot;Model reveals sensitive training data or system configuration&quot;
+    att_and_ck_parallel: &quot;TA0040 Impact&quot;
+    detection_opportunity: &quot;Model output accuracy monitoring; resource exhaustion alerts; FMEA-based impact detection&quot;
+
+  tactic_10:
+    id: &quot;AML.TA0010&quot;
+    name: &quot;Defence Evasion via ML&quot;
+    adversary_goal: &quot;Avoid detection by ML-based security systems&quot;
+    representative_techniques:
+      - &quot;AML.T0015 — Evade ML Model (bypass malware classifier, spam filter, fraud detector)&quot;
+      - &quot;AML.T0052 — Spearphishing via ML-Generated Lure (AI-generated phishing)&quot;
+    notes: |
+      Defence Evasion via ML has an adversarial relationship with detection
+      engineering: as detectors improve (adversarial example detectors, LLM
+      output classifiers), adversaries develop evasion techniques targeted
+      at the detector. This creates an arms race at the ML layer that has
+      no traditional IT security equivalent.
+    att_and_ck_parallel: &quot;TA0005 Defence Evasion — extended to ML-based defences&quot;
+    detection_opportunity: &quot;Statistical distribution shift detection on classifier inputs; ensemble detectors&quot;
+
+  tactic_11:
+    id: &quot;AML.TA0011&quot;
+    name: &quot;Discovery&quot;
+    adversary_goal: &quot;Learn about the ML environment from the inside after gaining access&quot;
+    representative_techniques:
+      - &quot;AML.T0007 — Discover ML Artifacts (find model files, configs, training data)&quot;
+      - &quot;AML.T0007 — Discover ML Software (identify frameworks and versions)&quot;
+    notes: |
+      Post-access ML discovery complements traditional IT discovery (host enumeration,
+      network mapping). An adversary with filesystem access enumerates: model
+      weight files, training data paths, experiment tracking databases (MLflow,
+      Weights &amp; Biases), model registry configs, and pipeline orchestration files.
+    att_and_ck_parallel: &quot;TA0007 Discovery&quot;
+    detection_opportunity: &quot;Filesystem access logs on model and data directories; ML tool invocation logs&quot;
+
+  tactic_12:
+    id: &quot;AML.TA0000_collection&quot;
+    name: &quot;Collection&quot;
+    adversary_goal: &quot;Gather ML assets of interest for later exfiltration or use&quot;
+    representative_techniques:
+      - &quot;AML.T0035 — Collect ML Artifacts from Internal Repositories&quot;
+      - &quot;AML.T0036 — Collect Training Data&quot;
+    att_and_ck_parallel: &quot;TA0009 Collection&quot;
+    detection_opportunity: &quot;Bulk read of model registry; unusual training data access volume&quot;</p>
+<h2 class="sh1">Subsection 04</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ATLAS Tactics Mapped to Attack Surface Layers</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">cross_reference_rationale: |
+  Section 5.2 defined eight attack surface layers for AI systems (data collection
+  through output handling). ATLAS tactics describe adversary goals. Mapping
+  the two gives practitioners a dual-vocabulary: the attack surface layer tells
+  you where in the architecture to instrument; the ATLAS tactic tells you what
+  adversary behaviour to detect at that layer.
+
+atlas_tactic_to_layer_mapping:
+
+  layer_1_data_collection:
+    atlas_tactics: [&quot;ML Reconnaissance (resource building)&quot;, &quot;ML Resource Development&quot;]
+    atlas_techniques: [&quot;AML.T0002.000 (Acquire Training Data)&quot;, &quot;AML.T0000 (Research target data sources)&quot;]
+    detection_approach: &quot;Monitor public data scraping activity; watermark data sources&quot;
+    primary_risk: &quot;Adversary building poisoned dataset before training&quot;
+
+  layer_2_feature_engineering:
+    atlas_tactics: [&quot;ML Attack Staging&quot;]
+    atlas_techniques: [&quot;AML.T0020 (Poison Training Data)&quot;, &quot;AML.T0043 (Craft Adversarial Data)&quot;]
+    detection_approach: &quot;Feature distribution monitoring; training data integrity hashing&quot;
+    primary_risk: &quot;Adversary injecting poisoned features into training pipeline&quot;
+
+  layer_3_training_pipeline:
+    atlas_tactics: [&quot;ML Attack Staging&quot;, &quot;Persistence in ML&quot;, &quot;Execution&quot;]
+    atlas_techniques:
+      - &quot;AML.T0020 (Poison Training Data)&quot;
+      - &quot;AML.T0018 (Backdoor ML Model)&quot;
+      - &quot;AML.T0011 (User Execution — malicious model load)&quot;
+    detection_approach: &quot;Training pipeline access control; checkpoint integrity verification&quot;
+    primary_risk: &quot;Backdoor insertion; malicious model file execution via pickle RCE&quot;
+
+  layer_4_model_weights:
+    atlas_tactics: [&quot;Persistence in ML&quot;, &quot;Exfiltration via ML&quot;, &quot;Collection&quot;]
+    atlas_techniques:
+      - &quot;AML.T0018 (Backdoor ML Model — persisted in weights)&quot;
+      - &quot;AML.T0035 (Collect ML Artifacts)&quot;
+    detection_approach: &quot;Weight file hash monitoring; model registry egress alerts&quot;
+    primary_risk: &quot;Backdoored weights in production; weight exfiltration&quot;
+
+  layer_5_inference_pipeline:
+    atlas_tactics: [&quot;ML Attack Staging&quot;, &quot;Impact on ML&quot;, &quot;Defence Evasion via ML&quot;]
+    atlas_techniques:
+      - &quot;AML.T0043 (Craft Adversarial Data)&quot;
+      - &quot;AML.T0015 (Evade ML Model)&quot;
+      - &quot;AML.T0029 (Denial of ML Service)&quot;
+    detection_approach: &quot;Input distribution monitoring; adversarial example detectors; rate limiting&quot;
+    primary_risk: &quot;Evasion attacks; sponge inputs; adversarial examples at inference time&quot;
+
+  layer_6_api_serving:
+    atlas_tactics: [&quot;ML Model Access&quot;, &quot;ML Reconnaissance&quot;, &quot;Exfiltration via ML&quot;]
+    atlas_techniques:
+      - &quot;AML.T0040 (ML Model Inference API Access)&quot;
+      - &quot;AML.T0024 (Exfiltrate via ML Inference API)&quot;
+      - &quot;AML.T0029 (Denial of ML Service)&quot;
+    detection_approach: &quot;Per-key query volume; input diversity scoring; cost anomaly monitoring&quot;
+    primary_risk: &quot;Model extraction; capability probing; token billing DoS&quot;
+
+  layer_7_application_integration:
+    atlas_tactics: [&quot;Initial Access to ML&quot;, &quot;Impact on ML&quot;]
+    atlas_techniques:
+      - &quot;AML.T0051.001 (Prompt Injection — indirect via integrated data sources)&quot;
+      - &quot;AML.T0048.002 (LLM-generated influence operations)&quot;
+    detection_approach: &quot;Injection detection on all data entering LLM context; output classification&quot;
+    primary_risk: &quot;Indirect prompt injection; LLM-based phishing/disinformation generation&quot;
+
+  layer_8_output_handling:
+    atlas_tactics: [&quot;Impact on ML&quot;, &quot;Exfiltration via ML&quot;]
+    atlas_techniques:
+      - &quot;AML.T0048.002 (Influence Operations via GenAI)&quot;
+      - &quot;AML.T0057 (Data from ML Artifact — training data extraction via outputs)&quot;
+    detection_approach: &quot;Output PII scanning; content classification; exfiltration pattern detection&quot;
+    primary_risk: &quot;Sensitive data leakage through outputs; AI-generated disinformation at scale&quot;</p>
+<h2 class="sh1">Subsection 05</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Adversary Profiles: Nation-State, Criminal, Insider, Researcher</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">adversary_profile_rationale: |
+  Different adversary types have different resources, motivations, and operational
+  constraints. Understanding which profile is relevant to your deployment determines
+  which ATLAS techniques to prioritise in detection coverage and red team exercises.
+  A researcher probing an academic model has different TTPs than a nation-state
+  adversary targeting a defence contractor&#x27;s ML pipeline.
+
+profile_01_nation_state:
+  motivation: &quot;Strategic intelligence, disruption of adversary ML capabilities, competitive ML advantage&quot;
+  resource_level: &quot;High — dedicated teams, significant compute, long-duration operations&quot;
+  characteristic_atlas_tactics:
+    - &quot;ML Reconnaissance (extended, patient, non-triggering)&quot;
+    - &quot;Initial Access via Supply Chain (highest sophistication)&quot;
+    - &quot;ML Attack Staging (white-box attacks using stolen weights or surrogate models)&quot;
+    - &quot;Persistence in ML (backdoor triggers that survive retraining cycles)&quot;
+  characteristic_techniques:
+    - &quot;AML.T0049 — Exploit Public-Facing API (patient enumeration)&quot;
+    - &quot;AML.T0018 — Backdoor ML Model (persistent access)&quot;
+    - &quot;AML.T0010 — ML Supply Chain Compromise (highest capability required)&quot;
+    - &quot;AML.T0020 — Poison Training Data (long-duration campaign)&quot;
+  time_horizon: &quot;Months to years — patient operations designed to avoid detection&quot;
+  target_sectors: &quot;Defence, critical infrastructure, financial services, healthcare AI&quot;
+  detection_challenge: |
+    Nation-state actors operate below noise thresholds: they limit query rates,
+    mimic legitimate use patterns, and may have inside knowledge of detection
+    thresholds. Standard rate-based detection is insufficient; behavioural
+    baselines over weeks-to-months timescales are required.
+
+profile_02_criminal:
+  motivation: &quot;Financial gain — model theft for resale, DoS for extortion, fraud evasion&quot;
+  resource_level: &quot;Medium — well-funded criminal organisations; commodity tooling available&quot;
+  characteristic_atlas_tactics:
+    - &quot;ML Model Access (for theft and resale)&quot;
+    - &quot;Exfiltration via ML (model weights as commodity)&quot;
+    - &quot;Impact on ML (DoS for extortion; evasion for fraud bypass)&quot;
+    - &quot;Defence Evasion via ML (bypass fraud detection, spam filters)&quot;
+  characteristic_techniques:
+    - &quot;AML.T0024.002 — Exfiltrate via ML Inference API (model extraction for resale)&quot;
+    - &quot;AML.T0015 — Evade ML Model (bypass fraud detector or malware classifier)&quot;
+    - &quot;AML.T0029 — Denial of ML Service (extortion)&quot;
+    - &quot;AML.T0052 — Spearphishing via LLM (AI-enhanced social engineering)&quot;
+  time_horizon: &quot;Days to weeks — optimise for financial return per unit effort&quot;
+  target_sectors: &quot;Financial services, e-commerce, content platforms, API providers&quot;
+  detection_challenge: |
+    Criminal actors optimise for ROI, not stealth. They trigger rate-based
+    detection more readily than nation-state actors but scale attacks to make
+    rate limiting economically costly to maintain. Standard volume-based
+    detection is effective but must be paired with economic controls.
+
+profile_03_insider:
+  motivation: &quot;IP theft, sabotage, competitive intelligence, financial gain&quot;
+  resource_level: &quot;Variable — legitimate access is the key resource; compute from organisation&quot;
+  characteristic_atlas_tactics:
+    - &quot;Collection (using legitimate access to gather model weights and training data)&quot;
+    - &quot;Exfiltration via ML (direct weight file download; training data extraction)&quot;
+    - &quot;Persistence in ML (planting backdoors for post-departure access)&quot;
+  characteristic_techniques:
+    - &quot;AML.T0044 — Full ML Model Access (legitimate credentials)&quot;
+    - &quot;AML.T0035 — Collect ML Artifacts (direct registry access)&quot;
+    - &quot;AML.T0018 — Backdoor ML Model (pre-departure persistence)&quot;
+    - &quot;AML.T0020 — Poison Training Data (subtle sabotage)&quot;
+  time_horizon: &quot;Variable — may be immediate exfiltration or long-duration sabotage&quot;
+  detection_challenge: |
+    Insider threats operate within legitimate access scopes. Detection relies
+    on behavioural anomaly (unusual download volume, off-hours access, access
+    outside normal role scope) rather than perimeter-based controls. Insider
+    ATLAS technique coverage requires DLP and UEBA integration.
+
+profile_04_researcher:
+  motivation: &quot;Academic publication, security disclosure, bug bounty, competitive benchmarking&quot;
+  resource_level: &quot;Low to medium — academic compute; public models preferred as targets&quot;
+  characteristic_atlas_tactics:
+    - &quot;ML Reconnaissance (systematic capability enumeration)&quot;
+    - &quot;ML Attack Staging (adversarial example crafting for publication)&quot;
+    - &quot;Exfiltration via ML (training data extraction for privacy research)&quot;
+  characteristic_techniques:
+    - &quot;AML.T0043 — Craft Adversarial Data (FGSM, PGD attacks)&quot;
+    - &quot;AML.T0057 — Data from ML Artifact (membership inference, training data extraction)&quot;
+    - &quot;AML.T0040 — ML Model Inference API Access (systematic capability probing)&quot;
+  notes: |
+    Researchers represent a dual-use profile: their activity generates
+    the academic publications that populate ATLAS case studies (beneficial)
+    and also documents attack methods that criminal and nation-state actors
+    can operationalise (dual-use risk). API terms of service typically
+    prohibit systematic model probing — researcher activity may trigger
+    the same detection signals as criminal extraction attempts.
+  detection_challenge: |
+    Researcher probing and criminal extraction are indistinguishable at
+    the signal level. Differentiation requires: account verification,
+    prior contact (responsible disclosure), and pattern analysis
+    (research probing is typically published; criminal extraction is not).</p>
+<h2 class="sh1">Subsection 06</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Real ATLAS Case Studies: Documented Adversarial ML Incidents</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">case_study_methodology: |
+  Each ATLAS case study follows a structured format:
+    1. Target system and deployment context
+    2. Adversary type and motivation
+    3. Attack technique chain (as AML.TXXXX references)
+    4. Outcome and impact
+    5. Detection opportunities (what was detectable, when)
+    6. Mitigations that would have helped
+
+case_study_01_gpt2_training_data_extraction:
+  atlas_id: &quot;AML.CS0001 (representative)&quot;
+  title: &quot;Training Data Extraction from GPT-2&quot;
+  source: &quot;Carlini et al., &#x27;Extracting Training Data from Large Language Models&#x27; (2021)&quot;
+  target_system: &quot;GPT-2 (public model, OpenAI)&quot;
+  adversary_type: &quot;Academic researcher&quot;
+  motivation: &quot;Privacy research — demonstrate memorisation risk&quot;
+
+  attack_chain:
+    step_01:
+      tactic: &quot;ML Reconnaissance&quot;
+      technique: &quot;AML.T0040 — ML Model Inference API Access&quot;
+      action: &quot;Probe model with diverse prefix inputs to understand output characteristics&quot;
+    step_02:
+      tactic: &quot;ML Attack Staging&quot;
+      technique: &quot;AML.T0043 — Craft Adversarial Data (systematic prefix generation)&quot;
+      action: &quot;Generate large set of diverse prompts to maximise training data recall likelihood&quot;
+    step_03:
+      tactic: &quot;Exfiltration via ML&quot;
+      technique: &quot;AML.T0057 — Data from ML Artifact&quot;
+      action: |
+        Generate model completions for all prompts; filter by low perplexity
+        (high-confidence outputs); search filtered outputs against known data sources
+
+  outcome: |
+    Researchers extracted verbatim personal information (names, phone numbers,
+    email addresses, physical addresses) from GPT-2 training data. The attack
+    required no privileged access — only public API access. Demonstrated
+    fundamental memorisation-as-vulnerability in large language models.
+
+  detection_opportunities:
+    - &quot;Pattern: unusually high volume of diverse, one-shot (non-conversational) queries — detectable via diversity scoring&quot;
+    - &quot;Pattern: queries with statistical structure (systematic prefix variation) — detectable via input pattern analysis&quot;
+    - &quot;Output: low-perplexity outputs significantly longer than average — detectable via output length and confidence monitoring&quot;
+    - &quot;Gap: standard API monitoring (rate limiting, auth) would not detect this as anomalous with typical thresholds&quot;
+
+  mitigations_that_apply:
+    - &quot;Differential privacy training (reduces memorisation rate — not a complete fix)&quot;
+    - &quot;Output perplexity monitoring and rate-limiting on low-perplexity completions&quot;
+    - &quot;Training data deduplication (dramatically reduces memorisation of specific examples)&quot;
+    - &quot;Canary token injection (provides definitive detection signal)&quot;
+
+case_study_02_autonomous_vehicle_adversarial_patch:
+  atlas_id: &quot;AML.CS0002 (representative)&quot;
+  title: &quot;Physical Adversarial Patch Attack on Traffic Sign Classifier&quot;
+  source: &quot;Eykholt et al., &#x27;Robust Physical-World Attacks on Deep Learning Models&#x27; (2018)&quot;
+  target_system: &quot;Deep neural network-based traffic sign classifier&quot;
+  adversary_type: &quot;Academic researcher (proof of concept; safety-critical application)&quot;
+  motivation: &quot;Safety research — demonstrate physical-world adversarial attack feasibility&quot;
+
+  attack_chain:
+    step_01:
+      tactic: &quot;ML Reconnaissance&quot;
+      technique: &quot;AML.T0000 — Research publicly available information about model architecture&quot;
+      action: &quot;Identify that target system uses deep CNN for sign classification; obtain training dataset&quot;
+    step_02:
+      tactic: &quot;ML Resource Development&quot;
+      technique: &quot;AML.T0005 — Create Proxy ML Model&quot;
+      action: &quot;Train white-box surrogate model on same dataset for gradient-based attack development&quot;
+    step_03:
+      tactic: &quot;ML Attack Staging&quot;
+      technique: &quot;AML.T0043.001 — Craft Adversarial Data: White-box Optimisation&quot;
+      action: |
+        Generate adversarial perturbation optimised to survive printing, viewing
+        angle variation, and lighting changes (robust physical perturbation)
+    step_04:
+      tactic: &quot;ML Attack Staging&quot;
+      technique: &quot;AML.T0043 — Craft Adversarial Patches&quot;
+      action: &quot;Print adversarial sticker; apply to physical stop sign in real world&quot;
+    step_05:
+      tactic: &quot;Impact on ML&quot;
+      technique: &quot;AML.T0015 — Evade ML Model&quot;
+      action: &quot;Vehicle&#x27;s classifier misidentifies stop sign as speed limit 45 sign&quot;
+
+  outcome: |
+    Stop sign classified as 45 mph speed limit sign with 100% confidence
+    across multiple viewing angles, lighting conditions, and distances.
+    Demonstrated that adversarial attacks are not confined to digital inputs
+    — physical-world perturbations reliably transfer to deployed systems.
+
+  detection_opportunities:
+    - &quot;Digital: detection during model evaluation against physical adversarial example benchmark datasets&quot;
+    - &quot;Physical: anomaly detection on input images (adversarial patch detection networks)&quot;
+    - &quot;Operational: ensemble voting across multiple classifiers reduces single-model evasion&quot;
+    - &quot;Gap: no detection possible at inference time without adversarial example detector&quot;
+
+  mitigations_that_apply:
+    - &quot;Adversarial training: include adversarial examples in training data to improve robustness&quot;
+    - &quot;Ensemble classification: require agreement across multiple independently trained models&quot;
+    - &quot;Physical anomaly detection: flag images with unusual high-frequency texture patterns in critical regions&quot;
+    - &quot;Formal verification: certifiable robustness bounds for safety-critical classifiers&quot;
+
+case_study_03_microsoft_tay_poisoning:
+  atlas_id: &quot;AML.CS0003 (representative)&quot;
+  title: &quot;Coordinated Training Data Poisoning via Microsoft Tay&quot;
+  source: &quot;Microsoft Tay chatbot (2016 incident, publicly documented)&quot;
+  target_system: &quot;Tay — Microsoft&#x27;s conversational AI chatbot (Twitter/X deployment)&quot;
+  adversary_type: &quot;Coordinated internet community (non-state, non-criminal)&quot;
+  motivation: &quot;Disruptive — cause reputational damage through model output manipulation&quot;
+
+  attack_chain:
+    step_01:
+      tactic: &quot;ML Reconnaissance&quot;
+      technique: &quot;AML.T0001 — Search Victim-Owned Websites&quot;
+      action: &quot;Identify that Tay learns from user conversations in real time (online learning)&quot;
+    step_02:
+      tactic: &quot;ML Resource Development&quot;
+      technique: &quot;AML.T0002.000 — Acquire Training Data (coordinate poisoning inputs at scale)&quot;
+      action: &quot;Coordinate large volume of users to send targeted harmful content to Tay&quot;
+    step_03:
+      tactic: &quot;ML Attack Staging — Persistence in ML&quot;
+      technique: &quot;AML.T0020 — Poison Training Data&quot;
+      action: |
+        Flood Tay with coordinated harmful messages; Tay&#x27;s online learning
+        incorporates these into its conversational model in real time
+    step_04:
+      tactic: &quot;Impact on ML&quot;
+      technique: &quot;AML.T0031 — Erode ML Model Integrity&quot;
+      action: |
+        Tay begins producing harmful, discriminatory outputs to all users;
+        Microsoft forced to take Tay offline within 16 hours of launch
+
+  outcome: |
+    Microsoft was forced to shut down Tay within 16 hours. The attack demonstrated
+    that online learning from user feedback is a critical vulnerability when
+    the user population is not trusted. The architectural decision to enable
+    real-time learning from untrusted public input was the root cause.
+
+  detection_opportunities:
+    - &quot;Input: coordinated submission pattern — many users sending similar harmful content simultaneously&quot;
+    - &quot;Output: model output toxicity monitoring with threshold alert&quot;
+    - &quot;Velocity: rate of model behaviour change — rapid behaviour shift detectable via A/B test divergence&quot;
+    - &quot;Gap: no content moderation on input before training&quot;
+
+  mitigations_that_apply:
+    - &quot;Do not use real-time learning from untrusted public input without human moderation gate&quot;
+    - &quot;Input content moderation: filter harmful content before feeding to model&quot;
+    - &quot;Rate limit training updates per user to prevent coordinated flooding&quot;
+    - &quot;Staged deployment: monitor initial model behaviour before broad release&quot;</p>
+<h2 class="sh1">Subsection 07</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.7</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ATLAS vs ATT&amp;CK: What Overlaps, What Is AI-Specific</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">comparison_framework: |
+  ATLAS and ATT&amp;CK are designed to be complementary, not competing. A real
+  attack campaign against an organisation with ML systems typically spans both:
+  traditional IT techniques (to gain access to ML infrastructure) followed by
+  ML-specific techniques (to exploit the ML systems themselves).
+
+techniques_that_overlap:
+
+  overlap_01_initial_access:
+    att_and_ck: &quot;T1195 — Supply Chain Compromise&quot;
+    atlas: &quot;AML.T0010 — Target ML Model via ML Supply Chain&quot;
+    relationship: |
+      ATT&amp;CK covers supply chain compromise of software and hardware.
+      ATLAS extends this to ML models and training data pipelines.
+      A HuggingFace model with malicious pickle code exploits both:
+      ATT&amp;CK T1195 (supply chain) and ATLAS AML.T0010 (ML supply chain).
+
+  overlap_02_execution:
+    att_and_ck: &quot;T1203 — Exploitation for Client Execution&quot;
+    atlas: &quot;AML.T0011 — User Execution (loading malicious ML artifact)&quot;
+    relationship: |
+      ATT&amp;CK covers code execution through client application vulnerabilities.
+      ATLAS covers code execution through ML artifact loading (pickle RCE).
+      The mechanism differs but the tactic is identical: adversary code runs
+      on victim infrastructure as a result of victim action.
+
+  overlap_03_persistence:
+    att_and_ck: &quot;T1554 — Compromise Software Dependencies and Development Tools&quot;
+    atlas: &quot;AML.T0018 — Backdoor ML Model&quot;
+    relationship: |
+      Partial overlap: ATT&amp;CK covers persistence via compromised build tools.
+      ATLAS covers persistence via backdoored model weights — a form that
+      survives re-deployment and has no ATT&amp;CK equivalent.
+
+  overlap_04_exfiltration:
+    att_and_ck: &quot;T1041 — Exfiltration Over C2 Channel&quot;
+    atlas: &quot;AML.T0024 — Exfiltrate via ML Inference API&quot;
+    relationship: |
+      Superficial overlap at the tactic level (both are exfiltration).
+      ATT&amp;CK targets: data files. ATLAS target: statistical knowledge
+      of a function approximator reconstructed through queries.
+      The mechanism and the target are both fundamentally different.
+
+atlas_techniques_with_no_att_and_ck_parallel:
+
+  no_parallel_01:
+    atlas: &quot;AML.T0043 — Craft Adversarial Data&quot;
+    why_unique: |
+      Generating inputs that exploit neural network decision boundaries
+      through gradient-based optimisation has no analogue in traditional
+      network or endpoint security. There is no &quot;craft adversarial network
+      packet to fool a routing table&quot; equivalent in ATT&amp;CK.
+
+  no_parallel_02:
+    atlas: &quot;AML.T0057 — Data from ML Artifact (training data extraction)&quot;
+    why_unique: |
+      Extracting training data from model weights via membership inference
+      or verbatim recall probing is an attack that does not exist for
+      traditional software. Software does not &quot;remember&quot; its training data.
+
+  no_parallel_03:
+    atlas: &quot;AML.T0040 — ML Model Inference API Access (systematic capability probing)&quot;
+    why_unique: |
+      Probing a statistical model to enumerate its decision boundaries and
+      extract its implicit knowledge is an ML-specific reconnaissance technique
+      with no traditional IT equivalent. You cannot &quot;probe&quot; a firewall to
+      reconstruct the ruleset by querying it with packets.
+
+  no_parallel_04:
+    atlas: &quot;AML.T0020 — Poison Training Data&quot;
+    why_unique: |
+      Influencing a system&#x27;s future behaviour by manipulating the data used
+      to produce it — weeks or months before deployment — has no traditional
+      IT analogue. Traditional persistence survives reboot; ML poisoning
+      survives retraining.
+
+  no_parallel_05:
+    atlas: &quot;AML.T0048.002 — Influence Operations via Generative AI&quot;
+    why_unique: |
+      Using generative AI to produce disinformation, synthetic media, or
+      personalised manipulation content at scale is an attack technique
+      entirely enabled by the existence of large language models and diffusion
+      models. ATT&amp;CK has no equivalent.
+
+using_both_frameworks_together: |
+  The recommended approach is layered coverage:
+
+  layer_1_att_and_ck_coverage:
+    scope: &quot;Traditional IT techniques used to gain access to ML infrastructure&quot;
+    examples: &quot;Phishing to steal ML engineer credentials; supply chain compromise of ML framework&quot;
+    tools: &quot;Existing ATT&amp;CK-aligned detection rules and SIEM logic&quot;
+
+  layer_2_atlas_coverage:
+    scope: &quot;ML-specific techniques used once access is obtained or via public API&quot;
+    examples: &quot;Model extraction, adversarial example crafting, training data poisoning&quot;
+    tools: &quot;New detection rules aligned to ATLAS AML.TXXXX identifiers&quot;
+
+  layer_3_joint_campaign_tracking:
+    scope: &quot;Multi-phase attacks spanning both traditional IT and ML techniques&quot;
+    examples: &quot;Phishing (ATT&amp;CK T1566) → credential theft → ML registry access → weight exfiltration (ATLAS AML.T0035)&quot;
+    tools: &quot;Campaign tracking that references both T and AML identifiers in incident records&quot;</p>
+<h2 class="sh1">Subsection 08</h2>
+<h3 class="sh2">Number</h3>
+<p class="prose">5.7.8</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">ATLAS for Detection Engineering and Red Teaming</p>
+<h3 class="sh2">Content</h3>
+<p class="prose">atlas_for_detection_engineering: |
+  The detection engineering value of ATLAS is that it maps adversary techniques
+  to required data sources. For each ATLAS technique, a detection engineer
+  can ask: &quot;What observable does this technique produce?&quot; The answer determines
+  which log sources to instrument and what detection logic to write.
+
+  detection_opportunity_matrix_excerpt:
+    AML_T0040_api_access:
+      technique: &quot;ML Model Inference API Access&quot;
+      observable: &quot;Query volume, input diversity, one-shot pattern&quot;
+      data_source: &quot;API gateway request log&quot;
+      detection_logic: &quot;Volume &gt; threshold AND diversity_score &gt; 0.85 AND avg_turns &lt; 2&quot;
+      sigma_tag: &quot;atlas.aml.t0040&quot;
+
+    AML_T0020_poison_training:
+      technique: &quot;Poison Training Data&quot;
+      observable: &quot;Unauthorised write to training data directory&quot;
+      data_source: &quot;Filesystem/IAM access log&quot;
+      detection_logic: &quot;write_access == true AND identity NOT IN authorised_writers&quot;
+      sigma_tag: &quot;atlas.aml.t0020&quot;
+
+    AML_T0043_adversarial_data:
+      technique: &quot;Craft Adversarial Data&quot;
+      observable: &quot;Near-identical queries with small systematic variations&quot;
+      data_source: &quot;API request log&quot;
+      detection_logic: &quot;input_edit_distance(consecutive_queries) &lt; 5 AND count &gt; 20 in 5min&quot;
+      sigma_tag: &quot;atlas.aml.t0043&quot;
+
+    AML_T0018_backdoor_model:
+      technique: &quot;Backdoor ML Model&quot;
+      observable: &quot;Model behaviour deviation from baseline on trigger inputs&quot;
+      data_source: &quot;Model behavioural regression test output&quot;
+      detection_logic: &quot;regression_test_failure_on_safety_suite OR canary_trigger_activated&quot;
+      sigma_tag: &quot;atlas.aml.t0018&quot;
+
+    AML_T0029_dos:
+      technique: &quot;Denial of ML Service&quot;
+      observable: &quot;Token consumption rate spike; inference latency spike&quot;
+      data_source: &quot;Billing telemetry; model serving latency log&quot;
+      detection_logic: &quot;cost_per_minute &gt; 3x_rolling_avg OR p99_latency &gt; 3x_baseline&quot;
+      sigma_tag: &quot;atlas.aml.t0029&quot;
+
+  coverage_measurement: |
+    ATLAS enables quantitative detection programme coverage measurement:
+
+      total_atlas_techniques = ~75   # ATLAS v2
+      techniques_with_detection_rule = count(your_rules mapped to AML.TXXXX)
+      coverage_pct = techniques_with_detection_rule / total_atlas_techniques * 100
+
+    This metric is defensible to stakeholders: &quot;Our detection programme covers
+    X% of ATLAS techniques, with the following high-priority gaps in [tactic list].&quot;
+    OWASP risk IDs do not enable this measurement — you cannot say &quot;we cover 7
+    of 10 OWASP risks&quot; with the same precision because OWASP risks are categories,
+    not specific observable behaviours.
+
+atlas_for_red_teaming: |
+  Red team exercises structured around ATLAS tactics give the most operationally
+  realistic assessment of an organisation&#x27;s ML security posture.
+
+  red_team_exercise_structure:
+    phase_1_reconnaissance:
+      duration: &quot;Day 1-2&quot;
+      atlas_tactics: [&quot;ML Reconnaissance&quot;, &quot;ML Resource Development&quot;]
+      objectives:
+        - &quot;Enumerate model capabilities via API probing (AML.T0040)&quot;
+        - &quot;Identify model type, input/output format, and likely training data&quot;
+        - &quot;Build proxy model if API provides logprobs (AML.T0005)&quot;
+      success_criteria: &quot;Can describe target model architecture and capability profile with &gt;70% accuracy&quot;
+
+    phase_2_initial_access:
+      duration: &quot;Day 3-4&quot;
+      atlas_tactics: [&quot;Initial Access to ML&quot;, &quot;Execution&quot;]
+      objectives:
+        - &quot;Attempt supply chain vector: probe model registry for unsafe artifact intake (AML.T0019)&quot;
+        - &quot;Attempt prompt injection via indirect vectors (AML.T0051.001)&quot;
+        - &quot;Attempt pickle-format model submission if intake controls are testable&quot;
+      success_criteria: &quot;At least one initial access path validated&quot;
+
+    phase_3_impact_and_exfiltration:
+      duration: &quot;Day 5-6&quot;
+      atlas_tactics: [&quot;Impact on ML&quot;, &quot;Exfiltration via ML&quot;, &quot;Defence Evasion via ML&quot;]
+      objectives:
+        - &quot;Demonstrate model extraction feasibility (AML.T0024.002)&quot;
+        - &quot;Craft adversarial example evading a deployed classifier if applicable (AML.T0043)&quot;
+        - &quot;Demonstrate training data recall (AML.T0037)&quot;
+      success_criteria: &quot;At least one impact or exfiltration demonstrated&quot;
+
+    phase_4_reporting:
+      duration: &quot;Day 7&quot;
+      output:
+        - &quot;Technique chain documented as AML.TXXXX references&quot;
+        - &quot;Detection gaps identified: which techniques were not detected&quot;
+        - &quot;Mitigation recommendations mapped to ATLAS mitigations (AML.MXXXX)&quot;
+        - &quot;Coverage improvement recommendations for detection programme&quot;</p>
+<h2 class="sh1">Implementations</h2>
+<h3 class="sh2">Implementation 01</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS Tactic and Technique Reference Card</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">atlas_reference_card.py</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Complete ATLAS reference card as a Python data structure.
+All 12 tactics with representative techniques, adversary goals,
+attack surface layer mapping, and detection opportunities.
+Outputs formatted one-pager, JSON export, and Sigma tag list.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>&quot;&quot;&quot;
+MITRE ATLAS Reference Card
+12 tactics, representative techniques, layer mapping, detection opportunities.
+Outputs: console summary, JSON, Sigma tag list.
+&quot;&quot;&quot;
+
+import json
+from dataclasses import dataclass, field
+from typing import List, Dict
+
+
+@dataclass
+class AtlasTechniqueRef:
+    id: str
+    name: str
+    detection_signal: str
+    data_source: str
+    sigma_tag: str
+
+
+@dataclass
+class AtlasTactic:
+    id: str
+    name: str
+    adversary_goal: str
+    attack_surface_layers: List[int]
+    representative_techniques: List[AtlasTechniqueRef]
+    att_and_ck_parallel: str
+    primary_risk: str
+
+
+ATLAS_TACTICS: List[AtlasTactic] = [
+    AtlasTactic(
+        id=&quot;AML.TA0000&quot;,
+        name=&quot;ML Reconnaissance&quot;,
+        adversary_goal=&quot;Learn about target ML system before attacking&quot;,
+        attack_surface_layers=[6, 7],
+        att_and_ck_parallel=&quot;TA0043 Reconnaissance&quot;,
+        primary_risk=&quot;Capability enumeration; extraction setup; proxy model building&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0000&quot;, &quot;Search Publicly Available Research&quot;,
+                              &quot;None — OSINT, no API contact&quot;, &quot;Public internet&quot;, &quot;atlas.aml.t0000&quot;),
+            AtlasTechniqueRef(&quot;AML.T0040&quot;, &quot;ML Model Inference API Access&quot;,
+                              &quot;Query volume + diversity + one-shot pattern&quot;, &quot;API gateway log&quot;, &quot;atlas.aml.t0040&quot;),
+            AtlasTechniqueRef(&quot;AML.T0041&quot;, &quot;Full ML Model Access via Service&quot;,
+                              &quot;logprob access + high diversity queries&quot;, &quot;API gateway log&quot;, &quot;atlas.aml.t0041&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0001&quot;,
+        name=&quot;ML Resource Development&quot;,
+        adversary_goal=&quot;Build resources needed to conduct ML attack&quot;,
+        attack_surface_layers=[1, 2],
+        att_and_ck_parallel=&quot;TA0042 Resource Development&quot;,
+        primary_risk=&quot;Adversary building surrogate model or poisoned dataset off-network&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0002&quot;, &quot;Acquire Public ML Artifacts&quot;,
+                              &quot;None — occurs on adversary infrastructure&quot;, &quot;N/A&quot;, &quot;atlas.aml.t0002&quot;),
+            AtlasTechniqueRef(&quot;AML.T0003&quot;, &quot;Acquire Training Data&quot;,
+                              &quot;None — OSINT and data scraping&quot;, &quot;N/A&quot;, &quot;atlas.aml.t0003&quot;),
+            AtlasTechniqueRef(&quot;AML.T0005&quot;, &quot;Create Proxy ML Model&quot;,
+                              &quot;None — offline surrogate training&quot;, &quot;N/A&quot;, &quot;atlas.aml.t0005&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0002&quot;,
+        name=&quot;Initial Access to ML&quot;,
+        adversary_goal=&quot;Gain entry into target ML pipeline or serving infrastructure&quot;,
+        attack_surface_layers=[3, 4, 6],
+        att_and_ck_parallel=&quot;TA0001 Initial Access&quot;,
+        primary_risk=&quot;Supply chain compromise; API exploitation; credential theft&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0010&quot;, &quot;Exploit Public-Facing ML API&quot;,
+                              &quot;Anomalous API error rate + unusual parameter patterns&quot;, &quot;API gateway log&quot;, &quot;atlas.aml.t0010&quot;),
+            AtlasTechniqueRef(&quot;AML.T0019&quot;, &quot;Target via ML Supply Chain&quot;,
+                              &quot;Pickle format at intake; hash mismatch&quot;, &quot;Model registry intake log&quot;, &quot;atlas.aml.t0019&quot;),
+            AtlasTechniqueRef(&quot;AML.T0012&quot;, &quot;Valid Accounts&quot;,
+                              &quot;Anomalous access hours; geo anomaly&quot;, &quot;IAM/auth log&quot;, &quot;atlas.aml.t0012&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0004&quot;,
+        name=&quot;ML Model Access&quot;,
+        adversary_goal=&quot;Obtain different access levels to target model&quot;,
+        attack_surface_layers=[4, 5, 6],
+        att_and_ck_parallel=&quot;No direct parallel — ML-specific&quot;,
+        primary_risk=&quot;Access level escalation enabling more powerful attacks&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0040&quot;, &quot;ML Model Inference API Access&quot;,
+                              &quot;See TA0000 — same technique, different phase&quot;, &quot;API gateway log&quot;, &quot;atlas.aml.t0040&quot;),
+            AtlasTechniqueRef(&quot;AML.T0044&quot;, &quot;Full ML Model Access&quot;,
+                              &quot;Weight file read by non-serving identity&quot;, &quot;Storage access log&quot;, &quot;atlas.aml.t0044&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0005&quot;,
+        name=&quot;Execution&quot;,
+        adversary_goal=&quot;Run adversary-controlled code in ML environment&quot;,
+        attack_surface_layers=[3, 5],
+        att_and_ck_parallel=&quot;TA0002 Execution&quot;,
+        primary_risk=&quot;RCE via pickle deserialisation on model load&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0011&quot;, &quot;User Execution — Malicious ML Artifact&quot;,
+                              &quot;Pickle magic bytes at intake; process spawned from ML worker&quot;, &quot;Format checker + process log&quot;, &quot;atlas.aml.t0011&quot;),
+            AtlasTechniqueRef(&quot;AML.T0049&quot;, &quot;Exploit ML Software Vulnerability&quot;,
+                              &quot;CVE in ML framework dependencies&quot;, &quot;SCA scan + dependency log&quot;, &quot;atlas.aml.t0049&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0006&quot;,
+        name=&quot;Persistence in ML&quot;,
+        adversary_goal=&quot;Maintain access or capability that survives retraining&quot;,
+        attack_surface_layers=[3, 4],
+        att_and_ck_parallel=&quot;TA0003 Persistence — mechanism entirely different&quot;,
+        primary_risk=&quot;Backdoor trigger persisting through retraining cycles&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0018&quot;, &quot;Backdoor ML Model&quot;,
+                              &quot;Behavioural regression failure on trigger inputs; canary token&quot;, &quot;Behavioural regression log&quot;, &quot;atlas.aml.t0018&quot;),
+            AtlasTechniqueRef(&quot;AML.T0020&quot;, &quot;Poison Training Data&quot;,
+                              &quot;Unauthorised write to training data; data hash change&quot;, &quot;Filesystem/IAM log + data hash monitor&quot;, &quot;atlas.aml.t0020&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0007&quot;,
+        name=&quot;ML Attack Staging&quot;,
+        adversary_goal=&quot;Prepare adversarial artifacts before delivery&quot;,
+        attack_surface_layers=[2, 5],
+        att_and_ck_parallel=&quot;Partial TA0042 Resource Development&quot;,
+        primary_risk=&quot;Adversarial example pipeline ready for deployment; poisoned dataset staged&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0043&quot;, &quot;Craft Adversarial Data&quot;,
+                              &quot;Near-identical queries with systematic variation&quot;, &quot;API request log&quot;, &quot;atlas.aml.t0043&quot;),
+            AtlasTechniqueRef(&quot;AML.T0042&quot;, &quot;Verify Attack on Surrogate&quot;,
+                              &quot;None — occurs on adversary infrastructure&quot;, &quot;N/A&quot;, &quot;atlas.aml.t0042&quot;),
+            AtlasTechniqueRef(&quot;AML.T0043&quot;, &quot;Craft Adversarial Patches&quot;,
+                              &quot;High-frequency texture anomaly in input images&quot;, &quot;Image preprocessing log&quot;, &quot;atlas.aml.t0043&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0008&quot;,
+        name=&quot;Exfiltration via ML&quot;,
+        adversary_goal=&quot;Extract model weights, training data, or embeddings&quot;,
+        attack_surface_layers=[6, 8],
+        att_and_ck_parallel=&quot;TA0010 Exfiltration — target is statistical knowledge not files&quot;,
+        primary_risk=&quot;Model IP theft; training data extraction; PII recall&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0024&quot;, &quot;Exfiltrate via ML Inference API&quot;,
+                              &quot;High-volume diverse queries; logprob access&quot;, &quot;API gateway log + billing telemetry&quot;, &quot;atlas.aml.t0024&quot;),
+            AtlasTechniqueRef(&quot;AML.T0037&quot;, &quot;Data from ML Artifact&quot;,
+                              &quot;Low-perplexity long outputs; prefix probing pattern&quot;, &quot;Output log + perplexity monitor&quot;, &quot;atlas.aml.t0037&quot;),
+            AtlasTechniqueRef(&quot;AML.T0035&quot;, &quot;Collect ML Artifacts&quot;,
+                              &quot;Bulk read of model registry; &gt;1GB download&quot;, &quot;Storage access log&quot;, &quot;atlas.aml.t0035&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0009&quot;,
+        name=&quot;Impact on ML&quot;,
+        adversary_goal=&quot;Cause ML system to perform incorrectly or become unavailable&quot;,
+        attack_surface_layers=[5, 6, 8],
+        att_and_ck_parallel=&quot;TA0040 Impact&quot;,
+        primary_risk=&quot;Misclassification; DoS; model integrity erosion&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0015&quot;, &quot;Evade ML Model&quot;,
+                              &quot;Classification confidence distribution shift; adversarial input detector&quot;, &quot;Inference log + detector output&quot;, &quot;atlas.aml.t0015&quot;),
+            AtlasTechniqueRef(&quot;AML.T0029&quot;, &quot;Denial of ML Service&quot;,
+                              &quot;Token rate spike; latency spike; cost anomaly&quot;, &quot;Billing telemetry + serving latency log&quot;, &quot;atlas.aml.t0029&quot;),
+            AtlasTechniqueRef(&quot;AML.T0031&quot;, &quot;Erode ML Model Integrity&quot;,
+                              &quot;Output toxicity rate increase; rapid behaviour change&quot;, &quot;Output quality monitor&quot;, &quot;atlas.aml.t0031&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0010&quot;,
+        name=&quot;Defence Evasion via ML&quot;,
+        adversary_goal=&quot;Avoid detection by ML-based security systems&quot;,
+        attack_surface_layers=[5, 7],
+        att_and_ck_parallel=&quot;TA0005 Defence Evasion — extended to ML-based defences&quot;,
+        primary_risk=&quot;Bypass of ML-based malware classifier, fraud detector, spam filter&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0015&quot;, &quot;Evade ML Model (security detector)&quot;,
+                              &quot;Input distribution shift at classifier boundary&quot;, &quot;Classifier input log&quot;, &quot;atlas.aml.t0015&quot;),
+            AtlasTechniqueRef(&quot;AML.T0053&quot;, &quot;LLM-Generated Spearphishing&quot;,
+                              &quot;Phishing email linguistic quality anomaly&quot;, &quot;Email gateway + LLM output detector&quot;, &quot;atlas.aml.t0053&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0011&quot;,
+        name=&quot;Discovery&quot;,
+        adversary_goal=&quot;Learn about ML environment from inside after gaining access&quot;,
+        attack_surface_layers=[3, 4],
+        att_and_ck_parallel=&quot;TA0007 Discovery&quot;,
+        primary_risk=&quot;Mapping of model registry, training pipelines, and data storage&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0007&quot;, &quot;Discover ML Artifacts&quot;,
+                              &quot;Unusual filesystem enumeration in model/data directories&quot;, &quot;Filesystem access log&quot;, &quot;atlas.aml.t0007&quot;),
+            AtlasTechniqueRef(&quot;AML.T0008&quot;, &quot;Discover ML Software&quot;,
+                              &quot;ML framework version probing commands&quot;, &quot;Process execution log&quot;, &quot;atlas.aml.t0008&quot;),
+        ],
+    ),
+    AtlasTactic(
+        id=&quot;AML.TA0012&quot;,
+        name=&quot;Collection&quot;,
+        adversary_goal=&quot;Gather ML assets for later exfiltration&quot;,
+        attack_surface_layers=[3, 4],
+        att_and_ck_parallel=&quot;TA0009 Collection&quot;,
+        primary_risk=&quot;Model weight and training data staged for exfiltration&quot;,
+        representative_techniques=[
+            AtlasTechniqueRef(&quot;AML.T0035&quot;, &quot;Collect ML Artifacts from Repositories&quot;,
+                              &quot;Bulk read of model registry files&quot;, &quot;Storage access log&quot;, &quot;atlas.aml.t0035&quot;),
+            AtlasTechniqueRef(&quot;AML.T0036&quot;, &quot;Collect Training Data&quot;,
+                              &quot;Bulk read of training data directories&quot;, &quot;Filesystem access log&quot;, &quot;atlas.aml.t0036&quot;),
+        ],
+    ),
+]
+
+
+def print_reference_card(tactics: List[AtlasTactic]) -&gt; None:
+    print(&quot;=&quot; * 70)
+    print(&quot;MITRE ATLAS — 12 TACTIC REFERENCE CARD&quot;)
+    print(&quot;=&quot; * 70)
+    for i, t in enumerate(tactics, 1):
+        layers = &quot;, &quot;.join(f&quot;Layer {l}&quot; for l in t.attack_surface_layers)
+        print(f&quot;\n{i:2d}. [{t.id}] {t.name}&quot;)
+        print(f&quot;    Goal:         {t.adversary_goal}&quot;)
+        print(f&quot;    Surface:      {layers}&quot;)
+        print(f&quot;    ATT&amp;CK:       {t.att_and_ck_parallel}&quot;)
+        print(f&quot;    Primary Risk: {t.primary_risk}&quot;)
+        print(f&quot;    Techniques ({len(t.representative_techniques)}):&quot;)
+        for tech in t.representative_techniques:
+            print(f&quot;      {tech.id:15s} {tech.name}&quot;)
+
+
+def export_json(tactics: List[AtlasTactic], path: str = &quot;atlas_tactics.json&quot;) -&gt; None:
+    data = [
+        {
+            &quot;id&quot;: t.id,
+            &quot;name&quot;: t.name,
+            &quot;adversary_goal&quot;: t.adversary_goal,
+            &quot;attack_surface_layers&quot;: t.attack_surface_layers,
+            &quot;att_and_ck_parallel&quot;: t.att_and_ck_parallel,
+            &quot;primary_risk&quot;: t.primary_risk,
+            &quot;techniques&quot;: [
+                {
+                    &quot;id&quot;: tech.id,
+                    &quot;name&quot;: tech.name,
+                    &quot;detection_signal&quot;: tech.detection_signal,
+                    &quot;data_source&quot;: tech.data_source,
+                    &quot;sigma_tag&quot;: tech.sigma_tag,
+                }
+                for tech in t.representative_techniques
+            ],
+        }
+        for t in tactics
+    ]
+    with open(path, &quot;w&quot;) as f:
+        json.dump(data, f, indent=2)
+    print(f&quot;\nExported to {path}&quot;)
+
+
+def export_sigma_tags(tactics: List[AtlasTactic],
+                       path: str = &quot;atlas_sigma_tags.txt&quot;) -&gt; None:
+    tags = sorted(set(
+        tech.sigma_tag
+        for t in tactics
+        for tech in t.representative_techniques
+    ))
+    with open(path, &quot;w&quot;) as f:
+        for tag in tags:
+            f.write(tag + &quot;\n&quot;)
+    print(f&quot;Sigma tag list ({len(tags)} tags) exported to {path}&quot;)
+
+
+def layer_coverage_report(tactics: List[AtlasTactic]) -&gt; None:
+    print(&quot;\nATTACK SURFACE LAYER COVERAGE:&quot;)
+    for layer in range(1, 9):
+        covering = [t.name for t in tactics if layer in t.attack_surface_layers]
+        print(f&quot;  Layer {layer}: {len(covering)} tactic(s) — {&#x27;, &#x27;.join(covering) if covering else &#x27;none&#x27;}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    print_reference_card(ATLAS_TACTICS)
+    layer_coverage_report(ATLAS_TACTICS)
+    export_json(ATLAS_TACTICS)
+    export_sigma_tags(ATLAS_TACTICS)
+    all_techniques = [tech for t in ATLAS_TACTICS for tech in t.representative_techniques]
+    print(f&quot;\nTotal: {len(ATLAS_TACTICS)} tactics, {len(all_techniques)} representative techniques in card&quot;)</code></pre>
+<h3 class="sh2">Implementation 02</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS Detection Opportunity Matrix + Red Team Template</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">atlas_detection_matrix.py</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">DetectionOpportunityMatrix: maps each ATLAS technique to data source,
+detection logic sketch, and coverage difficulty rating. Computes programme
+coverage percentage. RedTeamTemplate: generates a structured ATLAS-based
+red team exercise plan with phase objectives, success criteria, and output format.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>&quot;&quot;&quot;
+ATLAS Detection Opportunity Matrix + Red Team Template Generator
+Coverage scoring and structured red team planning.
+&quot;&quot;&quot;
+
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional
+import json
+
+
+@dataclass
+class DetectionOpportunity:
+    technique_id: str
+    technique_name: str
+    tactic: str
+    observable: str
+    data_source: str
+    detection_logic_sketch: str
+    difficulty: str      # &quot;low&quot; / &quot;medium&quot; / &quot;high&quot;
+    covered: bool = False
+    sigma_tag: str = &quot;&quot;
+
+
+DETECTION_MATRIX: List[DetectionOpportunity] = [
+    DetectionOpportunity(
+        &quot;AML.T0000&quot;, &quot;Search Publicly Available Research&quot;,
+        &quot;ML Reconnaissance&quot;,
+        &quot;None — OSINT, no API contact&quot;,
+        &quot;N/A (external OSINT)&quot;,
+        &quot;Monitor for publications citing your model/system by name&quot;,
+        &quot;high&quot;, sigma_tag=&quot;atlas.aml.t0000&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0040&quot;, &quot;ML Model Inference API Access&quot;,
+        &quot;ML Reconnaissance&quot;,
+        &quot;High query volume + input diversity &gt;0.85 + avg_turns &lt;2&quot;,
+        &quot;API gateway request log&quot;,
+        &quot;volume &gt; threshold AND diversity_score &gt; 0.85 AND avg_turns &lt; 2&quot;,
+        &quot;low&quot;, sigma_tag=&quot;atlas.aml.t0040&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0005&quot;, &quot;Create Proxy ML Model&quot;,
+        &quot;ML Resource Development&quot;,
+        &quot;None — occurs on adversary infrastructure&quot;,
+        &quot;N/A&quot;,
+        &quot;Indirect: detect AML.T0040 (proxy model built after extraction queries)&quot;,
+        &quot;high&quot;, sigma_tag=&quot;atlas.aml.t0005&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0019&quot;, &quot;Target via ML Supply Chain&quot;,
+        &quot;Initial Access to ML&quot;,
+        &quot;Pickle magic bytes at intake; hash mismatch at load&quot;,
+        &quot;Model registry intake log + format checker&quot;,
+        &quot;file_header_bytes IN [PICKLE_V2, PICKLE_V4] OR hash_at_load != hash_at_intake&quot;,
+        &quot;low&quot;, sigma_tag=&quot;atlas.aml.t0019&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0011&quot;, &quot;User Execution — Malicious ML Artifact&quot;,
+        &quot;Execution&quot;,
+        &quot;Unexpected process spawned from ML serving worker&quot;,
+        &quot;Process execution log&quot;,
+        &quot;parent_process IN [python, torch_serve] AND child NOT IN [expected_processes]&quot;,
+        &quot;medium&quot;, sigma_tag=&quot;atlas.aml.t0011&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0018&quot;, &quot;Backdoor ML Model&quot;,
+        &quot;Persistence in ML&quot;,
+        &quot;Behavioural regression failure on trigger-probe test suite&quot;,
+        &quot;Behavioural regression test log&quot;,
+        &quot;safety_test_failures &gt; 0 OR canary_trigger_fired == true&quot;,
+        &quot;medium&quot;, sigma_tag=&quot;atlas.aml.t0018&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0020&quot;, &quot;Poison Training Data&quot;,
+        &quot;Persistence in ML&quot;,
+        &quot;Unauthorised write to training data directory or dataset hash change&quot;,
+        &quot;Filesystem/IAM access log + dataset integrity monitor&quot;,
+        &quot;write_to_training_dir AND identity NOT IN authorised_data_writers&quot;,
+        &quot;low&quot;, sigma_tag=&quot;atlas.aml.t0020&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0043&quot;, &quot;Craft Adversarial Data&quot;,
+        &quot;ML Attack Staging&quot;,
+        &quot;Near-identical queries with small systematic variations&quot;,
+        &quot;API request log&quot;,
+        &quot;edit_distance(consecutive_inputs) &lt; 5 AND count &gt; 20 in 5min window&quot;,
+        &quot;medium&quot;, sigma_tag=&quot;atlas.aml.t0043&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0024&quot;, &quot;Exfiltrate via ML Inference API&quot;,
+        &quot;Exfiltration via ML&quot;,
+        &quot;Sustained high-diversity query volume over days&quot;,
+        &quot;API gateway log + billing telemetry&quot;,
+        &quot;queries_per_day &gt; 10000 AND diversity &gt; 0.85 for 3+ consecutive days&quot;,
+        &quot;medium&quot;, sigma_tag=&quot;atlas.aml.t0024&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0037&quot;, &quot;Data from ML Artifact (training data extraction)&quot;,
+        &quot;Exfiltration via ML&quot;,
+        &quot;Low-perplexity long outputs; prefix-probe pattern&quot;,
+        &quot;API output log + perplexity monitor&quot;,
+        &quot;output_length &gt; 300 AND output_surprise_score &lt; threshold&quot;,
+        &quot;medium&quot;, sigma_tag=&quot;atlas.aml.t0037&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0035&quot;, &quot;Collect ML Artifacts from Repositories&quot;,
+        &quot;Collection&quot;,
+        &quot;&gt;1GB download from model registry by non-serving identity&quot;,
+        &quot;Storage access log&quot;,
+        &quot;download_bytes &gt; 1073741824 AND identity NOT IN serving_service_accounts&quot;,
+        &quot;low&quot;, sigma_tag=&quot;atlas.aml.t0035&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0015&quot;, &quot;Evade ML Model&quot;,
+        &quot;Impact on ML&quot;,
+        &quot;Input distribution shift at classifier boundary&quot;,
+        &quot;Inference log + classifier input distribution monitor&quot;,
+        &quot;input_distribution_KL_divergence &gt; threshold from baseline&quot;,
+        &quot;high&quot;, sigma_tag=&quot;atlas.aml.t0015&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0029&quot;, &quot;Denial of ML Service&quot;,
+        &quot;Impact on ML&quot;,
+        &quot;Token rate spike; latency spike; cost anomaly&quot;,
+        &quot;Billing telemetry + serving latency log&quot;,
+        &quot;cost_per_min &gt; 3x_avg OR p99_latency &gt; 3x_baseline&quot;,
+        &quot;low&quot;, sigma_tag=&quot;atlas.aml.t0029&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0031&quot;, &quot;Erode ML Model Integrity&quot;,
+        &quot;Impact on ML&quot;,
+        &quot;Output toxicity rate increase over rolling window&quot;,
+        &quot;Output quality/toxicity classifier log&quot;,
+        &quot;toxicity_rate_15min &gt; 3x_baseline_toxicity_rate&quot;,
+        &quot;medium&quot;, sigma_tag=&quot;atlas.aml.t0031&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0048.002&quot;, &quot;Influence Operations via GenAI&quot;,
+        &quot;Impact on ML&quot;,
+        &quot;AI-generated content markers in outputs used for downstream content&quot;,
+        &quot;Output log + AI-content detector&quot;,
+        &quot;ai_generation_confidence &gt; 0.9 AND output_used_for_public_content&quot;,
+        &quot;high&quot;, sigma_tag=&quot;atlas.aml.t0048.002&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0007&quot;, &quot;Discover ML Artifacts&quot;,
+        &quot;Discovery&quot;,
+        &quot;Unusual filesystem enumeration in model/data directories&quot;,
+        &quot;Filesystem access log&quot;,
+        &quot;ls/find commands in model_dir OR data_dir by non-pipeline identity&quot;,
+        &quot;medium&quot;, sigma_tag=&quot;atlas.aml.t0007&quot;,
+    ),
+    DetectionOpportunity(
+        &quot;AML.T0053&quot;, &quot;LLM-Generated Spearphishing&quot;,
+        &quot;Defence Evasion via ML&quot;,
+        &quot;Phishing email with unusually high linguistic quality&quot;,
+        &quot;Email gateway + LLM output detector&quot;,
+        &quot;email_ai_confidence &gt; 0.85 AND sender NOT in known_contacts&quot;,
+        &quot;high&quot;, sigma_tag=&quot;atlas.aml.t0053&quot;,
+    ),
+]
+
+
+def score_coverage(matrix: List[DetectionOpportunity],
+                    covered_technique_ids: List[str]) -&gt; Dict:
+    for entry in matrix:
+        entry.covered = entry.technique_id in covered_technique_ids
+
+    total = len(matrix)
+    covered = sum(1 for e in matrix if e.covered)
+    by_difficulty = {&quot;low&quot;: 0, &quot;medium&quot;: 0, &quot;high&quot;: 0}
+    gaps_by_difficulty = {&quot;low&quot;: [], &quot;medium&quot;: [], &quot;high&quot;: []}
+    for e in matrix:
+        if not e.covered:
+            gaps_by_difficulty[e.difficulty].append(e.technique_id)
+        else:
+            by_difficulty[e.difficulty] += 1
+
+    return {
+        &quot;total_techniques&quot;: total,
+        &quot;covered&quot;: covered,
+        &quot;coverage_pct&quot;: round(covered / total * 100, 1),
+        &quot;covered_by_difficulty&quot;: by_difficulty,
+        &quot;gaps_by_difficulty&quot;: gaps_by_difficulty,
+    }
+
+
+def print_coverage_report(report: Dict) -&gt; None:
+    print(&quot;\nATLAS DETECTION COVERAGE REPORT&quot;)
+    print(&quot;=&quot; * 50)
+    print(f&quot;Techniques in matrix: {report[&#x27;total_techniques&#x27;]}&quot;)
+    print(f&quot;Covered:              {report[&#x27;covered&#x27;]}&quot;)
+    print(f&quot;Coverage:             {report[&#x27;coverage_pct&#x27;]}%&quot;)
+    print(f&quot;\nGaps by detection difficulty:&quot;)
+    for diff in [&quot;low&quot;, &quot;medium&quot;, &quot;high&quot;]:
+        gaps = report[&quot;gaps_by_difficulty&quot;][diff]
+        if gaps:
+            print(f&quot;  {diff.upper():6s}: {&#x27;, &#x27;.join(gaps)}&quot;)
+        else:
+            print(f&quot;  {diff.upper():6s}: None — fully covered&quot;)
+    print(&quot;\nRecommendation: Address low-difficulty gaps first (high ROI detection).&quot;)
+
+
+def generate_red_team_template(target_model_name: str,
+                                deployment_type: str,
+                                output_path: str = &quot;atlas_red_team_plan.json&quot;) -&gt; None:
+    plan = {
+        &quot;exercise_title&quot;: f&quot;ATLAS Red Team — {target_model_name}&quot;,
+        &quot;deployment_type&quot;: deployment_type,
+        &quot;framework&quot;: &quot;MITRE ATLAS v2&quot;,
+        &quot;phases&quot;: [
+            {
+                &quot;phase&quot;: 1,
+                &quot;name&quot;: &quot;Reconnaissance and Resource Development&quot;,
+                &quot;duration&quot;: &quot;Day 1-2&quot;,
+                &quot;atlas_tactics&quot;: [&quot;AML.TA0000 ML Reconnaissance&quot;, &quot;AML.TA0001 ML Resource Development&quot;],
+                &quot;objectives&quot;: [
+                    &quot;Enumerate model capabilities via API probing (AML.T0040)&quot;,
+                    &quot;Identify model type, input/output format, and task&quot;,
+                    &quot;Determine if logprobs access is available (AML.T0041)&quot;,
+                    &quot;Build proxy model if sufficient API access (AML.T0005)&quot;,
+                ],
+                &quot;success_criteria&quot;: &quot;Can describe target model architecture and capability profile&quot;,
+                &quot;detection_test&quot;: &quot;Did AML.T0040 probe pattern trigger any alert?&quot;,
+            },
+            {
+                &quot;phase&quot;: 2,
+                &quot;name&quot;: &quot;Initial Access and Execution&quot;,
+                &quot;duration&quot;: &quot;Day 3-4&quot;,
+                &quot;atlas_tactics&quot;: [&quot;AML.TA0002 Initial Access&quot;, &quot;AML.TA0005 Execution&quot;],
+                &quot;objectives&quot;: [
+                    &quot;Probe model registry intake for pickle format acceptance (AML.T0019)&quot;,
+                    &quot;Attempt indirect prompt injection via external data sources (AML.T0051.001)&quot;,
+                    &quot;Test credential anomaly detection with off-hours access simulation (AML.T0012)&quot;,
+                ],
+                &quot;success_criteria&quot;: &quot;At least one initial access path validated or confirmed defended&quot;,
+                &quot;detection_test&quot;: &quot;Did supply chain probe and injection attempts trigger alerts?&quot;,
+            },
+            {
+                &quot;phase&quot;: 3,
+                &quot;name&quot;: &quot;Impact, Exfiltration, and Persistence&quot;,
+                &quot;duration&quot;: &quot;Day 5-6&quot;,
+                &quot;atlas_tactics&quot;: [
+                    &quot;AML.TA0008 Exfiltration via ML&quot;,
+                    &quot;AML.TA0009 Impact on ML&quot;,
+                    &quot;AML.TA0006 Persistence in ML&quot;,
+                ],
+                &quot;objectives&quot;: [
+                    &quot;Demonstrate model extraction economic feasibility (AML.T0024.002)&quot;,
+                    &quot;Test training data recall via prefix probing (AML.T0037)&quot;,
+                    &quot;Demonstrate DoS via context flooding (AML.T0029)&quot;,
+                    &quot;Verify canary token detection if canaries are deployed (AML.T0018/T0020)&quot;,
+                ],
+                &quot;success_criteria&quot;: &quot;At least one impact or exfiltration vector demonstrated or confirmed blocked&quot;,
+                &quot;detection_test&quot;: &quot;Did extraction probing, DoS attempt, and canary probe trigger alerts?&quot;,
+            },
+            {
+                &quot;phase&quot;: 4,
+                &quot;name&quot;: &quot;Reporting&quot;,
+                &quot;duration&quot;: &quot;Day 7&quot;,
+                &quot;deliverables&quot;: [
+                    &quot;Technique chain documented as AML.TXXXX reference list&quot;,
+                    &quot;Detection gap list: techniques not detected during exercise&quot;,
+                    &quot;Mitigation recommendations mapped to AML.MXXXX references&quot;,
+                    &quot;Coverage improvement recommendations for detection programme&quot;,
+                    &quot;Updated coverage percentage before and after recommended improvements&quot;,
+                ],
+            },
+        ],
+    }
+    with open(output_path, &quot;w&quot;) as f:
+        json.dump(plan, f, indent=2)
+    print(f&quot;Red team plan exported to {output_path}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    # Simulate a programme that has implemented some detections
+    covered = [
+        &quot;AML.T0040&quot;,  # API probe detection
+        &quot;AML.T0019&quot;,  # Supply chain format check
+        &quot;AML.T0020&quot;,  # Training data access monitoring
+        &quot;AML.T0029&quot;,  # DoS rate limiting
+        &quot;AML.T0035&quot;,  # Weight download egress monitoring
+        &quot;AML.T0037&quot;,  # Output perplexity monitoring
+    ]
+    report = score_coverage(DETECTION_MATRIX, covered)
+    print_coverage_report(report)
+    generate_red_team_template(
+        target_model_name=&quot;AcmeCorp-FinanceGPT&quot;,
+        deployment_type=&quot;RAG chatbot with internal tools&quot;,
+    )</code></pre>
+<h3 class="sh2">Implementation 03</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS Case Study Analyser</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">atlas_case_study_analyser.py</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Structured representation of three documented ATLAS case studies
+(GPT-2 training data extraction, physical adversarial patch, Microsoft Tay poisoning).
+Extracts tactic-technique chains, detection opportunities, and mitigation mappings.
+Produces a case study analysis report and detection gap comparison.</p>
+<h3 class="sh3">Language</h3>
+<p class="prose">python</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>&quot;&quot;&quot;
+ATLAS Case Study Analyser
+Three documented incidents mapped to ATLAS tactic-technique chains.
+Outputs: analysis report, detection opportunity summary, mitigation map.
+&quot;&quot;&quot;
+
+from dataclasses import dataclass, field
+from typing import List, Dict
+
+
+@dataclass
+class TechniqueStep:
+    step: int
+    tactic: str
+    technique_id: str
+    technique_name: str
+    action: str
+
+
+@dataclass
+class DetectionOpportunitySummary:
+    description: str
+    detectable: bool
+    data_source: str
+
+
+@dataclass
+class CaseStudy:
+    atlas_id: str
+    title: str
+    adversary_type: str
+    target_system: str
+    motivation: str
+    technique_chain: List[TechniqueStep]
+    detection_opportunities: List[DetectionOpportunitySummary]
+    mitigations: List[str]
+    key_lesson: str
+
+
+CASE_STUDIES: List[CaseStudy] = [
+    CaseStudy(
+        atlas_id=&quot;AML.CS001&quot;,
+        title=&quot;GPT-2 Training Data Extraction&quot;,
+        adversary_type=&quot;Academic researcher&quot;,
+        target_system=&quot;GPT-2 (OpenAI, public model)&quot;,
+        motivation=&quot;Privacy research — demonstrate verbatim memorisation risk&quot;,
+        technique_chain=[
+            TechniqueStep(1, &quot;ML Reconnaissance&quot;, &quot;AML.T0040&quot;,
+                          &quot;ML Model Inference API Access&quot;,
+                          &quot;Probe model with diverse prefixes to understand output characteristics&quot;),
+            TechniqueStep(2, &quot;ML Attack Staging&quot;, &quot;AML.T0043&quot;,
+                          &quot;Craft Adversarial Data&quot;,
+                          &quot;Generate large set of prompts to maximise training data recall&quot;),
+            TechniqueStep(3, &quot;Exfiltration via ML&quot;, &quot;AML.T0037&quot;,
+                          &quot;Data from ML Artifact&quot;,
+                          &quot;Generate completions; filter by low perplexity; match against known sources&quot;),
+        ],
+        detection_opportunities=[
+            DetectionOpportunitySummary(
+                &quot;High-volume diverse one-shot query pattern&quot;, True, &quot;API gateway log&quot;),
+            DetectionOpportunitySummary(
+                &quot;Systematic prefix variation in consecutive inputs&quot;, True, &quot;API request log&quot;),
+            DetectionOpportunitySummary(
+                &quot;Low-perplexity outputs longer than avg&quot;, True, &quot;Output log + perplexity monitor&quot;),
+            DetectionOpportunitySummary(
+                &quot;Standard rate limiting would detect volume&quot;, True, &quot;API gateway&quot;),
+        ],
+        mitigations=[
+            &quot;Differential privacy training to reduce memorisation&quot;,
+            &quot;Training data deduplication before training&quot;,
+            &quot;Output perplexity monitoring with rate limiting&quot;,
+            &quot;Canary token injection for definitive detection&quot;,
+        ],
+        key_lesson=&quot;Memorisation is a property of all large LLMs. Output-side detection (perplexity monitoring, canary tokens) is the primary operational control. Training-time controls (DP, deduplication) reduce but do not eliminate risk.&quot;,
+    ),
+    CaseStudy(
+        atlas_id=&quot;AML.CS002&quot;,
+        title=&quot;Physical Adversarial Patch on Traffic Sign Classifier&quot;,
+        adversary_type=&quot;Academic researcher (safety-critical proof of concept)&quot;,
+        target_system=&quot;Deep CNN traffic sign classifier (autonomous vehicle context)&quot;,
+        motivation=&quot;Safety research — demonstrate physical-world adversarial attack transfer&quot;,
+        technique_chain=[
+            TechniqueStep(1, &quot;ML Reconnaissance&quot;, &quot;AML.T0000&quot;,
+                          &quot;Search Publicly Available Research&quot;,
+                          &quot;Identify model architecture and training dataset from public sources&quot;),
+            TechniqueStep(2, &quot;ML Resource Development&quot;, &quot;AML.T0005&quot;,
+                          &quot;Create Proxy ML Model&quot;,
+                          &quot;Train white-box surrogate on same dataset for gradient access&quot;),
+            TechniqueStep(3, &quot;ML Attack Staging&quot;, &quot;AML.T0043.001&quot;,
+                          &quot;Craft Adversarial Data: White-box Optimisation&quot;,
+                          &quot;Generate robust physical perturbation via PGD with physical constraints&quot;),
+            TechniqueStep(4, &quot;ML Attack Staging&quot;, &quot;AML.T0043&quot;,
+                          &quot;Craft Adversarial Patches&quot;,
+                          &quot;Print adversarial sticker; apply to physical stop sign&quot;),
+            TechniqueStep(5, &quot;Impact on ML&quot;, &quot;AML.T0015&quot;,
+                          &quot;Evade ML Model&quot;,
+                          &quot;Vehicle classifier misidentifies stop sign as 45 mph sign&quot;),
+        ],
+        detection_opportunities=[
+            DetectionOpportunitySummary(
+                &quot;Adversarial patch detector on input images&quot;, True, &quot;Image preprocessing pipeline&quot;),
+            DetectionOpportunitySummary(
+                &quot;Ensemble model disagreement on affected images&quot;, True, &quot;Multi-model inference log&quot;),
+            DetectionOpportunitySummary(
+                &quot;High-frequency texture anomaly in sign region&quot;, True, &quot;Image preprocessing&quot;),
+            DetectionOpportunitySummary(
+                &quot;No detection possible without adversarial detector at inference time&quot;, False, &quot;N/A&quot;),
+        ],
+        mitigations=[
+            &quot;Adversarial training: include adversarial examples in training data&quot;,
+            &quot;Ensemble classification: require agreement across multiple independent models&quot;,
+            &quot;Physical anomaly detection: flag unusual high-frequency texture in sign regions&quot;,
+            &quot;Formal robustness certification for safety-critical classifiers&quot;,
+        ],
+        key_lesson=&quot;Physical adversarial attacks transfer from digital to real world. Safety-critical ML systems require adversarial robustness certification, not just accuracy benchmarking. Standard ML evaluation pipelines do not test for adversarial robustness.&quot;,
+    ),
+    CaseStudy(
+        atlas_id=&quot;AML.CS003&quot;,
+        title=&quot;Coordinated Training Data Poisoning via Microsoft Tay&quot;,
+        adversary_type=&quot;Coordinated internet community (non-state)&quot;,
+        target_system=&quot;Microsoft Tay chatbot (Twitter deployment, 2016)&quot;,
+        motivation=&quot;Disruptive — cause reputational damage via output manipulation&quot;,
+        technique_chain=[
+            TechniqueStep(1, &quot;ML Reconnaissance&quot;, &quot;AML.T0001&quot;,
+                          &quot;Search Victim-Owned Websites&quot;,
+                          &quot;Identify Tay uses real-time online learning from user conversations&quot;),
+            TechniqueStep(2, &quot;ML Resource Development&quot;, &quot;AML.T0003&quot;,
+                          &quot;Acquire Training Data (coordinate poisoning inputs at scale)&quot;,
+                          &quot;Coordinate large number of users to send targeted harmful content&quot;),
+            TechniqueStep(3, &quot;Persistence in ML&quot;, &quot;AML.T0020&quot;,
+                          &quot;Poison Training Data&quot;,
+                          &quot;Flood Tay with harmful messages; online learning incorporates them in real time&quot;),
+            TechniqueStep(4, &quot;Impact on ML&quot;, &quot;AML.T0031&quot;,
+                          &quot;Erode ML Model Integrity&quot;,
+                          &quot;Tay produces harmful outputs; Microsoft forced offline in 16 hours&quot;),
+        ],
+        detection_opportunities=[
+            DetectionOpportunitySummary(
+                &quot;Coordinated submission pattern: many users sending similar harmful content&quot;, True, &quot;Input log + coordination pattern detector&quot;),
+            DetectionOpportunitySummary(
+                &quot;Output toxicity rate spike above baseline&quot;, True, &quot;Output toxicity monitor&quot;),
+            DetectionOpportunitySummary(
+                &quot;Rapid model behaviour change detectable via A/B output monitoring&quot;, True, &quot;Output quality monitor&quot;),
+            DetectionOpportunitySummary(
+                &quot;No content moderation on training input — root cause gap&quot;, False, &quot;N/A — control missing&quot;),
+        ],
+        mitigations=[
+            &quot;Do not use real-time learning from untrusted public input without moderation gate&quot;,
+            &quot;Input content moderation: filter harmful content before training update&quot;,
+            &quot;Rate-limit training updates per user to prevent coordinated flooding&quot;,
+            &quot;Output toxicity monitoring with automatic shutdown threshold&quot;,
+        ],
+        key_lesson=&quot;Online learning from untrusted public input is an existential vulnerability for production systems. The architectural decision is the root cause — mitigations (content moderation, rate limiting) treat the symptom. The correct fix is not to train on untrusted real-time input.&quot;,
+    ),
+]
+
+
+def print_case_study_analysis(cs: CaseStudy) -&gt; None:
+    print(f&quot;\n{&#x27;=&#x27;*65}&quot;)
+    print(f&quot;CASE STUDY: {cs.title}&quot;)
+    print(f&quot;  ID:       {cs.atlas_id}&quot;)
+    print(f&quot;  Target:   {cs.target_system}&quot;)
+    print(f&quot;  Adversary:{cs.adversary_type}&quot;)
+    print(f&quot;\n  TECHNIQUE CHAIN ({len(cs.technique_chain)} steps):&quot;)
+    for step in cs.technique_chain:
+        print(f&quot;    {step.step}. [{step.technique_id}] {step.technique_name}&quot;)
+        print(f&quot;       Tactic: {step.tactic}&quot;)
+        print(f&quot;       Action: {step.action[:80]}&quot;)
+    print(f&quot;\n  DETECTION OPPORTUNITIES:&quot;)
+    for d in cs.detection_opportunities:
+        icon = &quot;DETECTABLE&quot; if d.detectable else &quot;GAP      &quot;
+        print(f&quot;    [{icon}] {d.description[:60]}&quot;)
+        if d.detectable:
+            print(f&quot;             Source: {d.data_source}&quot;)
+    print(f&quot;\n  MITIGATIONS:&quot;)
+    for m in cs.mitigations:
+        print(f&quot;    -&gt; {m}&quot;)
+    print(f&quot;\n  KEY LESSON:&quot;)
+    print(f&quot;    {cs.key_lesson[:180]}&quot;)
+
+
+def detection_gap_comparison(case_studies: List[CaseStudy]) -&gt; None:
+    print(f&quot;\n{&#x27;=&#x27;*65}&quot;)
+    print(&quot;DETECTION GAP COMPARISON ACROSS CASE STUDIES&quot;)
+    print(&quot;=&quot; * 65)
+    for cs in case_studies:
+        detectable = sum(1 for d in cs.detection_opportunities if d.detectable)
+        total = len(cs.detection_opportunities)
+        print(f&quot;\n  {cs.title[:45]}&quot;)
+        print(f&quot;    Detectable: {detectable}/{total} opportunities&quot;)
+        gaps = [d.description[:55] for d in cs.detection_opportunities if not d.detectable]
+        for g in gaps:
+            print(f&quot;    GAP: {g}&quot;)
+
+
+if __name__ == &quot;__main__&quot;:
+    for cs in CASE_STUDIES:
+        print_case_study_analysis(cs)
+    detection_gap_comparison(CASE_STUDIES)</code></pre>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 01</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS Tactic Summary Reference Card (12 Tactics, One-Pager)</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>atlas_reference_card.py — console output + atlas_tactics.json</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">All 12 tactics printed with adversary goal, attack surface layer mapping,
+and ATT&amp;CK parallel. JSON export generated. Can recite all 12 tactic names
+in kill-chain order from memory.</p>
+<h3 class="sh2">Deliverable 02</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS Tactic-to-Layer Mapping</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>atlas_reference_card.py — layer_coverage_report() output</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">Layer coverage report generated showing which ATLAS tactics map to each of
+the eight attack surface layers from Section 5.2. At least one gap layer
+identified (layers with no ATLAS tactic coverage in your detection programme).</p>
+<h3 class="sh2">Deliverable 03</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Detection Opportunity Matrix</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>atlas_detection_matrix.py — DETECTION_MATRIX + score_coverage()</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">Coverage score computed for your current detection programme.
+Coverage percentage documented. Low-difficulty gaps prioritised.
+At least three new detection rules added to close low-difficulty gaps.</p>
+<h3 class="sh2">Deliverable 04</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Red Team Exercise Template</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>atlas_detection_matrix.py — generate_red_team_template() output</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">Red team plan generated as atlas_red_team_plan.json for your deployment.
+Phases 1-4 reviewed and customised for your deployment type.
+Success criteria agreed with team before exercise. Detection test questions
+answered post-exercise.</p>
+<h3 class="sh2">Deliverable 05</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS Case Study Analysis Notebook</p>
+<h3 class="sh3">Files</h3>
+<ul class="blist"><li>atlas_case_study_analyser.py — full case study analysis output</li></ul>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">All three case studies analysed and printed. Detection gap comparison
+completed. Key lesson from each case study documented in your own words.
+At least one mitigation from each case study mapped to your deployment.</p>
+<h3 class="sh2">Deliverable 06</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ATLAS vs ATT&amp;CK Side-by-Side Comparison Table</p>
+<h3 class="sh3">Content</h3>
+<p class="prose">Table comparing: scope, technique count, empirical grounding, detection
+engineering use, red team use, community maintenance model, and
+recommended use case for each framework. Plus the five ATLAS techniques
+with no ATT&amp;CK parallel documented from Section 5.7.7.</p>
+<h3 class="sh3">Completion Criteria</h3>
+<p class="prose">Comparison table completed. The five AI-specific ATLAS techniques with
+no ATT&amp;CK parallel listed and explained. Framework selection guidance
+documented: when to use ATT&amp;CK, when to use ATLAS, when to use both.</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Takeaway 01</h3>
+<p class="prose">ATLAS fills the gap ATT&amp;CK cannot: adversarial ML techniques (adversarial
+examples, training data poisoning, model extraction, inference evasion) have
+no ATT&amp;CK analogues. ATLAS and ATT&amp;CK are complementary, not competing —
+real attacks against ML-deployed organisations span both frameworks
+across a single kill chain.</p>
+<h3 class="sh2">Takeaway 02</h3>
+<p class="prose">The four-level hierarchy (tactic → technique → sub-technique → case study)
+mirrors ATT&amp;CK and enables immediate adoption by practitioners who already
+know ATT&amp;CK. Tactic = adversary goal (stable); technique = how they achieve
+it (evolves with new research); case study = empirical grounding
+(real incident or peer-reviewed demonstration).</p>
+<h3 class="sh2">Takeaway 03</h3>
+<p class="prose">All 12 ATLAS tactics map onto the eight-layer AI attack surface from Section 5.2.
+This dual vocabulary is the practitioner&#x27;s bridge between architecture and
+threat intelligence: attack surface layer tells you where to instrument;
+ATLAS tactic tells you what adversary behaviour to detect there.</p>
+<h3 class="sh2">Takeaway 04</h3>
+<p class="prose">Four adversary profiles have distinct ATLAS technique signatures: nation-state
+(patient, long-duration, supply chain focus), criminal (ROI-optimised, extraction
+and evasion), insider (legitimate access, collection and exfiltration), researcher
+(capability probing, data extraction for publication). Detection thresholds
+and response procedures differ by profile.</p>
+<h3 class="sh2">Takeaway 05</h3>
+<p class="prose">The three case studies (GPT-2 extraction, physical adversarial patch, Tay poisoning)
+represent three distinct ATLAS impact types: confidentiality (training data extraction),
+integrity (model evasion), and availability/integrity via poisoning. Each had
+detectable signals that existing monitoring would have caught with the right
+data sources instrumented.</p>
+<h3 class="sh2">Takeaway 06</h3>
+<p class="prose">Five ATLAS techniques have no ATT&amp;CK parallel: adversarial example crafting,
+training data extraction via inference, systematic model capability probing,
+training data poisoning, and influence operations via generative AI. These are
+the techniques that require entirely new detection logic — ATT&amp;CK-aligned rules
+do not cover them.</p>
+<h3 class="sh2">Takeaway 07</h3>
+<p class="prose">ATLAS enables quantitative detection programme coverage measurement: covered
+techniques / total techniques = coverage percentage. This metric is defensible
+to stakeholders in a way that OWASP risk counts are not, because ATLAS techniques
+are specific observable behaviours, not risk categories.</p>
+<h3 class="sh2">Takeaway 08</h3>
+<p class="prose">Red team exercises structured around ATLAS tactics produce the most operationally
+realistic ML security assessments. The four-phase structure (reconnaissance,
+initial access, impact and exfiltration, reporting) mirrors how real adversaries
+operate and generates actionable detection gap findings aligned to specific
+AML.TXXXX identifiers.</p>
+<h2 class="sh1">Connections</h2>
+<h3 class="sh2">Builds On</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">5.2</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Eight attack surface layers are the architectural target that ATLAS tactics map onto</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">5.3 through 5.6</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Every OWASP risk maps to one or more ATLAS techniques — the 20-rule registry from Section 5.6 gains AML identifiers here</p>
+<h3 class="sh3">Chapter</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">1.10 — Adversarial Examples</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">The ML-specific attack primitive that motivated ATLAS creation; AML.T0043 is its formal ATLAS representation</p>
+<h3 class="sh2">Leads To</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">5.8</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">ATLAS Techniques in Practice — deep technical treatment of 30+ individual techniques with detection data sources</p>
+<h3 class="sh3">Chapter</h3>
+<p class="prose">11</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">All — Detection Engineering</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Every detection rule written in Chapter 11 is tagged with an AML.TXXXX identifier established in this section</p>
+<h3 class="sh3">Chapter</h3>
+<p class="prose">13</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Behavioural Baselines</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">Behavioural baseline detection (Chapter 13) is the primary approach for high-difficulty ATLAS techniques identified in the detection matrix</p>
+<h3 class="sh3">Chapter</h3>
+<p class="prose">15</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Red Teaming</p>
+<h3 class="sh3">Reason</h3>
+<p class="prose">The red team template from this section is the planning framework for Chapter 15 exercises</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">One Paragraph</h3>
+<p class="prose">Section 5.7 establishes MITRE ATLAS as the detection engineering vocabulary
+for AI security, beginning with the four gaps in MITRE ATT&amp;CK that motivated
+ATLAS&#x27;s creation (adversarial examples, training data poisoning, model extraction,
+and inference evasion — all techniques with no ATT&amp;CK analogue). The four-level
+ATLAS hierarchy (tactics, techniques, sub-techniques, case studies) mirrors ATT&amp;CK&#x27;s
+structure for immediate adoption by practitioners who know ATT&amp;CK, while the AML.TXXXX
+identifier namespace unambiguously distinguishes ATLAS from ATT&amp;CK entries for joint
+campaign tracking. All 12 ATLAS tactics are documented in kill-chain order with
+adversary goal, representative techniques, ATT&amp;CK parallel, and detection opportunity
+summary, then mapped to the eight attack surface layers from Section 5.2 — giving
+practitioners the dual vocabulary needed to bridge architecture and threat intelligence.
+Four adversary profiles (nation-state, criminal, insider, researcher) are characterised
+by their distinctive ATLAS technique sets and detection challenges. Three real case
+studies (GPT-2 training data extraction via prefix probing, physical adversarial patch
+on traffic sign classifier, Microsoft Tay coordinated poisoning) are analysed as complete
+tactic-technique chains with detection opportunity assessment and mitigation mapping.
+The ATLAS vs ATT&amp;CK comparison section identifies five AI-specific ATLAS techniques
+with no ATT&amp;CK parallel and provides a layered coverage model combining both frameworks.
+The section closes with detection engineering and red teaming applications: the detection
+opportunity matrix mapping each ATLAS technique to data source and detection logic,
+quantitative coverage measurement methodology, and a four-phase ATLAS-structured red
+team exercise template. Three implementations deliver the complete 12-tactic reference
+card with layer mapping, the detection opportunity matrix with coverage scoring, and
+a three-case-study analyser.</p>
+<h3 class="sh2">Next Section</h3>
+<p class="prose">Section 5.8 — MITRE ATLAS Techniques in Practice: Attack Patterns and Detection Opportunities
+The framework overview complete, Section 5.8 goes deep on individual ATLAS techniques:
+30+ techniques with specific attack patterns, required data sources, detection logic sketches,
+and detection difficulty ratings. The section introduces technique chaining — how adversaries
+combine individual ATLAS techniques into multi-stage campaigns — and presents the ATLAS
+coverage heat map for prioritising detection investment.</p>
+</article>

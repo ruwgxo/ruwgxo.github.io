@@ -1,0 +1,931 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 13 · Section 1 · ~6 pages</div>
+<h1>Behavioural Detection Taxonomy: From Per-Request Verdicts to Cross-Request Signals</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Per-request classification and behavioural analysis detect disjoint attack classes: the per-request classifiers of Chapter 12 see one request at a time, behavioural analysis holds state across requests -- Chapter 13 builds the layer that sees what spans requests.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapter 12 trained four classifiers, and every one of them answers a question about a
+single request: is this prompt an injection, a jailbreak, a PII leak, an anomalous API
+call. The request is the unit of detection. That assumption is correct for a large class
+of attacks and silently wrong for an equally large class.
+
+A multi-turn jailbreak escalates gradually, and every individual turn is benign enough to
+pass the per-turn classifier while the trajectory across the session is the attack. A data
+exfiltration campaign issues thousands of individually unremarkable queries whose only tell
+is their rate and pattern over time. A compromised account behaves acceptably per request
+but diverges from its own historical baseline. A coordinated abuse network shares no single
+suspicious request but forms a detectable structure as a graph. None of these are visible to
+a classifier that sees one request at a time.
+
+Before building any behavioural detector, the engineer needs a taxonomy of behavioural
+signal families. Without this map, the progression through Chapter 13 reads as an arbitrary
+sequence of monitoring techniques -- session features, then baselines, then drift, then rate
+limiting, then profiling, then graphs. With it, every section is a deliberate choice driven
+by three questions: what attack class does this detector target, what state must be held to
+detect it, and what detection latency does that state requirement permit?
+
+Section 13.01 answers those questions systematically. It establishes the four behavioural
+signal families, maps each to the attack class it covers and the state it requires, and
+defines where each sits relative to the Chapter 12 per-request gateway.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 13.01 is the taxonomy anchor for all 11 subsequent sections of Chapter 13. It is the
+map that makes every later section a deliberate choice rather than an arbitrary technique
+selection. It mirrors the role Section 12.01 played in Chapter 12: establishing the taxonomy
+and the deployment logic before the implementation sections begin. Where 12.01 organised the
+ML families by labelled-data availability, 13.01 organises the behavioural families by the
+state they hold and the attack class they catch.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 1 Section 1.11: evaluation metrics (precision, recall, F1) -- used to compare behavioural detector performance throughout the chapter</li><li>Chapter 9 Section 9.11: query monitor and rate limiter -- the API-abuse monitoring that Section 13.07 extends to behavioural patterns</li><li>Chapter 11 Section 11.03: layered detection stack (signature, heuristic, ML, behavioural) -- Chapter 13 implements the behavioural layer named here</li><li>Chapter 11 Section 11.13: production seven-track gateway architecture -- the event source behavioural analysis consumes</li><li>Chapter 12 Section 12.01: ML detection taxonomy -- the per-request family taxonomy that Section 13.01 sits above</li><li>Chapter 12 Section 12.15: four-detector ensemble -- the per-request verdict that becomes the Chapter 13 input event</li><li>Chapter 12 Section 12.17: production ML gateway -- the gateway whose per-request output stream feeds the four behavioural families</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Unit-of-Detection Assumption and Where It Breaks</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Every detector in Chapter 12 shares one structural assumption: the request is the unit of
+detection. The feature pipeline extracts features from a request. The classifier scores a
+request. The ensemble combines per-request scores into a per-request verdict. The gateway
+blocks or passes a request. This is a clean, stateless architecture, and statelessness is
+an operational virtue: it scales horizontally, it has no shared mutable state to corrupt,
+and any gateway instance can score any request with no coordination.
+
+The assumption is correct for a large class of attacks. A single-turn jailbreak whose full
+payload is in one prompt is detectable in that prompt. A direct injection that carries its
+entire instruction-override in one request is detectable in that request. A PII leak in one
+response is detectable in that response. For these attacks, the request genuinely is the
+unit, and Chapter 12 catches them.
+
+The assumption breaks for any attack whose signal is not in any single request but in the
+relationship between requests. Consider four concrete cases. First, a multi-turn jailbreak:
+the adversary spends ten turns gradually moving a roleplay scenario toward a harmful output,
+and each individual turn is benign enough to pass the per-turn classifier. The attack is the
+trajectory, not any turn. Second, an exfiltration campaign: the adversary issues ten thousand
+individually reasonable queries to reconstruct a proprietary dataset, and no single query is
+suspicious. The attack is the rate and the coverage pattern. Third, an account takeover: a
+legitimate user&#x27;s credentials are compromised, and the attacker&#x27;s requests are individually
+plausible but collectively unlike how that specific user has ever behaved. The attack is the
+divergence from the entity&#x27;s own baseline. Fourth, a coordinated network: a hundred accounts
+each behave acceptably alone but share a creation pattern, an IP range, and synchronised
+activity. The attack is the structure across accounts.
+
+None of these four has a per-request signal. A stateless classifier scoring each request in
+isolation passes every one of them. They are not edge cases; they are the dominant attack
+patterns against mature LLM APIs, precisely because adversaries adapt to the detection in
+place. Once per-request classification is deployed, the rational adversary moves to attacks
+that per-request classification cannot see. Behavioural analysis is the layer that closes
+that gap by holding state across requests and detecting in that state.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Four Behavioural Signal Families</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Four behavioural signal families are relevant to LLM API security. They differ in the state
+they hold, the detection latency that state permits, and the attack class each covers.
+
+Session-level signals aggregate the requests within a single session into a session object
+and detect patterns across the turns of that session. The state is the session: bounded,
+attributable to one entity, and held for the session&#x27;s lifetime. Session analysis catches
+the multi-turn jailbreak and the accumulation attack, where the signal is the trajectory
+across turns -- score slope, topic drift, refusal-then-retry. Session state is small and
+short-lived, so session scoring can run in near-real-time, updated on each turn. Sections
+13.02 (session modelling) and 13.09 (multi-turn context analysis) implement this family.
+
+Temporal signals treat a behavioural metric -- request rate, refusal rate, error rate -- as
+a time series and detect deviation from its historical envelope. The state is the metric
+history per entity or per endpoint, held as a rolling window. Temporal analysis catches the
+sudden burst and the slow ramp: the two opposite signatures of abuse over time. Because the
+metric history can be large and the analysis involves seasonal decomposition, temporal
+detection runs as near-real-time or scheduled analysis rather than on the request hot path.
+Sections 13.03 (statistical baselines), 13.04 (time-series anomaly detection), and 13.05
+(drift detection) implement this family. Drift is a special case: it watches the detectors
+and the model rather than the user, catching silent degradation.
+
+Entity-level signals build a persistent profile of how an entity behaves across all of its
+sessions and score new activity against that profile. The state is the persistent entity
+profile: aggregated baselines, historical risk events, and a behavioural fingerprint, held
+indefinitely with decay. Entity analysis catches account compromise -- divergence from the
+entity&#x27;s own fingerprint -- and makes a requester&#x27;s history a first-class input to every
+verdict. Persistent state cannot be queried inline at full depth on the request path, so the
+profile is summarised into a risk score that is cheap to read inline while the full profile
+updates asynchronously. Sections 13.07 (rate-based detection), 13.08 (smart rate limiting),
+and 13.10 (user behaviour profiling) implement this family.
+
+Graph-level signals model the relationships between entities -- shared infrastructure,
+synchronised timing, behavioural similarity -- as a graph and detect coordinated structure.
+The state is the entity-relationship graph, the largest and most expensive state of the four.
+Graph analysis catches the coordinated abuse network and the Sybil cluster, which no
+single-entity detector reveals. Graph construction and community detection are batch
+operations run on a schedule, not inline. Section 13.11 implements this family and integrates
+the behavioural layer into the gateway.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Event Stream: How Chapter 12 Output Becomes Chapter 13 Input</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Behavioural analysis does not re-score requests. It consumes the per-request verdicts that
+the Chapter 12 gateway already produced. This is the central architectural relationship of
+the two chapters: Chapter 12 is the sensor layer, and Chapter 13 is the analysis over the
+sensor output.
+
+Every request that passes through the Chapter 12 seven-track gateway emits an event. The
+event carries the request metadata (entity identifier, session identifier, endpoint,
+timestamp), the per-track classifier scores (injection score, jailbreak score, anomaly
+score, PII score), the ensemble verdict and tier, and the action taken (passed, flagged,
+blocked). This event stream is the input to all four behavioural families. The session
+modeller aggregates events by session identifier. The baseline and time-series detectors
+aggregate the numeric fields by entity and endpoint over time. The entity profiler
+accumulates events into persistent per-entity state. The graph detector links entities by
+the shared attributes carried in the events.
+
+The consequence is that behavioural detection quality is bounded by event quality. If the
+Chapter 12 gateway does not emit the per-track scores, the behavioural layer cannot use the
+trajectory of those scores across a session. If the event lacks a stable entity identifier,
+the entity profiler cannot accumulate history and the graph detector cannot link accounts.
+The event schema is therefore a shared contract between the two chapters, and Section 13.02
+treats its design as the first task of behavioural modelling rather than an afterthought.
+
+This also clarifies why behavioural detection is additive rather than a replacement. The
+per-request gateway must keep running -- it is the sensor that produces the stream. Removing
+it to rely on behavioural analysis alone is removing the sensor and keeping the analytics,
+which detects nothing. The two layers compose: per-request classification catches the
+single-request attack and produces the event stream, and behavioural analysis catches the
+cross-request attack by analysing that stream.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">State Requirement Drives Detection Latency</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The four families are ordered by the state they hold, and that ordering determines where
+each can run. This coupling between state requirement and detection latency is the single
+most important architectural fact in Chapter 13, because it dictates which detectors can sit
+on the request hot path and which cannot.
+
+Stateless per-request scoring -- the Chapter 12 baseline -- runs inline with single-digit
+millisecond latency because it holds no state to query. Session scoring holds small,
+short-lived state and runs in near-real-time: the session object is updated on each turn and
+scored within the session, which adds a small inline cost or a fast asynchronous follow-up.
+Temporal and entity analysis hold larger state -- metric histories and persistent profiles --
+that cannot be queried at full depth within a request&#x27;s latency budget. These families run as
+near-real-time asynchronous analysis, and their output is summarised into a compact signal (a
+baseline-deviation score, an entity risk score) that is cheap to read inline. Graph analysis
+holds the largest state and runs as scheduled batch jobs, with its findings written back as
+entity risk adjustments that the inline path reads.
+
+This produces a layered timing model. On the request hot path, the gateway reads the
+per-request classifier scores and the compact summaries that behavioural analysis has already
+computed -- the entity risk score, the current rate-limit state, the session accumulator.
+Near-real-time, the session scorer, the baseline detectors, and the entity profiler update
+their state from the event stream. In batch, the graph detector and the drift monitors run on
+a schedule and write their findings back as risk adjustments and alerts.
+
+The practical rule that follows: never put a query against deep behavioural state on the
+request path. A rate-limit decision reads a precomputed counter, not a full recomputation of
+the entity&#x27;s history. A gateway verdict reads a precomputed entity risk score, not a live
+graph traversal. Behavioural detection earns its coverage by doing the expensive analysis
+off the hot path and exposing only cheap summaries to the latency-sensitive path.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Behavioural Layer in the Detection Stack and the Chapter Roadmap</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Chapter 11 Section 11.03 defined the layered detection stack: signature detection (Sigma
+rules), heuristic detection (rule-based scoring), ML detection (trained classifiers), and
+behavioural detection. Chapter 11 built the signature and heuristic layers. Chapter 12 built
+the ML layer. Chapter 13 builds the fourth and final layer of that stack. Each layer catches
+what the layers below it miss: signatures catch known patterns, ML catches novel variants of
+known attack classes, and behavioural analysis catches attacks whose signal spans requests
+and therefore has no per-request representation for any of the lower layers to score.
+
+The layers are strictly additive in coverage and strictly ordered in cost. Signature
+detection is cheapest and narrowest. ML detection is more expensive and broader. Behavioural
+detection is the most expensive, because it holds state, and the broadest, because it sees
+the cross-request attacks the other three layers cannot. A detection system is not complete
+until all four layers are present; a system with only the first three has a structural blind
+spot for escalation, exfiltration, compromise, and coordination.
+
+The rest of Chapter 13 implements the four behavioural families in an order that builds state
+from small to large. Section 13.02 builds session modelling and the shared behavioural
+feature pipeline. Sections 13.03 and 13.04 build the statistical baselines and time-series
+anomaly detection that define and detect temporal deviation. Section 13.05 builds drift
+detection, which keeps the Chapter 12 detectors from failing silently. Section 13.06 builds
+model behavioural monitoring, which detects injection success in the model&#x27;s output rather
+than injection attempts in the input. Sections 13.07 and 13.08 build rate-based detection and
+adaptive smart rate limiting for aggregate abuse. Section 13.09 builds multi-turn context
+analysis for the escalation attacks that defeat per-turn scoring. Section 13.10 builds the
+persistent user behaviour profile and entity risk score. Section 13.11 builds graph-based
+detection and integrates the whole behavioural layer into the Chapter 12 gateway as the
+capstone. Section 13.12 closes the chapter and previews Chapter 14&#x27;s production deployment.
+
+Each section is a deliberate choice on the taxonomy this section establishes: it targets a
+named attack class, holds a defined state, and runs at the detection latency that state
+permits. The taxonomy is the map; the chapter is the territory.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Detection Family Taxonomy: Four Families Across Six Dimensions</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Complete taxonomy of behavioural signal families with state requirement, detection latency, attack class, gateway relationship, chapter sections, and OWASP coverage</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Family</li><li>State Held</li><li>Detection Latency</li><li>Attack Class Covered</li><li>Gateway Relationship</li><li>Chapter 13 Sections</li><li>OWASP Coverage</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Session-level</li><li>Session object (bounded, short-lived)</li><li>Near-real-time (per turn)</li><li>Multi-turn jailbreak, accumulation, escalation</li><li>Inline session scoring + fast async</li><li>Sections 13.02, 13.09</li><li>LLM01 (multi-turn)</li></ul>
+<ul class="blist"><li>Temporal</li><li>Metric history per entity/endpoint (rolling window)</li><li>Near-real-time + scheduled</li><li>Burst abuse, slow-ramp exfiltration, detector drift</li><li>Async; compact deviation score read inline</li><li>Sections 13.03, 13.04, 13.05</li><li>LLM04 (DoS), LLM10 (Model Theft)</li></ul>
+<ul class="blist"><li>Entity-level</li><li>Persistent profile (indefinite, with decay)</li><li>Async update; risk score read inline</li><li>Account compromise, repeat abuse, low-and-slow</li><li>Risk score read inline; profile updated async</li><li>Sections 13.07, 13.08, 13.10</li><li>LLM04 (DoS), LLM10 (Model Theft)</li></ul>
+<ul class="blist"><li>Graph-level</li><li>Entity-relationship graph (largest state)</li><li>Batch (scheduled)</li><li>Coordinated networks, Sybil clusters, bot rings</li><li>Batch; findings written back as risk adjustments</li><li>Section 13.11</li><li>LLM04 (DoS), LLM10 (Model Theft)</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Per-Request vs Behavioural: Attack Coverage Comparison</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Side-by-side comparison of what per-request classification (Chapter 12) and behavioural analysis (Chapter 13) detect across seven attack scenarios</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Attack Scenario</li><li>Per-Request (Chapter 12)</li><li>Behavioural (Chapter 13)</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Single-turn jailbreak (full payload in one prompt)</li><li>Detected: payload is in the request</li><li>Not needed: per-request layer handles it</li></ul>
+<ul class="blist"><li>Multi-turn gradual jailbreak</li><li>FAIL: each turn passes the per-turn classifier</li><li>Session analysis: trajectory across turns is the signal</li></ul>
+<ul class="blist"><li>Direct injection (one request)</li><li>Detected: instruction-override is in the request</li><li>Not needed: per-request layer handles it</li></ul>
+<ul class="blist"><li>Exfiltration via many benign queries</li><li>FAIL: every individual query is reasonable</li><li>Temporal + entity: rate and coverage pattern in aggregate</li></ul>
+<ul class="blist"><li>Account takeover (plausible but unlike the user)</li><li>FAIL: each request is individually plausible</li><li>Entity profile: divergence from the entity fingerprint</li></ul>
+<ul class="blist"><li>Coordinated bot network</li><li>FAIL: each account behaves acceptably alone</li><li>Graph: structure across accounts is the signal</li></ul>
+<ul class="blist"><li>Successful injection (took control of the model)</li><li>Partial: input may score low if cleverly framed</li><li>Model behaviour monitoring: output distribution shift</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">State Requirement and Detection Latency Coupling</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">How the state a family holds determines where it can run relative to the request hot path</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Layer</li><li>State Held</li><li>Where It Runs</li><li>What the Hot Path Reads</li><li>Example Detector</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Per-request (Ch12)</li><li>None (stateless)</li><li>Inline, single-digit ms</li><li>The classifier scores directly</li><li>XGBoost injection classifier</li></ul>
+<ul class="blist"><li>Session</li><li>Session object, short-lived</li><li>Inline + fast async</li><li>Session accumulator value</li><li>Multi-turn threat accumulator (13.09)</li></ul>
+<ul class="blist"><li>Temporal</li><li>Metric history, rolling window</li><li>Near-real-time async</li><li>Precomputed deviation score</li><li>Time-series anomaly detector (13.04)</li></ul>
+<ul class="blist"><li>Entity</li><li>Persistent profile, with decay</li><li>Async update</li><li>Precomputed entity risk score</li><li>User behaviour profiler (13.10)</li></ul>
+<ul class="blist"><li>Graph</li><li>Entity-relationship graph, large</li><li>Scheduled batch</li><li>Risk adjustment written back</li><li>Graph anomaly detector (13.11)</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Family Selection by Attack Class</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Decision reference: given the attack class to cover, which behavioural family detects it and what state it requires</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>If the attack is...</li><li>The signal lives in...</li><li>Use family</li><li>Requiring state</li><li>Implemented in</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Gradual escalation across a conversation</li><li>The trajectory across turns</li><li>Session-level</li><li>Session object</li><li>Sections 13.02, 13.09</li></ul>
+<ul class="blist"><li>Volume or rate abuse over time</li><li>The metric over a time window</li><li>Temporal</li><li>Metric history</li><li>Sections 13.03, 13.04, 13.07</li></ul>
+<ul class="blist"><li>A detector or model silently degrading</li><li>The distribution shift over time</li><li>Temporal (drift)</li><li>Reference distribution</li><li>Section 13.05</li></ul>
+<ul class="blist"><li>An account behaving unlike itself</li><li>The divergence from the entity baseline</li><li>Entity-level</li><li>Persistent profile</li><li>Section 13.10</li></ul>
+<ul class="blist"><li>Many accounts acting in concert</li><li>The structure between entities</li><li>Graph-level</li><li>Entity-relationship graph</li><li>Section 13.11</li></ul>
+<ul class="blist"><li>An injection that took control of the model</li><li>The model output distribution</li><li>Temporal (output-side)</li><li>Output baseline</li><li>Section 13.06</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Detection Family Taxonomy Reference</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">behavioural_detection_taxonomy.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Structured taxonomy of the four behavioural signal families with state requirements, detection latency profiles, attack classes covered, gateway relationship, chapter section mapping, and OWASP coverage. Provides the detection engineer with a reference for selecting the correct family for a given attack class and state budget.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints as formatted tables</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># behavioural_detection_taxonomy.py
+# Section 13.01: Behavioural Detection Family Taxonomy
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class BehaviouralFamily:
+    name: str
+    state_held: str
+    state_lifetime: str
+    detection_latency: str
+    where_it_runs: str
+    attack_classes: List[str]
+    gateway_relationship: str
+    chapter_13_sections: List[str]
+    owasp_coverage: List[str]
+    hot_path_reads: str
+    strengths: List[str]
+    failure_modes: List[str]
+
+
+BEHAVIOURAL_FAMILIES: List[BehaviouralFamily] = [
+    BehaviouralFamily(
+        name=&#x27;Session-level&#x27;,
+        state_held=&#x27;Session object aggregating the turns of one session&#x27;,
+        state_lifetime=&#x27;Short-lived -- session duration&#x27;,
+        detection_latency=&#x27;Near-real-time (updated per turn)&#x27;,
+        where_it_runs=&#x27;Inline session scoring plus fast async follow-up&#x27;,
+        attack_classes=[
+            &#x27;Multi-turn gradual jailbreak&#x27;,
+            &#x27;Accumulation attack across turns&#x27;,
+            &#x27;Escalation toward a constraint boundary&#x27;,
+        ],
+        gateway_relationship=&#x27;Session accumulator value read on the hot path&#x27;,
+        chapter_13_sections=[&#x27;Section 13.02 (session modelling)&#x27;, &#x27;Section 13.09 (multi-turn analysis)&#x27;],
+        owasp_coverage=[&#x27;LLM01 (Prompt Injection -- multi-turn variant)&#x27;],
+        hot_path_reads=&#x27;Session threat accumulator value&#x27;,
+        strengths=[
+            &#x27;Catches escalation that every per-turn classifier passes&#x27;,
+            &#x27;Small, short-lived state -- cheap to hold and score&#x27;,
+            &#x27;Trajectory features (score slope, topic drift) are high signal&#x27;,
+            &#x27;Near-real-time: detects within the session, not after it&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Session boundary definition errors split attacks across sessions&#x27;,
+            &#x27;Misses cross-session patterns -- that is the entity family job&#x27;,
+            &#x27;Requires per-track scores in the event stream to compute trajectory&#x27;,
+            &#x27;Long sessions dilute escalation signal if not windowed&#x27;,
+        ],
+    ),
+    BehaviouralFamily(
+        name=&#x27;Temporal&#x27;,
+        state_held=&#x27;Metric history per entity and per endpoint&#x27;,
+        state_lifetime=&#x27;Rolling window -- days to weeks&#x27;,
+        detection_latency=&#x27;Near-real-time plus scheduled analysis&#x27;,
+        where_it_runs=&#x27;Async; compact deviation score read inline&#x27;,
+        attack_classes=[
+            &#x27;Burst abuse (sudden spike)&#x27;,
+            &#x27;Slow-ramp exfiltration&#x27;,
+            &#x27;Detector and model drift (silent degradation)&#x27;,
+        ],
+        gateway_relationship=&#x27;Precomputed deviation score read on the hot path&#x27;,
+        chapter_13_sections=[
+            &#x27;Section 13.03 (statistical baselines)&#x27;,
+            &#x27;Section 13.04 (time-series anomaly detection)&#x27;,
+            &#x27;Section 13.05 (drift detection)&#x27;,
+        ],
+        owasp_coverage=[&#x27;LLM04 (Model Denial of Service)&#x27;, &#x27;LLM10 (Model Theft)&#x27;],
+        hot_path_reads=&#x27;Precomputed baseline-deviation score&#x27;,
+        strengths=[
+            &#x27;Catches both the sudden burst and the patient ramp&#x27;,
+            &#x27;Seasonal decomposition separates real anomalies from daily cycles&#x27;,
+            &#x27;Drift sub-family catches silent Chapter 12 detector decay&#x27;,
+            &#x27;Per-entity baselines avoid false positives on power users&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Ignoring seasonality fires on every Monday traffic spike&#x27;,
+            &#x27;Baseline contamination absorbs a slow-enough attack into normal&#x27;,
+            &#x27;Cold start: new entities have no history to score against&#x27;,
+            &#x27;Metric history can be large -- cannot query inline at full depth&#x27;,
+        ],
+    ),
+    BehaviouralFamily(
+        name=&#x27;Entity-level&#x27;,
+        state_held=&#x27;Persistent profile: baselines, risk events, fingerprint&#x27;,
+        state_lifetime=&#x27;Indefinite, with decay&#x27;,
+        detection_latency=&#x27;Async update; risk score read inline&#x27;,
+        where_it_runs=&#x27;Async profile update; inline risk-score read&#x27;,
+        attack_classes=[
+            &#x27;Account compromise (fingerprint divergence)&#x27;,
+            &#x27;Repeat abuse across sessions&#x27;,
+            &#x27;Low-and-slow abuse under per-request thresholds&#x27;,
+        ],
+        gateway_relationship=&#x27;Precomputed entity risk score read on the hot path&#x27;,
+        chapter_13_sections=[
+            &#x27;Section 13.07 (rate-based detection)&#x27;,
+            &#x27;Section 13.08 (smart rate limiting)&#x27;,
+            &#x27;Section 13.10 (user behaviour profiling)&#x27;,
+        ],
+        owasp_coverage=[&#x27;LLM04 (Model Denial of Service)&#x27;, &#x27;LLM10 (Model Theft)&#x27;],
+        hot_path_reads=&#x27;Precomputed entity risk score&#x27;,
+        strengths=[
+            &#x27;Makes requester history a first-class input to every verdict&#x27;,
+            &#x27;Fingerprint divergence is the account-compromise signal&#x27;,
+            &#x27;Risk score composes with the rate limiter for graduated response&#x27;,
+            &#x27;Persists across sessions where session state cannot&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Profiling without risk-score decay punishes recovered entities&#x27;,
+            &#x27;Entity resolution errors split or merge actor histories&#x27;,
+            &#x27;Persistent state cannot be queried inline at full depth&#x27;,
+            &#x27;Privacy and retention constraints bound what can be stored&#x27;,
+        ],
+    ),
+    BehaviouralFamily(
+        name=&#x27;Graph-level&#x27;,
+        state_held=&#x27;Entity-relationship graph across all entities&#x27;,
+        state_lifetime=&#x27;Indefinite -- the largest state held&#x27;,
+        detection_latency=&#x27;Batch (scheduled)&#x27;,
+        where_it_runs=&#x27;Scheduled batch; findings written back as risk&#x27;,
+        attack_classes=[
+            &#x27;Coordinated abuse networks&#x27;,
+            &#x27;Sybil clusters&#x27;,
+            &#x27;Distributed campaigns across many accounts&#x27;,
+        ],
+        gateway_relationship=&#x27;Risk adjustment written back, read inline as score&#x27;,
+        chapter_13_sections=[&#x27;Section 13.11 (graph-based detection and capstone)&#x27;],
+        owasp_coverage=[&#x27;LLM04 (Model Denial of Service)&#x27;, &#x27;LLM10 (Model Theft)&#x27;],
+        hot_path_reads=&#x27;Entity risk adjustment from the last batch run&#x27;,
+        strengths=[
+            &#x27;Catches coordination that no single-entity detector reveals&#x27;,
+            &#x27;Community detection surfaces account clusters by structure&#x27;,
+            &#x27;Detects distributed abuse spread to stay under per-account limits&#x27;,
+            &#x27;Sybil and bot-ring detection via graph structure&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Largest and most expensive state -- batch only, never inline&#x27;,
+            &#x27;Findings are delayed by the batch cadence&#x27;,
+            &#x27;Edge construction quality bounds detection quality&#x27;,
+            &#x27;Requires shared attributes in the event stream to link entities&#x27;,
+        ],
+    ),
+]
+
+
+def print_taxonomy_table(families: List[BehaviouralFamily]) -&gt; None:
+    print(&#x27;Behavioural Detection Family Taxonomy&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for f in families:
+        print(f&#x27;\n[{f.name}]&#x27;)
+        print(f&#x27;  State held:    {f.state_held}&#x27;)
+        print(f&#x27;  State life:    {f.state_lifetime}&#x27;)
+        print(f&#x27;  Latency:       {f.detection_latency}&#x27;)
+        print(f&#x27;  Runs:          {f.where_it_runs}&#x27;)
+        print(f&#x27;  Hot path reads:{f.hot_path_reads}&#x27;)
+        print(f&#x27;  Sections:      {&quot;, &quot;.join(f.chapter_13_sections)}&#x27;)
+        print(f&#x27;  OWASP:         {&quot;, &quot;.join(f.owasp_coverage)}&#x27;)
+        print(f&#x27;  Attack classes:&#x27;)
+        for a in f.attack_classes:
+            print(f&#x27;    * {a}&#x27;)
+        print(f&#x27;  Strengths:&#x27;)
+        for s in f.strengths:
+            print(f&#x27;    + {s}&#x27;)
+        print(f&#x27;  Failure modes:&#x27;)
+        for fm in f.failure_modes:
+            print(f&#x27;    - {fm}&#x27;)
+
+
+def per_request_vs_behavioural_summary() -&gt; None:
+    print(&#x27;\nPer-Request vs Behavioural -- Coverage Summary&#x27;)
+    print(&#x27;-&#x27; * 46)
+    rows = [
+        (&#x27;Single-turn jailbreak&#x27;, &#x27;DETECTED in request&#x27;,          &#x27;Not needed&#x27;),
+        (&#x27;Multi-turn jailbreak&#x27;,  &#x27;FAIL -- each turn passes&#x27;,     &#x27;Session: trajectory&#x27;),
+        (&#x27;Direct injection&#x27;,      &#x27;DETECTED in request&#x27;,          &#x27;Not needed&#x27;),
+        (&#x27;Exfiltration (rate)&#x27;,   &#x27;FAIL -- queries are benign&#x27;,   &#x27;Temporal + entity: aggregate&#x27;),
+        (&#x27;Account takeover&#x27;,      &#x27;FAIL -- plausible requests&#x27;,   &#x27;Entity: fingerprint divergence&#x27;),
+        (&#x27;Coordinated network&#x27;,   &#x27;FAIL -- accounts ok alone&#x27;,    &#x27;Graph: structure across accounts&#x27;),
+        (&#x27;Injection success&#x27;,     &#x27;PARTIAL -- input may score low&#x27;,&#x27;Output distribution shift&#x27;),
+    ]
+    fmt = &#x27;{:&lt;24} {:&lt;32} {:&lt;34}&#x27;
+    print(fmt.format(&#x27;Attack&#x27;, &#x27;Per-Request (Ch12)&#x27;, &#x27;Behavioural (Ch13)&#x27;))
+    print(&#x27;-&#x27; * 90)
+    for attack, pr, bh in rows:
+        print(fmt.format(attack, pr, bh))
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_taxonomy_table(BEHAVIOURAL_FAMILIES)
+    per_request_vs_behavioural_summary()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Behavioural Family Selector</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">behavioural_family_selector.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Decision logic that takes a described attack scenario and its observable signal location as input and returns the correct behavioural family, the state it requires, and the Chapter 13 sections that implement it. Implements the selection logic from Section 13.01 as a runnable tool.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># behavioural_family_selector.py
+# Section 13.01: Behavioural Family Selection Decision Logic
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List, Optional
+
+
+@dataclass
+class AttackScenario:
+    name: str
+    signal_spans_requests: bool
+    signal_is_within_one_session: bool
+    signal_is_metric_over_time: bool
+    signal_is_divergence_from_own_history: bool
+    signal_is_across_multiple_entities: bool
+    signal_is_model_output_shift: bool
+
+
+@dataclass
+class FamilyRecommendation:
+    scenario: str
+    family: str
+    state_required: str
+    detection_latency: str
+    sections: List[str]
+    rationale: str
+
+
+def select_family(s: AttackScenario) -&gt; FamilyRecommendation:
+    # First gate: is this even a behavioural problem?
+    if not s.signal_spans_requests:
+        return FamilyRecommendation(
+            scenario=s.name,
+            family=&#x27;Per-request (Chapter 12) -- not behavioural&#x27;,
+            state_required=&#x27;None (stateless)&#x27;,
+            detection_latency=&#x27;Inline, single-digit ms&#x27;,
+            sections=[&#x27;Chapter 12 -- per-request classifiers&#x27;],
+            rationale=&#x27;The signal is in a single request; the Chapter 12 ensemble handles it. No behavioural state is required.&#x27;,
+        )
+
+    # Model output-side shift -&gt; output monitoring (temporal, output-side)
+    if s.signal_is_model_output_shift:
+        return FamilyRecommendation(
+            scenario=s.name,
+            family=&#x27;Temporal (output-side) -- model behaviour monitoring&#x27;,
+            state_required=&#x27;Per-endpoint output distribution baseline&#x27;,
+            detection_latency=&#x27;Post-inference, off the response path&#x27;,
+            sections=[&#x27;Section 13.06 (model behaviour monitoring)&#x27;],
+            rationale=&#x27;Injection success shows as output distribution shift, not input score; monitor the output against its baseline.&#x27;,
+        )
+
+    # Within one session -&gt; session family
+    if s.signal_is_within_one_session:
+        return FamilyRecommendation(
+            scenario=s.name,
+            family=&#x27;Session-level&#x27;,
+            state_required=&#x27;Session object (short-lived)&#x27;,
+            detection_latency=&#x27;Near-real-time (per turn)&#x27;,
+            sections=[&#x27;Section 13.02 (session modelling)&#x27;, &#x27;Section 13.09 (multi-turn analysis)&#x27;],
+            rationale=&#x27;The signal is the trajectory across turns of one session; aggregate the session and score the trajectory.&#x27;,
+        )
+
+    # Metric over time -&gt; temporal family
+    if s.signal_is_metric_over_time:
+        return FamilyRecommendation(
+            scenario=s.name,
+            family=&#x27;Temporal&#x27;,
+            state_required=&#x27;Metric history per entity/endpoint (rolling window)&#x27;,
+            detection_latency=&#x27;Near-real-time plus scheduled&#x27;,
+            sections=[
+                &#x27;Section 13.03 (statistical baselines)&#x27;,
+                &#x27;Section 13.04 (time-series anomaly detection)&#x27;,
+                &#x27;Section 13.07 (rate-based detection)&#x27;,
+            ],
+            rationale=&#x27;The signal is a metric deviating from its historical envelope; establish a baseline and detect temporal deviation.&#x27;,
+        )
+
+    # Divergence from own history -&gt; entity family
+    if s.signal_is_divergence_from_own_history:
+        return FamilyRecommendation(
+            scenario=s.name,
+            family=&#x27;Entity-level&#x27;,
+            state_required=&#x27;Persistent entity profile (with decay)&#x27;,
+            detection_latency=&#x27;Async update; risk score read inline&#x27;,
+            sections=[&#x27;Section 13.10 (user behaviour profiling)&#x27;, &#x27;Section 13.08 (smart rate limiting)&#x27;],
+            rationale=&#x27;The signal is divergence from the entity own fingerprint; build a persistent profile and score against it.&#x27;,
+        )
+
+    # Across multiple entities -&gt; graph family
+    if s.signal_is_across_multiple_entities:
+        return FamilyRecommendation(
+            scenario=s.name,
+            family=&#x27;Graph-level&#x27;,
+            state_required=&#x27;Entity-relationship graph (largest state)&#x27;,
+            detection_latency=&#x27;Batch (scheduled)&#x27;,
+            sections=[&#x27;Section 13.11 (graph-based detection)&#x27;],
+            rationale=&#x27;The signal is the structure between entities; build the relationship graph and detect coordinated structure.&#x27;,
+        )
+
+    return FamilyRecommendation(
+        scenario=s.name,
+        family=&#x27;Unclassified -- refine the signal description&#x27;,
+        state_required=&#x27;Unknown&#x27;,
+        detection_latency=&#x27;Unknown&#x27;,
+        sections=[&#x27;Revisit Section 13.01 taxonomy&#x27;],
+        rationale=&#x27;The scenario spans requests but does not match a single family signature; decompose it further.&#x27;,
+    )
+
+
+def print_recommendation(s: AttackScenario) -&gt; None:
+    r = select_family(s)
+    print(f&#x27;Scenario: {r.scenario}&#x27;)
+    print(f&#x27;  Family:        {r.family}&#x27;)
+    print(f&#x27;  State required:{r.state_required}&#x27;)
+    print(f&#x27;  Latency:       {r.detection_latency}&#x27;)
+    print(f&#x27;  Sections:      {&quot;, &quot;.join(r.sections)}&#x27;)
+    print(f&#x27;  Rationale:     {r.rationale}&#x27;)
+    print()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    scenarios = [
+        AttackScenario(
+            name=&#x27;Single-turn jailbreak with full payload in one prompt&#x27;,
+            signal_spans_requests=False,
+            signal_is_within_one_session=False,
+            signal_is_metric_over_time=False,
+            signal_is_divergence_from_own_history=False,
+            signal_is_across_multiple_entities=False,
+            signal_is_model_output_shift=False,
+        ),
+        AttackScenario(
+            name=&#x27;Gradual roleplay escalation across ten turns&#x27;,
+            signal_spans_requests=True,
+            signal_is_within_one_session=True,
+            signal_is_metric_over_time=False,
+            signal_is_divergence_from_own_history=False,
+            signal_is_across_multiple_entities=False,
+            signal_is_model_output_shift=False,
+        ),
+        AttackScenario(
+            name=&#x27;Ten thousand benign queries reconstructing a dataset&#x27;,
+            signal_spans_requests=True,
+            signal_is_within_one_session=False,
+            signal_is_metric_over_time=True,
+            signal_is_divergence_from_own_history=False,
+            signal_is_across_multiple_entities=False,
+            signal_is_model_output_shift=False,
+        ),
+        AttackScenario(
+            name=&#x27;Compromised account behaving unlike its own history&#x27;,
+            signal_spans_requests=True,
+            signal_is_within_one_session=False,
+            signal_is_metric_over_time=False,
+            signal_is_divergence_from_own_history=True,
+            signal_is_across_multiple_entities=False,
+            signal_is_model_output_shift=False,
+        ),
+        AttackScenario(
+            name=&#x27;Hundred accounts sharing IP range and synchronised timing&#x27;,
+            signal_spans_requests=True,
+            signal_is_within_one_session=False,
+            signal_is_metric_over_time=False,
+            signal_is_divergence_from_own_history=False,
+            signal_is_across_multiple_entities=True,
+            signal_is_model_output_shift=False,
+        ),
+        AttackScenario(
+            name=&#x27;Injection that took control: model output distribution shifted&#x27;,
+            signal_spans_requests=True,
+            signal_is_within_one_session=False,
+            signal_is_metric_over_time=False,
+            signal_is_divergence_from_own_history=False,
+            signal_is_across_multiple_entities=False,
+            signal_is_model_output_shift=True,
+        ),
+    ]
+    print(&#x27;Behavioural Family Selection&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for sc in scenarios:
+        print_recommendation(sc)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Gateway Event Schema for Behavioural Analysis</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">behavioural_event_schema.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Defines the per-request event schema that the Chapter 12 gateway emits and the Chapter 13 behavioural families consume. Validates that an event carries the fields each behavioural family requires and reports which families a given event can and cannot feed. Makes the shared contract between the two chapters explicit and checkable.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># behavioural_event_schema.py
+# Section 13.01: Gateway Event Schema for Behavioural Analysis
+# 20260621 | AI Security Mastery -- Chapter 13 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+
+@dataclass
+class GatewayEvent:
+    # Identity and routing
+    entity_id: Optional[str]
+    session_id: Optional[str]
+    endpoint: Optional[str]
+    timestamp: Optional[float]
+    source_ip: Optional[str]
+    credential_id: Optional[str]
+    # Per-track classifier scores from the Chapter 12 ensemble
+    injection_score: Optional[float]
+    jailbreak_score: Optional[float]
+    anomaly_score: Optional[float]
+    pii_score: Optional[float]
+    # Ensemble verdict
+    ensemble_tier: Optional[str]
+    action_taken: Optional[str]
+
+
+# Each family lists the event fields it requires to function
+FAMILY_REQUIREMENTS: Dict[str, List[str]] = {
+    &#x27;Session-level&#x27;: [&#x27;session_id&#x27;, &#x27;timestamp&#x27;, &#x27;injection_score&#x27;, &#x27;jailbreak_score&#x27;],
+    &#x27;Temporal&#x27;: [&#x27;entity_id&#x27;, &#x27;endpoint&#x27;, &#x27;timestamp&#x27;],
+    &#x27;Entity-level&#x27;: [&#x27;entity_id&#x27;, &#x27;timestamp&#x27;, &#x27;ensemble_tier&#x27;],
+    &#x27;Graph-level&#x27;: [&#x27;entity_id&#x27;, &#x27;source_ip&#x27;, &#x27;credential_id&#x27;, &#x27;timestamp&#x27;],
+}
+
+
+def missing_fields(event: GatewayEvent, required: List[str]) -&gt; List[str]:
+    gaps = []
+    for fieldname in required:
+        if getattr(event, fieldname, None) is None:
+            gaps.append(fieldname)
+    return gaps
+
+
+def assess_event(event: GatewayEvent) -&gt; None:
+    print(&#x27;Behavioural Event Coverage Assessment&#x27;)
+    print(&#x27;-&#x27; * 42)
+    for family, required in FAMILY_REQUIREMENTS.items():
+        gaps = missing_fields(event, required)
+        if not gaps:
+            print(f&#x27;[x] {family}: can be fed (all {len(required)} required fields present)&#x27;)
+        else:
+            print(f&#x27;[ ] {family}: cannot be fed -- missing {&quot;, &quot;.join(gaps)}&#x27;)
+    print()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # A complete event feeds every behavioural family
+    complete = GatewayEvent(
+        entity_id=&#x27;user_4821&#x27;,
+        session_id=&#x27;sess_99a1&#x27;,
+        endpoint=&#x27;/v1/chat&#x27;,
+        timestamp=1_718_900_000.0,
+        source_ip=&#x27;203.0.113.7&#x27;,
+        credential_id=&#x27;key_5f&#x27;,
+        injection_score=0.12,
+        jailbreak_score=0.34,
+        anomaly_score=0.08,
+        pii_score=0.01,
+        ensemble_tier=&#x27;low&#x27;,
+        action_taken=&#x27;passed&#x27;,
+    )
+    print(&#x27;--- Complete event ---&#x27;)
+    assess_event(complete)
+
+    # An event missing the entity id breaks entity and graph families
+    anonymous = GatewayEvent(
+        entity_id=None,
+        session_id=&#x27;sess_77b2&#x27;,
+        endpoint=&#x27;/v1/chat&#x27;,
+        timestamp=1_718_900_050.0,
+        source_ip=None,
+        credential_id=None,
+        injection_score=0.20,
+        jailbreak_score=0.55,
+        anomaly_score=0.15,
+        pii_score=0.00,
+        ensemble_tier=&#x27;medium&#x27;,
+        action_taken=&#x27;flagged&#x27;,
+    )
+    print(&#x27;--- Event missing entity_id, source_ip, credential_id ---&#x27;)
+    assess_event(anonymous)
+
+    print(&#x27;Lesson: behavioural detection quality is bounded by event quality.&#x27;)
+    print(&#x27;A missing stable entity_id silently disables entity and graph detection.&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating behavioural analysis as a replacement for the per-request gateway and reducing investment in the Chapter 12 classifiers once behavioural detection is deployed</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Behavioural detection catches the sophisticated cross-request attacks that look most
+impressive in a detection report: the multi-turn jailbreak, the coordinated network, the
+account takeover. Next to these, per-request classification can look like a solved, lower-tier
+problem. Engineers reallocate attention to the behavioural layer and let the per-request
+classifiers stagnate.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Behavioural detection consumes the event stream that the per-request gateway produces. If the
+per-request classifiers degrade, the per-track scores in the event stream degrade, and every
+session and entity detector that relies on score trajectory degrades with them. Worse, the
+single-request attacks that only the per-request layer catches start passing again. The
+behavioural layer cannot compensate -- it was never designed to catch the single-request
+attack, and it depends on the per-request layer as its sensor.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat the two layers as a composed system with a shared contract. The per-request gateway is
+the sensor that catches single-request attacks and emits the event stream; the behavioural
+layer is the analysis that catches cross-request attacks over that stream. Both must be
+maintained. The event schema is the contract between them, and degrading either side degrades
+the whole.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Putting a query against deep behavioural state on the request hot path -- recomputing entity history or traversing the graph inline to make a gateway decision</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The entity profile and the relationship graph contain the richest detection signal in the
+system. When making a per-request gateway decision, it is tempting to query that signal
+directly: traverse the graph to check whether this entity is in a known abuse cluster,
+recompute the full rate history to decide whether to throttle. The richer the inline query,
+the better the inline decision seems.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Deep behavioural state cannot be queried within a request latency budget. A graph traversal or
+a full-history recomputation adds tens to hundreds of milliseconds to every request, blowing
+the sub-50ms gateway budget established in Chapter 11. The product team disables the behavioural
+layer within a week because it made the API slow. The detection that would have caught the
+attack is removed because it was placed on the wrong path.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Keep the expensive analysis off the hot path and expose only cheap summaries to it. The entity
+profiler updates the profile asynchronously and writes a compact risk score; the graph detector
+runs in batch and writes back a risk adjustment. The hot path reads a precomputed score, never
+recomputes state. State requirement and detection latency are coupled: the families that hold
+large state must run async or batch, and the request path reads their summarised output.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Doing anomaly detection without first establishing an explicit per-entity baseline, flagging deviation from a single global threshold</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A global threshold is simpler to implement than per-entity baselines. Setting one request-rate
+limit for all users, one refusal-rate threshold for all sessions, requires no per-entity state
+and no cold-start handling. It looks like behavioural detection because it triggers on
+behaviour.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Normal behaviour varies enormously by entity. A request rate that is an attack for a casual
+user is a Tuesday for a heavy integration. A global threshold set high enough not to flag the
+power user is too high to catch the compromised low-volume account; set low enough to catch the
+compromised account, it floods on every power user. The detector produces false positives on
+legitimate heavy users and false negatives on the attacks it was meant to catch. This is
+covered in depth in Section 13.03, but the failure begins here, in the taxonomy: treating a
+temporal-family problem as if it needed no baseline state.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Recognise from the taxonomy that temporal and entity families require state -- a baseline or a
+profile -- precisely so that deviation is measured per entity rather than against a global
+constant. The state requirement is not incidental; it is what makes the detection correct.
+Section 13.03 builds the per-entity baselines that every temporal detector scores against.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Designing the gateway event stream without the fields the behavioural families need, then discovering the gap only when building the detectors</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The Chapter 12 gateway is designed to make a per-request verdict. For that purpose, it needs
+the request and the classifier scores; it does not strictly need a stable cross-session entity
+identifier, a source attribution, or the per-track score breakdown in the emitted event. An
+engineer focused on the per-request verdict emits a minimal event that records only the final
+decision.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Every behavioural family is bounded by what the event carries. An event without a stable
+entity identifier silently disables entity profiling and graph detection -- there is no key to
+accumulate history or link accounts. An event without the per-track scores disables session
+trajectory analysis. The gap is invisible until the behavioural detector is built and produces
+nothing, at which point the gateway must be re-instrumented and all historical events are
+already lost.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat the event schema as a shared contract designed up front, before the behavioural
+detectors are built. The event must carry a stable entity identifier, a session identifier,
+source and credential attribution, the per-track classifier scores, and the timestamp. The
+behavioural_event_schema.py deliverable makes this contract explicit and checkable so the gap
+is caught at design time, not at detector-build time.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Classifying every cross-request attack as a single behavioural problem and building one monolithic detector instead of matching each attack class to its family</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">All four behavioural families share the property of holding state across requests, which makes
+them look like one problem. An engineer builds a single behavioural detector intended to catch
+escalation, exfiltration, compromise, and coordination all at once, reasoning that they are all
+just behaviour over time.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The four attack classes have fundamentally different signals and state requirements. Escalation
+lives in a session trajectory; exfiltration lives in a metric over time; compromise lives in
+divergence from an entity baseline; coordination lives in the structure between entities. A
+single detector that tries to cover all four either holds the union of all state -- making it
+as expensive as the graph family for every request -- or compromises on each, catching none
+well. The monolith is both slow and weak.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Use the taxonomy to match each attack class to the family whose state and latency profile fit
+it. Session attacks get session state and near-real-time scoring; temporal attacks get metric
+history; entity attacks get persistent profiles; coordination gets the batch graph. Each
+detector holds exactly the state its attack class requires and runs at the latency that state
+permits. The families are separate by design because the attacks are separate by nature.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Chapter 13 builds the behavioural layer of the detection stack, the fourth layer above the
+Chapter 11 signature and heuristic layers and the Chapter 12 ML layer. Per-request classification
+and behavioural analysis detect disjoint attack classes: the per-request gateway sees one request
+at a time and catches the single-request attack, while behavioural analysis holds state across
+requests and catches the attack whose signal spans them. Four behavioural signal families cover
+the cross-request threat surface, ordered by the state they hold: session-level (short-lived
+session state, catches multi-turn escalation), temporal (metric history, catches burst and
+slow-ramp abuse and detector drift), entity-level (persistent profile, catches account compromise
+and low-and-slow abuse), and graph-level (entity-relationship graph, catches coordinated
+networks). Behavioural detection consumes the per-request event stream the Chapter 12 gateway
+emits -- Chapter 12 is the sensor, Chapter 13 is the analysis. State requirement and detection
+latency are coupled: families that hold large state run async or in batch and expose only cheap
+summaries to the request hot path. The taxonomy is the map for the rest of the chapter: each
+section targets a named attack class, holds a defined state, and runs at the latency that state
+permits.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Per-request classification and behavioural analysis detect disjoint attack classes: the per-request gateway catches the single-request attack, behavioural analysis catches the attack whose signal spans requests</li><li>The four behavioural families are ordered by state held: session (short-lived), temporal (metric history), entity (persistent profile), and graph (entity-relationship graph)</li><li>Behavioural detection consumes the per-request event stream rather than replacing the gateway -- Chapter 12 is the sensor that produces the stream, Chapter 13 is the analysis over it</li><li>State requirement and detection latency are coupled: families holding large state run async or batch and expose only cheap precomputed summaries to the request hot path</li><li>Anomaly detection requires an explicit per-entity baseline because normal behaviour varies by entity -- a global threshold floods on power users and misses compromised low-volume accounts</li><li>Match each attack class to its family rather than building a monolith: escalation to session, rate abuse to temporal, compromise to entity, coordination to graph -- the families are separate because the attacks are separate</li></ul>
+<h2 class="sh1">Preview Section 13 02</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 13.02: Session Modelling and Behavioural Feature Engineering -- Aggregating the Request Stream</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 13.02 builds the session modelling and behavioural feature pipeline that every
+session-level and entity-level detector in Chapter 13 consumes -- the behavioural analogue of
+the Section 12.02 feature pipeline that every per-request classifier shared. The session is the
+first aggregation unit above the request: bounded, attributable to one entity, and semantically
+coherent. The section addresses session boundary definition (time-window, explicit token, and
+inactivity-timeout strategies and their detection trade-offs), aggregation of the per-request
+event stream into a session object, and the behavioural features extracted from it: turn count,
+refusal rate, request cadence, inter-request interval distribution, and intra-session topic
+drift -- the high-signal escalation feature that measures how far a conversation moves from its
+opening topic. It builds the session store with streaming aggregation and configurable
+retention, and applies feature-importance analysis to identify which session signals carry
+independent detection signal. A well-modelled session with a topic-drift feature lets a
+downstream detector catch the gradual jailbreak that no per-turn classifier flags; a naive
+session model that only counts turns misses it entirely.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 1 Section 1.11: evaluation metrics -- precision, recall, F1 used to compare behavioural detectors throughout Chapter 13</li><li>Chapter 9 Section 9.11: query monitor and rate limiter -- the API-abuse monitoring Section 13.07 extends to behavioural patterns</li><li>Chapter 11 Section 11.03: layered detection (signature, heuristic, ML, behavioural) -- Chapter 13 implements the behavioural layer</li><li>Chapter 11 Section 11.13: seven-track gateway architecture -- the event source behavioural analysis consumes</li><li>Chapter 12 Section 12.01: ML detection taxonomy -- the per-request family taxonomy Section 13.01 sits above</li><li>Chapter 12 Section 12.15: four-detector ensemble -- the per-request verdict that becomes the Chapter 13 input event</li><li>Chapter 12 Section 12.17: production ML gateway -- the gateway whose per-request output stream feeds the four behavioural families</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 13.02: session modelling -- the shared behavioural feature pipeline all session and entity detectors use</li><li>Section 13.03: statistical baselines -- the per-entity baselines temporal detectors score against</li><li>Section 13.06: model behaviour monitoring -- the output-side temporal detection for injection success</li><li>Section 13.10: user behaviour profiling -- the persistent entity profile and risk score read inline</li><li>Section 13.11: graph-based detection and the behavioural monitoring capstone integrating the layer into the gateway</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>behavioural-detection-taxonomy</li><li>behavioural-signal-families</li><li>session-level-detection</li><li>temporal-detection</li><li>entity-level-detection</li><li>graph-based-detection</li><li>per-request-vs-behavioural</li><li>event-stream</li><li>state-requirement</li><li>detection-latency</li><li>layered-detection-stack</li><li>gateway-event-schema</li><li>owasp-llm01</li><li>owasp-llm04</li><li>owasp-llm10</li><li>chapter-13-anchor</li></ul>
+</article>

@@ -1,0 +1,1991 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 9 · Section 13 · ~6 pages</div>
+<h1>Section 9.13: Chapter 9 Summary</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Chapter 9 closes OWASP LLM10 across two defensive surfaces and three prior
+chapter arcs: threat model transition back to the gateway, four extraction
+goals, two privacy attacks, economic abuse, five detection primitives, an
+input-side capstone with per-user state and the Sigma rule, and an output-
+side capstone with cryptographic watermarking -- together bringing cumulative
+OWASP coverage to LLM01 plus LLM03 plus LLM10.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapter 9 covered more ground than any prior chapter: a threat model shift,
+a four-goal extraction taxonomy, two privacy attacks sharing the inference
+surface, an adjacent economic abuse class, five detection primitives, two
+capstone sections, and a real-world incident arc grounding all of it in
+documented fact. Section 9.13 synthesises these into three reference
+artefacts the reader will use after the chapter ends: the extraction defence
+architecture diagram showing the full two-surface control stack, the Chapter 9
+taxonomy reference card covering all seven attack classes with their detection
+primitives, and the cumulative LLM01 plus LLM03 plus LLM10 coverage map
+showing how Chapters 6 through 9 compose into a unified inference-time and
+training-time defensive architecture.
+
+The summary also names the five cross-cutting threads that connect Chapter
+9 internally and forward to Chapter 10 -- the architectural lessons that
+apply beyond this specific attack class. These threads are the book&#x27;&#x27;s
+mechanism for preventing each chapter from becoming a siloed case study
+and ensuring that accumulated knowledge transfers to new attack classes.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 9.13 of 13. Final section of Chapter 9. Produces the reference
+artefacts that Chapter 10 and later chapters cite. The knowledge assessment
+quiz (Deliverable 4) is the Chapter 9 completion criterion for the reader.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>All 12 prior sections of Chapter 9 (synthesis section; all content sections are prerequisite)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 9.1 and 9.2 in Review: Threat Model Transition and Extraction Taxonomy</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 9 opened with a deliberate architectural reset. Chapter 8 had
+trained the reader to think in batch jobs and CI/CD gates -- the detection
+architecture for training-time poisoning. Section 9.1 reversed that: the
+threat actor in Chapter 9 is an API consumer with a query budget, the attack
+surface is the deployed model&#x27;&#x27;s inference API, and the detection architecture
+returns to the real-time per-request gateway of Chapters 6 and 7.
+
+The adversary access ladder (black-box, grey-box, white-box) established
+the extraction budget economics that calibrate every rate limit in Section
+9.11. The critical insight was that grey-box APIs providing probability
+distributions give adversaries a 5 to 50x query budget discount -- output
+design is a security decision, not merely a product decision.
+
+Section 9.2 built the extraction taxonomy: four goals, each with distinct
+adversary objectives, query patterns, and detection primitives. Functionality
+extraction builds a deployable clone across the full input distribution --
+the dominant commercial threat. Fidelity extraction targets a specific input
+set with minimal query budget. Decision-boundary extraction maps the
+classification surface for adversarial example generation -- the connection
+to Chapter 10. Prompt extraction reconstructs the system prompt and
+operational configuration at orders-of-magnitude lower query budget than
+the other three goals.
+
+The taxonomy&#x27;&#x27;s operational value: it prevents undifferentiated defences.
+A volume threshold alone cannot distinguish a distillation campaign from a
+boundary extraction campaign from prompt extraction from legitimate high-
+volume use. The taxonomy drives the five-primitive detection ensemble that
+covers each goal with a dedicated signal.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 9.3, 9.4, and 9.5 in Review: The Three Extraction Attacks</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 9.3 established the foundational extraction primitive: black-box
+decision boundary mapping. Every API query reveals which side of the
+classification boundary its input falls on. Linear classifiers extract
+in O(d) queries via equation-solving -- a query budget achievable within
+a day of normal API use, far below any throughput-based rate limit. Decision
+trees extract via path-finding at comparable budgets. The detection insight
+from this section -- extraction queries cluster near decision boundaries
+while benign queries cluster in high-density input regions -- drove the
+boundary query detector that Section 9.10 implemented and Section 9.11
+wired into Track 6 of the gateway.
+
+Section 9.4 scaled the boundary mapping primitive into the dominant
+commercial attack: knowledge distillation repurposed adversarially. The
+soft-label versus hard-label distinction is the chapter&#x27;&#x27;s central practical
+security insight: soft labels carry log2(K) times as much boundary
+information as hard labels for a K-class classifier. At typical API pricing,
+this translates to a grey-box extraction campaign costing under $1,000
+producing surrogate fidelity that would require $50,000 to $500,000 to
+train from scratch. Distributed campaigns split query budgets across
+accounts to evade per-user monitoring -- the evasion pattern that motivated
+the cross-user collusion detector and output watermarking.
+
+Section 9.5 covered prompt extraction at scale: the aggregation attack
+that reconstructs system prompts from many individually innocuous queries.
+The Chapter 6 injection classifier catches direct elicitation. The Section
+9.11 cumulative query monitor catches the aggregation pattern -- 20 to 500
+queries spanning the model&#x27;&#x27;s behavioural constraints, contact details, and
+content restrictions. Per-query leakage reduction, not zero leakage, is
+the achievable defence goal; output perturbation targets this metric.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 9.6 and 9.7 in Review: Privacy Attacks Sharing the Inference Surface</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Sections 9.6 and 9.7 introduced the two privacy attack classes that share
+the inference-time API surface with the four extraction goals. Both exploit
+the same property Chapter 1 introduced as a generalisation problem: a model
+that memorises its training data responds to training examples differently
+than to unseen inputs drawn from the same distribution.
+
+Membership inference (Section 9.6) exploits the confidence and loss gap
+between training members and non-members. The shadow model attack (Shokri
+et al. 2017) trains meta-classifiers on known-membership confidence vectors
+from shadow models, achieving 73 to 95 percent attack accuracy on overfit
+models. This is a HIPAA breach when the model was trained on protected
+health information and a GDPR right-to-erasure violation when the training
+data is EU personal data. Differential privacy training from Section 8.13
+is the upstream defence with a formal bound; output perturbation from
+Section 9.12 is the downstream signal-reduction control.
+
+Model inversion (Section 9.7) goes further: it reconstructs training data
+content from model outputs, not merely membership status. Carlini et al.
+2021 demonstrated verbatim recovery of thousands of GPT-2 training sequences,
+including PII, using perplexity-based membership scoring followed by
+systematic generation. The two privacy attacks are kept in Chapter 9 rather
+than split into a separate chapter because they share defensive primitives
+with the four extraction goals: rate limiting, query pattern monitoring,
+output perturbation, and differential privacy training.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 9.8 in Review: API Economic Abuse as the Adjacent Threat Class</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 9.8 completed the Chapter 9 attack arc with the class that targets
+operational viability rather than intellectual property. Cost amplification
+engineers queries to maximise inference cost through context padding and
+verbose output demands, achieving 50 to 360 times the average query cost
+within model token limits. Denial-of-wallet sustains this amplification
+until the operator&#x27;&#x27;s budget is exhausted; a free-tier deployment can be
+drained in hours with zero adversary spend. Rate-limit exhaustion distributes
+minimal queries across accounts to block legitimate users without generating
+per-user alerts.
+
+The adversary-operator cost asymmetry is structurally unlimited for free-tier
+deployments and 10 to 250 times for paid-tier deployments. This asymmetry
+drives the rate limit policy design: a limit that makes attack cost exceed
+the commercial alternative is a meaningful deterrent; a throughput-only
+limit provides no deterrent for the cost-amplification pattern.
+
+Economic abuse and extraction share the query volume and user concentration
+detection primitives -- the same monitoring infrastructure covers both threat
+classes. The adaptive rate limiter&#x27;&#x27;s four-dimension policy (requests per
+minute, tokens per minute, cost per hour, input tokens per request) addresses
+all three economic abuse forms and all four extraction goals from a single
+unified enforcement layer.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 9.9 in Review: Documented Incidents Ground the Defence Architecture</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 9.9 grounded the attack catalogue in three documented incident
+classes. The Tramer et al. 2016 commercial MLaaS extractions demonstrated
+that the theoretical extraction bounds are achievable against production
+APIs using query counts indistinguishable from normal API use. The Carlini
+et al. 2021 GPT-2 extraction demonstrated verbatim training data recovery
+including PII using a modest query budget against a then-major commercial
+deployment. The Alpaca and Vicuna distillation campaigns demonstrated that
+a few hundred dollars in API fees produce functional capability clones of
+GPT-3.5 and GPT-4, with query distributions analytically indistinguishable
+from legitimate evaluation use.
+
+All three incidents shared five root causes: no query pattern monitoring,
+throughput-only rate limits, no output watermarking, soft-label outputs
+without perturbation, and no differential privacy training. These five root
+causes map precisely to the five controls that Sections 9.10 through 9.12
+build. The detection opportunity map showed that input-side controls catch
+the Tramer et al. and Carlini et al. patterns; watermarking is the only
+control that addresses the Alpaca and Vicuna pattern post-hoc. The lesson:
+neither surface alone provides complete coverage; both are required.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 9.10 in Review: The Detection Primitive Library</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 9.10 implemented the five detection primitives as a software library
+that Sections 9.11 and 9.12 import. The query pattern analyser tracks query
+diversity, boundary proximity, and meta-query rate across a per-user sliding
+window. The OOD detector uses isolation forest trained on legitimate traffic
+to score incoming queries against the deployment&#x27;&#x27;s expected input distribution.
+The boundary query detector identifies opposite-label near-neighbour pairs
+in the user&#x27;&#x27;s query embedding and label history using a k-d tree index.
+The output entropy monitor scores per-response information leakage risk and
+doubles as the economic abuse token-count anomaly detector. The user
+concentration analyser measures per-user semantic clustering relative to
+the legitimate user population&#x27;&#x27;s 95th percentile.
+
+The empirical comparison harness (Deliverable 6 of Section 9.10) measured
+the ensemble&#x27;&#x27;s detection rates across synthetic attack families: 95 to 98
+percent for equation-solving extraction, 88 to 93 percent for prompt extraction
+and distillation, and 30 to 40 percent for benchmark-distribution LLM
+distillation. That 30 to 40 percent gap is the architectural finding that
+drives Section 9.12: the benchmark-distribution pattern is definitionally
+undetectable at the input side, so the output-side watermark is the only
+control with post-hoc coverage for this attack class.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">7</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sections 9.11 and 9.12 in Review: The Two-Surface Production Architecture</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Section 9.11 wired the detection library into the Chapter 6/7 gateway as
+Track 6: the first stateful detection track in the book. Per-user state
+stores rolling windows of query embeddings, labels, and cost history that
+persist across sessions. The adaptive rate limiter enforces four independent
+policy dimensions calibrated against extraction budget economics rather than
+infrastructure throughput. The cross-user collusion detector identifies
+distributed campaigns by clustering semantically similar queries across
+accounts within time windows. The AML.T0040/T0024 Sigma rule was completed
+from the Chapter 5 stub, routing extraction alerts to the SIEM. The 8-item
+deployment checklist ensures production readiness before traffic is routed
+through Track 6.
+
+Section 9.12 added the output-side defensive surface that no prior chapter
+required. The watermarker embeds a cryptographic signal in every response
+using HMAC-based green-token vocabulary partitioning; the signal transfers
+to student models trained on watermarked outputs because the student learns
+the teacher&#x27;&#x27;s green-token preference. The z-score statistical test confirms
+watermark presence at p &lt; 0.00003 for z ≥ 4.0. The output perturbator
+applies calibrated noise through Gaussian, top-k, rounding, or temperature
+shaping modes; adaptive perturbation scales noise strength with the query
+monitor&#x27;&#x27;s risk score. Together, Sections 9.11 and 9.12 close OWASP LLM10
+across all five sub-risks.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">8</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Integration: How Chapter 9 Extends the Gateway Architecture</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 9&#x27;&#x27;s relationship to the prior chapter arc is architectural, not
+just topical. The Chapter 6 production injection classifier established the
+gateway pattern: a synchronous per-request analysis stage that runs within
+the API&#x27;&#x27;s latency budget and returns a routing decision. Chapter 7 extended
+this to a five-track parallel ensemble. Chapter 9 extends it to a six-track
+ensemble with one structural difference: Track 6 is stateful.
+
+The stateful extension required four engineering decisions that were not
+present in Chapters 6 or 7. First, the state store architecture: per-user
+rolling windows backed by a distributed cache with TTL-based eviction.
+Second, the async write pattern: state updates are fire-and-forget to avoid
+adding write latency to the critical path. Third, the fallback-to-stateless
+policy: if the state store is unavailable, the gateway continues with Tracks
+1 through 5 rather than failing the request. Fourth, the one-request lag
+acceptance: Track 6 scores from the previous request&#x27;&#x27;s state, which is
+acceptable because extraction detection operates on distributions across
+many queries rather than on individual query content.
+
+Chapter 8&#x27;&#x27;s offline auditing pipeline stands in architectural contrast to
+all of this. The auditing pipeline processes training batches asynchronously
+with a minutes-to-hours latency budget; the gateway ensemble processes
+individual requests synchronously with a 50ms P99 budget. Both architectures
+are correct for their respective threat classes -- the error is applying
+the wrong architecture to a threat, not choosing one over the other.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">9</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Cross-Chapter Arc: LLM01 plus LLM03 plus LLM10 -- Three OWASP Categories with Full Production Coverage</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Chapter 9 completes a three-chapter OWASP coverage arc that runs through
+the second half of Part 2. Each chapter addressed one OWASP LLM category
+with a full attack catalogue, production detection controls, and a Sigma
+rule or equivalent compliance artefact.
+
+Chapter 6 and 7 closed LLM01 (prompt injection and jailbreak) with the
+injection classifier and jailbreak detection ensemble. The threat actor was
+an end user attempting to override the model&#x27;&#x27;s instructions. The detection
+architecture was the real-time gateway with content-based single-request
+classification. The deployment capstone was the Chapter 6 production
+classifier and the Chapter 7 jailbreak ensemble.
+
+Chapter 8 closed LLM03 (training data poisoning) with the offline auditing
+pipeline. The threat actor was a data pipeline contributor with training
+access. The detection architecture was a batch CI/CD gate with statistical
+tests and provenance checks. The deployment capstone was the production
+auditing pipeline with poisoning detection across multiple attack families.
+
+Chapter 9 closes LLM10 (model theft) with the two-surface gateway extension.
+The threat actor is an API consumer with a query budget. The detection
+architecture is the six-track gateway extended with per-user stateful
+monitoring, adaptive rate limiting, and output-side watermarking. Together
+the three chapters cover the two primary attack surfaces (training-time and
+inference-time) and three of the ten OWASP LLM categories with full
+production controls.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">10</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Five Cross-Cutting Threads</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Five threads run through Chapter 9 and extend into Chapter 10 and beyond.
+
+Thread 1: Ensemble defence is structurally mandatory. No single detection
+primitive covers the full attack catalogue. The five-primitive ensemble is
+not a performance optimisation -- it is a coverage requirement. Any reduction
+to fewer primitives creates a detection gap for specific attack classes.
+This thread applies to every multi-technique threat class the book covers.
+
+Thread 2: Query budget economics is the design language for extraction
+defence. Rate limits, detection thresholds, and perturbation strength are
+all calibrated against query budgets required for specific extraction attacks,
+not against abstract security intuitions. A control that triples the required
+query budget is more valuable than one that blocks 50 percent of queries.
+
+Thread 3: Output-side defence is a new and underinvested surface. Prior
+to Chapter 9, all defensive controls in the book operated on inputs.
+Chapter 9 introduces the output-side stage as a first-class architectural
+component. Future threat classes -- particularly LLM capability misuse
+and data exfiltration via model outputs -- will require further output-side
+controls that Chapter 9&#x27;&#x27;s watermarker and perturbator architecture generalises.
+
+Thread 4: Honest acknowledgement of defensive limits. The 30 to 40 percent
+input-side detection rate for benchmark-distribution distillation is a known
+limit, not a failure to be concealed. Watermark robustness degrades under
+paraphrasing. Perturbation is friction, not a barrier. DP training has a
+utility-privacy tradeoff that tightens at low epsilon. The defence is
+maximally effective when its limits are acknowledged and compensating controls
+are explicitly deployed.
+
+Thread 5: The Chapter 9 to Chapter 10 connection is mechanistic. Decision-
+boundary maps produced by Section 9.3 boundary extraction are the input to
+Chapter 10 adversarial example generation. An adversary who has completed
+a boundary extraction campaign against a classifier is positioned to generate
+adversarial examples against it. Chapter 10 builds on Chapter 9&#x27;&#x27;s outputs;
+the detection architecture extends the six-track gateway with an adversarial
+example detection track.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">11</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Quick Reference: Decision Trees, Primitive Selection, and Defence Stacking</p>
+<h3 class="sh2">Body</h3>
+<p class="prose">Three quick-reference tools synthesise Chapter 9 for post-chapter use.
+
+Extraction goal decision tree. An observed query pattern is classified by
+answering three questions in sequence. First: are queries broadly distributed
+across the input space? If yes, functionality extraction is the primary
+hypothesis; deploy query diversity monitor and rate limiter. Second: are
+queries concentrated in a narrow semantic region? If yes, fidelity or prompt
+extraction is the hypothesis; deploy user concentration analyser and prompt
+reconstruction track. Third: are opposite-label near-neighbour pairs present
+in the query history? If yes, decision-boundary extraction is the hypothesis;
+deploy boundary query detector and OOD detector.
+
+Detection primitive selection guide. If the deployment is a classifier with
+soft-label output, the output entropy monitor provides the highest-value
+additional signal over the default ensemble. If the deployment is an LLM
+with benchmark-distribution traffic patterns, output watermarking is the
+only control with coverage for the dominant extraction pattern. If the
+deployment faces prompt extraction risk (commercial system prompt with IP
+value), the cumulative query monitor&#x27;&#x27;s prompt reconstruction track is the
+critical primitive, not the per-request injection classifier.
+
+Defence stacking pattern. The minimum viable defence stack for any production
+LLM API deployment has three layers. Layer 1: hard label output design
+(return hard labels; remove soft labels unless required). Layer 2: input-
+side monitoring (query monitor with calibrated primitives; extraction-aware
+rate limiter; cross-user correlator). Layer 3: output-side protection
+(watermarker with HSM-stored key; adaptive perturbator calibrated against
+utility validation). Each layer independently reduces extraction risk; all
+three together provide the depth the attack catalogue requires.</p>
+<h3 class="sh2">Part</h3>
+<p class="prose">12</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 10 Preview: Adversarial Machine Learning</p>
+<h3 class="sh2">Body</h3>
+<pre class="code"><code>Chapter 10 covers the inference-time threat class that Chapter 9&#x27;&#x27;s boundary
+mapping enables: adversarial example generation. The connection is mechanistic.
+A complete boundary extraction campaign (Section 9.3) produces a map of the
+model&#x27;&#x27;s classification surface. Adversarial example generation uses that
+map to construct inputs that the model misclassifies with high confidence --
+inputs that sit on or just across the decision boundary from their true class.
+
+The canonical adversarial attack methods -- FGSM (Fast Gradient Sign Method),
+PGD (Projected Gradient Descent), and C&amp;W (Carlini-Wagner) -- require gradient
+access for full efficiency but work in approximate form under black-box access
+using the boundary map that Chapter 9 provides. Transferability extends the
+threat: adversarial examples generated against a surrogate model trained by
+distillation (Section 9.4) transfer to the victim with substantial success
+rate, because the surrogate shares the victim&#x27;&#x27;s decision boundary structure.
+
+Chapter 10 extends the six-track gateway with Track 7: adversarial example
+detection. The detection primitives are different from the Chapter 9 set --
+adversarial examples are typically detected by input preprocessing (feature
+squeezing, spatial smoothing), by classifier consistency checks (the model&#x27;&#x27;s
+confidence should not change dramatically under small perturbations of the
+input), and by comparison against a separately trained detection model. The
+architecture is the same: a parallel detection track within the gateway
+ensemble, stateless per-request, within the 50ms P99 budget.
+
+Chapter 10 closes the OWASP coverage for the inference-time evasion attack
+class and completes Part 2 of the book. Chapters 11 through 17 extend the
+two-surface defensive architecture to the remaining OWASP LLM categories.</code></pre>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 9 Cross-Cutting Threads</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Five architectural and security threads that run through Chapter 9
+and forward into subsequent chapters.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Thread</li><li>Core Principle</li><li>Chapter 9 Manifestation</li><li>Forward Application</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Thread</h3>
+<p class="prose">Ensemble defence as structural mandate</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">No single primitive covers the full attack catalogue; ensemble is a coverage requirement</p>
+<h3 class="sh3">Ch9</h3>
+<p class="prose">Five primitives required; removing any one creates a detection gap for specific attack classes</p>
+<h3 class="sh3">Forward</h3>
+<p class="prose">Applies to every multi-technique threat class; Track 7 in Chapter 10 extends the ensemble</p>
+<h3 class="sh3">Thread</h3>
+<p class="prose">Query budget economics as design language</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Calibrate controls against query budgets, not abstract thresholds; tripling required budget is high-value defence</p>
+<h3 class="sh3">Ch9</h3>
+<p class="prose">Rate limit dimensions calibrated from Section 9.2 budget-fidelity curves; watermark robustness measured in query-count terms</p>
+<h3 class="sh3">Forward</h3>
+<p class="prose">Applies to Chapter 10 evasion attack cost; adversarial example generation budget drives detection sensitivity</p>
+<h3 class="sh3">Thread</h3>
+<p class="prose">Output-side defence as first-class surface</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Post-inference response modification is a novel and underinvested defensive layer</p>
+<h3 class="sh3">Ch9</h3>
+<p class="prose">Watermarker and perturbator introduced in Section 9.12; no prior chapter defended outputs</p>
+<h3 class="sh3">Forward</h3>
+<p class="prose">LLM capability misuse and data exfiltration via outputs require further output-side controls</p>
+<h3 class="sh3">Thread</h3>
+<p class="prose">Honest acknowledgement of limits</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Known gaps must be named and compensating controls explicitly deployed; concealing limits creates false confidence</p>
+<h3 class="sh3">Ch9</h3>
+<p class="prose">30-40% detection rate for benchmark distillation named; watermark paraphrasing vulnerability documented; perturbation as friction not barrier</p>
+<h3 class="sh3">Forward</h3>
+<p class="prose">Chapter 10 adversarial examples have known transferability limits and detection evasion rates; same honesty required</p>
+<h3 class="sh3">Thread</h3>
+<p class="prose">Mechanistic chapter-to-chapter connection</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Attack and defence techniques build cumulatively; boundary maps enable evasion attacks</p>
+<h3 class="sh3">Ch9</h3>
+<p class="prose">Section 9.3 boundary maps are the direct input to Chapter 10 adversarial example generation</p>
+<h3 class="sh3">Forward</h3>
+<p class="prose">Chapter 10 surrogate models (from Chapter 9 distillation) transfer adversarial examples to the victim</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 9 Attack Classes: Complete Reference Card</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">All seven Chapter 9 attack classes with primary detection primitive,
+key defence, and OWASP LLM10 sub-risk mapping.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Attack Class</li><li>Adversary Goal</li><li>Approx Query Budget</li><li>Primary Detection Primitive</li><li>Primary Defence</li><li>LLM10 Sub-Risk</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Functionality Extraction</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Deployable surrogate clone across full input distribution</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">10K-1M+ (black-box); 200-200K (grey-box)</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Query diversity monitor</p>
+<h3 class="sh3">Defence</h3>
+<p class="prose">Hard-label API; adaptive rate limiter; watermarker</p>
+<h3 class="sh3">Sub Risk</h3>
+<p class="prose">LLM10.1</p>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Fidelity Extraction</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Exact behavioural match on specific target input set</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">1K-50K</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">User concentration analyser</p>
+<h3 class="sh3">Defence</h3>
+<p class="prose">Adaptive rate limiter; output perturbator</p>
+<h3 class="sh3">Sub Risk</h3>
+<p class="prose">LLM10.1</p>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Decision-Boundary Extraction</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Classification surface geometry for adversarial example generation</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">100-100K</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Boundary query detector; OOD detector</p>
+<h3 class="sh3">Defence</h3>
+<p class="prose">Hard-label API; output perturbator; adaptive rate limiter</p>
+<h3 class="sh3">Sub Risk</h3>
+<p class="prose">LLM10.1</p>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Prompt Extraction</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">System prompt and operational configuration reconstruction</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">50-500</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">User concentration analyser; meta-query rate track</p>
+<h3 class="sh3">Defence</h3>
+<p class="prose">Cumulative query monitor; output perturbator</p>
+<h3 class="sh3">Sub Risk</h3>
+<p class="prose">LLM10.2</p>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Membership Inference</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Determine whether a specific record was in the training set</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">10-1000 per target record</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">User concentration analyser; output entropy monitor</p>
+<h3 class="sh3">Defence</h3>
+<p class="prose">Differential privacy training (Section 8.13); output perturbator</p>
+<h3 class="sh3">Sub Risk</h3>
+<p class="prose">LLM10.3</p>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Model Inversion</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Reconstruct training data content from model outputs</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">10K-1M</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Query diversity monitor; output entropy monitor</p>
+<h3 class="sh3">Defence</h3>
+<p class="prose">Differential privacy training (Section 8.13); output perturbator</p>
+<h3 class="sh3">Sub Risk</h3>
+<p class="prose">LLM10.3</p>
+<h3 class="sh3">Attack</h3>
+<p class="prose">API Economic Abuse</p>
+<h3 class="sh3">Goal</h3>
+<p class="prose">Exhaust operator budget or block legitimate users</p>
+<h3 class="sh3">Budget</h3>
+<p class="prose">Minimal (adversary); maximal (operator cost)</p>
+<h3 class="sh3">Detection</h3>
+<p class="prose">Cost-per-query outlier; output entropy (token count)</p>
+<h3 class="sh3">Defence</h3>
+<p class="prose">Four-dimension adaptive rate limiter</p>
+<h3 class="sh3">Sub Risk</h3>
+<p class="prose">LLM10.4</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Defence Stacking Patterns by Deployment Context</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Minimum viable defence stacks for four representative deployment contexts.
+All stacks include the five cross-layer controls; context-specific
+additions are noted.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>Deployment Context</li><li>Layer 1: Output Design</li><li>Layer 2: Input-Side Controls</li><li>Layer 3: Output-Side Controls</li><li>Context-Specific Addition</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Context</h3>
+<p class="prose">Narrow-domain classifier (sensitive PII training data)</p>
+<h3 class="sh3">Layer1</h3>
+<p class="prose">Hard labels only; remove all confidence scores</p>
+<h3 class="sh3">Layer2</h3>
+<p class="prose">Query monitor (boundary + diversity tracks); extraction-aware rate limiter (d-calibrated)</p>
+<h3 class="sh3">Layer3</h3>
+<p class="prose">Watermarker (delta=2.0); perturbator (gaussian sigma=0.05)</p>
+<h3 class="sh3">Addition</h3>
+<p class="prose">Differential privacy training (epsilon &lt;= 3); membership inference audit quarterly</p>
+<h3 class="sh3">Context</h3>
+<p class="prose">Commercial LLM API (general instruction-following)</p>
+<h3 class="sh3">Layer1</h3>
+<p class="prose">Soft labels retained but capped at top-5; temperature fixed server-side</p>
+<h3 class="sh3">Layer2</h3>
+<p class="prose">Query monitor (all 5 tracks); 4-dimension rate limiter; cross-user correlator</p>
+<h3 class="sh3">Layer3</h3>
+<p class="prose">Watermarker (delta=2.0); adaptive perturbator (step-function tiers)</p>
+<h3 class="sh3">Addition</h3>
+<p class="prose">Watermark verification workflow documented; terms-of-service distillation prohibition active</p>
+<h3 class="sh3">Context</h3>
+<p class="prose">Free-tier LLM deployment</p>
+<h3 class="sh3">Layer1</h3>
+<p class="prose">Hard labels only; minimal output verbosity defaults</p>
+<h3 class="sh3">Layer2</h3>
+<p class="prose">Strict 4-dimension rate limiter (free-tier template); cross-user correlator at 30-min frequency</p>
+<h3 class="sh3">Layer3</h3>
+<p class="prose">Watermarker mandatory (infinite cost asymmetry makes DoW trivial without it)</p>
+<h3 class="sh3">Addition</h3>
+<p class="prose">Budget alarm at 50% of daily limit; auto-suspend on budget exhaustion</p>
+<h3 class="sh3">Context</h3>
+<p class="prose">Agentic LLM with tool access</p>
+<h3 class="sh3">Layer1</h3>
+<p class="prose">Tool output format restrictions; no raw API response passthrough</p>
+<h3 class="sh3">Layer2</h3>
+<p class="prose">Query monitor with tool-access prompt extraction track; rate limiter with tool-call dimension</p>
+<h3 class="sh3">Layer3</h3>
+<p class="prose">Watermarker; perturbator on sensitive tool outputs</p>
+<h3 class="sh3">Addition</h3>
+<p class="prose">Tool whitelist encoded in system prompt with perturbation protection; periodic prompt extraction audit</p>
+<h3 class="sh2">Table</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Cumulative OWASP Coverage: Chapters 6 Through 9</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Three-chapter OWASP LLM coverage arc with the attack surface, detection
+architecture, and production capstone for each category.</p>
+<h3 class="sh2">Columns</h3>
+<ul class="blist"><li>OWASP Category</li><li>Chapters</li><li>Attack Surface</li><li>Threat Actor</li><li>Detection Architecture</li><li>Production Capstone</li></ul>
+<h3 class="sh2">Rows</h3>
+<h3 class="sh3">Category</h3>
+<p class="prose">LLM01 (Prompt Injection and Jailbreak)</p>
+<h3 class="sh3">Chapters</h3>
+<p class="prose">6 and 7</p>
+<h3 class="sh3">Surface</h3>
+<p class="prose">Inference-time: user input</p>
+<h3 class="sh3">Actor</h3>
+<p class="prose">End user attempting instruction override</p>
+<h3 class="sh3">Architecture</h3>
+<p class="prose">Five-track stateless gateway ensemble; per-request content classification</p>
+<h3 class="sh3">Capstone</h3>
+<p class="prose">injection_classifier.py (Ch6); jailbreak_ensemble.py (Ch7)</p>
+<h3 class="sh3">Category</h3>
+<p class="prose">LLM03 (Training Data Poisoning)</p>
+<h3 class="sh3">Chapters</h3>
+<p class="prose">8</p>
+<h3 class="sh3">Surface</h3>
+<p class="prose">Training-time: data pipeline and preprocessing</p>
+<h3 class="sh3">Actor</h3>
+<p class="prose">Data pipeline contributor with training access</p>
+<h3 class="sh3">Architecture</h3>
+<p class="prose">Offline batch auditing pipeline; CI/CD gate; minutes-to-hours latency</p>
+<h3 class="sh3">Capstone</h3>
+<p class="prose">auditing_pipeline.py (Ch8); poisoning_detector.py (Ch8)</p>
+<h3 class="sh3">Category</h3>
+<p class="prose">LLM10 (Model Theft)</p>
+<h3 class="sh3">Chapters</h3>
+<p class="prose">9</p>
+<h3 class="sh3">Surface</h3>
+<p class="prose">Inference-time: inference API (input and output)</p>
+<h3 class="sh3">Actor</h3>
+<p class="prose">API consumer with query budget</p>
+<h3 class="sh3">Architecture</h3>
+<p class="prose">Six-track stateful gateway (Track 6) + output-side watermark/perturbation stage</p>
+<h3 class="sh3">Capstone</h3>
+<p class="prose">query_monitor.py + rate_limiter.py (9.11); output_watermarker.py + output_perturbator.py (9.12)</p>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">extraction_defence_architecture.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the full Chapter 9 two-surface extraction defence architecture as
+a layered data structure and renders it as a structured text diagram.
+Covers input-side controls (Track 6 query monitor, rate limiter, cross-user
+correlator) and output-side controls (watermarker, perturbator) with their
+operational timing and coverage properties.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Architecture layers are data-driven via ArchitectureLayer dataclass list.
+Diagram rendering is schema-free string formatting. No hardcoded layer
+names or control references.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># extraction_defence_architecture.py
+# Chapter 9 Section 9.13 -- Two-Surface Extraction Defence Architecture
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class ArchitectureControl:
+    name: str
+    timing: str   # &#x27;pre_request&#x27;, &#x27;in_request&#x27;, &#x27;post_inference&#x27;, &#x27;background&#x27;
+    state: str    # &#x27;stateless&#x27; or &#x27;stateful&#x27;
+    covers: List[str]
+    section_reference: str
+
+
+@dataclass
+class ArchitectureLayer:
+    layer_name: str
+    position: str   # &#x27;input_side&#x27; or &#x27;output_side&#x27; or &#x27;background&#x27;
+    controls: List[ArchitectureControl]
+
+
+INPUT_SIDE_LAYER = ArchitectureLayer(
+    layer_name=&#x27;Input-Side Detection and Enforcement&#x27;,
+    position=&#x27;input_side&#x27;,
+    controls=[
+        ArchitectureControl(
+            name=&#x27;Tracks 1-5 (Ch6/7 injection + jailbreak ensemble)&#x27;,
+            timing=&#x27;in_request&#x27;,
+            state=&#x27;stateless&#x27;,
+            covers=[&#x27;prompt_injection&#x27;, &#x27;jailbreak&#x27;],
+            section_reference=&#x27;Ch6 Section 6.17, Ch7 Section 7.14&#x27;,
+        ),
+        ArchitectureControl(
+            name=&#x27;Track 6: Query Pattern Monitor&#x27;,
+            timing=&#x27;in_request&#x27;,
+            state=&#x27;stateful&#x27;,
+            covers=[&#x27;functionality_extraction&#x27;, &#x27;fidelity_extraction&#x27;,
+                    &#x27;decision_boundary_extraction&#x27;, &#x27;prompt_extraction&#x27;,
+                    &#x27;membership_inference&#x27;],
+            section_reference=&#x27;Section 9.11 query_monitor.py&#x27;,
+        ),
+        ArchitectureControl(
+            name=&#x27;Adaptive Rate Limiter (4 dimensions)&#x27;,
+            timing=&#x27;in_request&#x27;,
+            state=&#x27;stateful&#x27;,
+            covers=[&#x27;all_extraction_goals&#x27;, &#x27;economic_abuse_all_forms&#x27;],
+            section_reference=&#x27;Section 9.11 rate_limiter.py&#x27;,
+        ),
+        ArchitectureControl(
+            name=&#x27;Cross-User Collusion Detector&#x27;,
+            timing=&#x27;background&#x27;,
+            state=&#x27;stateful&#x27;,
+            covers=[&#x27;distributed_distillation&#x27;, &#x27;coordinated_boundary_probing&#x27;],
+            section_reference=&#x27;Section 9.11 cross_user_correlator.py&#x27;,
+        ),
+    ],
+)
+
+OUTPUT_SIDE_LAYER = ArchitectureLayer(
+    layer_name=&#x27;Output-Side Watermarking and Perturbation&#x27;,
+    position=&#x27;output_side&#x27;,
+    controls=[
+        ArchitectureControl(
+            name=&#x27;Output Watermarker (token-level, HMAC green-list)&#x27;,
+            timing=&#x27;post_inference&#x27;,
+            state=&#x27;stateless&#x27;,
+            covers=[&#x27;functionality_extraction_posthoc&#x27;, &#x27;llm_distillation_posthoc&#x27;],
+            section_reference=&#x27;Section 9.12 output_watermarker.py&#x27;,
+        ),
+        ArchitectureControl(
+            name=&#x27;Adaptive Output Perturbator&#x27;,
+            timing=&#x27;post_inference&#x27;,
+            state=&#x27;stateless&#x27;,
+            covers=[&#x27;soft_label_distillation&#x27;, &#x27;prompt_extraction_leakage&#x27;,
+                    &#x27;membership_inference_signal&#x27;, &#x27;model_inversion_signal&#x27;],
+            section_reference=&#x27;Section 9.12 output_perturbator.py + adaptive_perturbation.py&#x27;,
+        ),
+        ArchitectureControl(
+            name=&#x27;Watermark Detector (verification workflow)&#x27;,
+            timing=&#x27;background&#x27;,
+            state=&#x27;stateless&#x27;,
+            covers=[&#x27;surrogate_model_identification&#x27;, &#x27;ownership_evidence&#x27;],
+            section_reference=&#x27;Section 9.12 watermark_detector.py + watermark_verification_workflow.py&#x27;,
+        ),
+    ],
+)
+
+UPSTREAM_LAYER = ArchitectureLayer(
+    layer_name=&#x27;Upstream Training-Time Controls&#x27;,
+    position=&#x27;input_side&#x27;,
+    controls=[
+        ArchitectureControl(
+            name=&#x27;Differential Privacy Training&#x27;,
+            timing=&#x27;pre_request&#x27;,
+            state=&#x27;stateless&#x27;,
+            covers=[&#x27;membership_inference&#x27;, &#x27;model_inversion&#x27;, &#x27;training_data_reconstruction&#x27;],
+            section_reference=&#x27;Section 8.13 (Chapter 8)&#x27;,
+        ),
+        ArchitectureControl(
+            name=&#x27;Training Data Auditing Pipeline&#x27;,
+            timing=&#x27;pre_request&#x27;,
+            state=&#x27;stateless&#x27;,
+            covers=[&#x27;training_data_poisoning&#x27;],
+            section_reference=&#x27;Section 8.15 (Chapter 8)&#x27;,
+        ),
+    ],
+)
+
+ALL_LAYERS = [UPSTREAM_LAYER, INPUT_SIDE_LAYER, OUTPUT_SIDE_LAYER]
+
+
+def render_architecture_diagram(layers: List[ArchitectureLayer]) -&gt; None:
+    width = 70
+    border = &#x27;=&#x27; * width
+    print(border)
+    print(&#x27;EXTRACTION DEFENCE ARCHITECTURE -- Chapter 9 Section 9.13&#x27;)
+    print(border)
+    for layer in layers:
+        print(f&#x27;\n[{layer.position.upper()}] {layer.layer_name}&#x27;)
+        print(&#x27;-&#x27; * width)
+        for ctrl in layer.controls:
+            print(f&#x27;  Control: {ctrl.name}&#x27;)
+            print(f&#x27;    Timing: {ctrl.timing} | State: {ctrl.state}&#x27;)
+            cov_str = &#x27;, &#x27;.join(ctrl.covers[:3]) + (&#x27; ...&#x27; if len(ctrl.covers) &gt; 3 else &#x27;&#x27;)
+            print(f&#x27;    Covers: {cov_str}&#x27;)
+            print(f&#x27;    Ref:    {ctrl.section_reference}&#x27;)
+
+
+def get_controls_for_attack(attack_class: str) -&gt; List[ArchitectureControl]:
+    &#x27;&#x27;&#x27;Return all controls that cover a given attack class.&#x27;&#x27;&#x27;
+    matching = []
+    for layer in ALL_LAYERS:
+        for ctrl in layer.controls:
+            if any(attack_class.lower() in c.lower() for c in ctrl.covers):
+                matching.append(ctrl)
+    return matching
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_architecture_diagram(ALL_LAYERS)
+    print()
+    query = &#x27;functionality_extraction&#x27;
+    controls = get_controls_for_attack(query)
+    print(f&#x27;Controls covering [{query}]:&#x27;)
+    for c in controls:
+        print(f&#x27;  - {c.name} ({c.section_reference})&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">extraction_taxonomy_reference_card.py</p>
+<h3 class="sh2">Description</h3>
+<pre class="code"><code>Complete Chapter 9 extraction taxonomy reference card encoding all seven
+attack classes (four extraction goals, two privacy attacks, economic abuse)
+with detection primitive mapping, query budget ranges, and defence stack
+references. Provides a classify_threat() function that returns the attack
+class entry for an observed threat description.</code></pre>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+All seven attack classes are encoded as ThreatClassEntry dataclass instances.
+classify_threat() uses keyword matching against entry fields -- no hardcoded
+per-class logic.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># extraction_taxonomy_reference_card.py
+# Chapter 9 Section 9.13 -- Chapter 9 Taxonomy Reference Card
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class ThreatClassEntry:
+    attack_class: str
+    adversary_goal: str
+    query_budget_range: str
+    primary_detection_primitive: str
+    secondary_detection_primitive: str
+    primary_defence: str
+    output_side_defence: str
+    owasp_sub_risk: str
+    atlas_techniques: List[str]
+    section_reference: str
+    keywords: List[str]
+
+
+TAXONOMY_REFERENCE_CARD: List[ThreatClassEntry] = [
+    ThreatClassEntry(
+        attack_class=&#x27;functionality_extraction&#x27;,
+        adversary_goal=&#x27;Deployable surrogate clone across full input distribution&#x27;,
+        query_budget_range=&#x27;10K-1M+ (black-box); 200-200K (grey-box with active distillation)&#x27;,
+        primary_detection_primitive=&#x27;query_diversity_monitor&#x27;,
+        secondary_detection_primitive=&#x27;adaptive_rate_limiter&#x27;,
+        primary_defence=&#x27;Hard-label API design; extraction-aware rate limiter&#x27;,
+        output_side_defence=&#x27;output_watermarker (post-hoc ownership evidence)&#x27;,
+        owasp_sub_risk=&#x27;LLM10.1&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+        section_reference=&#x27;Sections 9.2, 9.4, 9.10, 9.11, 9.12&#x27;,
+        keywords=[&#x27;surrogate&#x27;, &#x27;clone&#x27;, &#x27;distillation&#x27;, &#x27;copy&#x27;, &#x27;replicate&#x27;, &#x27;functionality&#x27;],
+    ),
+    ThreatClassEntry(
+        attack_class=&#x27;fidelity_extraction&#x27;,
+        adversary_goal=&#x27;Exact behavioural match on specific target input set&#x27;,
+        query_budget_range=&#x27;1K-50K (1x-5x target set size)&#x27;,
+        primary_detection_primitive=&#x27;user_concentration_analyser&#x27;,
+        secondary_detection_primitive=&#x27;query_pattern_monitor&#x27;,
+        primary_defence=&#x27;Adaptive rate limiter; per-user semantic cluster monitoring&#x27;,
+        output_side_defence=&#x27;output_perturbator (reduces fidelity on target set)&#x27;,
+        owasp_sub_risk=&#x27;LLM10.1&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0044&#x27;],
+        section_reference=&#x27;Sections 9.2, 9.4, 9.10, 9.11&#x27;,
+        keywords=[&#x27;targeted&#x27;, &#x27;specific inputs&#x27;, &#x27;fidelity&#x27;, &#x27;exact match&#x27;, &#x27;target set&#x27;],
+    ),
+    ThreatClassEntry(
+        attack_class=&#x27;decision_boundary_extraction&#x27;,
+        adversary_goal=&#x27;Classification surface geometry for adversarial example generation&#x27;,
+        query_budget_range=&#x27;100-100K (black-box boundary probing); fewer with grey-box&#x27;,
+        primary_detection_primitive=&#x27;boundary_query_detector&#x27;,
+        secondary_detection_primitive=&#x27;ood_detector&#x27;,
+        primary_defence=&#x27;Hard-label API; output perturbator degrades boundary signal&#x27;,
+        output_side_defence=&#x27;output_perturbator (reduces boundary information per query)&#x27;,
+        owasp_sub_risk=&#x27;LLM10.1&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;],
+        section_reference=&#x27;Sections 9.2, 9.3, 9.10, 9.11&#x27;,
+        keywords=[&#x27;boundary&#x27;, &#x27;decision surface&#x27;, &#x27;adversarial&#x27;, &#x27;near-boundary&#x27;, &#x27;equation-solving&#x27;, &#x27;path-finding&#x27;],
+    ),
+    ThreatClassEntry(
+        attack_class=&#x27;prompt_extraction&#x27;,
+        adversary_goal=&#x27;System prompt and operational configuration reconstruction&#x27;,
+        query_budget_range=&#x27;20-500 (20-200 for direct; 50-500 for aggregation)&#x27;,
+        primary_detection_primitive=&#x27;user_concentration_analyser (meta-query track)&#x27;,
+        secondary_detection_primitive=&#x27;cumulative_query_monitor_prompt_track&#x27;,
+        primary_defence=&#x27;Cumulative query monitor; output perturbator (reduces per-query leakage)&#x27;,
+        output_side_defence=&#x27;output_perturbator (generifies prompt-derived phrases)&#x27;,
+        owasp_sub_risk=&#x27;LLM10.2&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0024&#x27;],
+        section_reference=&#x27;Sections 9.2, 9.5, 9.10, 9.11, 9.12&#x27;,
+        keywords=[&#x27;system prompt&#x27;, &#x27;instructions&#x27;, &#x27;configuration&#x27;, &#x27;prompt&#x27;, &#x27;operational parameters&#x27;],
+    ),
+    ThreatClassEntry(
+        attack_class=&#x27;membership_inference&#x27;,
+        adversary_goal=&#x27;Determine whether a specific record was in the training set&#x27;,
+        query_budget_range=&#x27;10-1000 per target record (shadow model requires more setup)&#x27;,
+        primary_detection_primitive=&#x27;user_concentration_analyser&#x27;,
+        secondary_detection_primitive=&#x27;output_entropy_monitor&#x27;,
+        primary_defence=&#x27;Differential privacy training (Section 8.13); output perturbator&#x27;,
+        output_side_defence=&#x27;output_perturbator (degrades confidence gap signal)&#x27;,
+        owasp_sub_risk=&#x27;LLM10.3&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;],
+        section_reference=&#x27;Sections 9.6, 9.10, 9.11, 9.12&#x27;,
+        keywords=[&#x27;membership&#x27;, &#x27;training set&#x27;, &#x27;in training&#x27;, &#x27;was this record&#x27;, &#x27;shadow model&#x27;, &#x27;overfitting&#x27;],
+    ),
+    ThreatClassEntry(
+        attack_class=&#x27;model_inversion&#x27;,
+        adversary_goal=&#x27;Reconstruct training data content from model outputs&#x27;,
+        query_budget_range=&#x27;10K-1M (systematic generation + perplexity scoring)&#x27;,
+        primary_detection_primitive=&#x27;query_diversity_monitor&#x27;,
+        secondary_detection_primitive=&#x27;output_entropy_monitor&#x27;,
+        primary_defence=&#x27;Differential privacy training (Section 8.13); output perturbator&#x27;,
+        output_side_defence=&#x27;output_perturbator (reduces per-response memorisation signal)&#x27;,
+        owasp_sub_risk=&#x27;LLM10.3&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;, &#x27;AML.T0024&#x27;],
+        section_reference=&#x27;Sections 9.7, 9.10, 9.11, 9.12&#x27;,
+        keywords=[&#x27;reconstruct&#x27;, &#x27;training data&#x27;, &#x27;verbatim&#x27;, &#x27;memorised&#x27;, &#x27;inversion&#x27;, &#x27;PII recovery&#x27;],
+    ),
+    ThreatClassEntry(
+        attack_class=&#x27;api_economic_abuse&#x27;,
+        adversary_goal=&#x27;Exhaust operator budget or block legitimate user access&#x27;,
+        query_budget_range=&#x27;Minimal adversary cost; operator cost is the target&#x27;,
+        primary_detection_primitive=&#x27;cost_per_query_outlier&#x27;,
+        secondary_detection_primitive=&#x27;output_entropy_monitor (token count track)&#x27;,
+        primary_defence=&#x27;Four-dimension adaptive rate limiter (cost + token + request + input-token)&#x27;,
+        output_side_defence=&#x27;output_entropy_monitor (token-count anomaly as secondary signal)&#x27;,
+        owasp_sub_risk=&#x27;LLM10.4&#x27;,
+        atlas_techniques=[&#x27;AML.T0040&#x27;],
+        section_reference=&#x27;Sections 9.8, 9.10, 9.11&#x27;,
+        keywords=[&#x27;cost&#x27;, &#x27;budget&#x27;, &#x27;denial-of-wallet&#x27;, &#x27;rate limit&#x27;, &#x27;amplification&#x27;, &#x27;economic&#x27;],
+    ),
+]
+
+
+def classify_threat(description: str) -&gt; Optional[ThreatClassEntry]:
+    &#x27;&#x27;&#x27;Return the best-matching taxonomy entry for a threat description.&#x27;&#x27;&#x27;
+    lower = description.lower()
+    scored = []
+    for entry in TAXONOMY_REFERENCE_CARD:
+        score = sum(1 for kw in entry.keywords if kw.lower() in lower)
+        if score &gt; 0:
+            scored.append((score, entry))
+    if not scored:
+        return None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored[0][1]
+
+
+def render_reference_card() -&gt; None:
+    print(&#x27;CHAPTER 9 TAXONOMY REFERENCE CARD&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for entry in TAXONOMY_REFERENCE_CARD:
+        print(f&#x27;\n[{entry.owasp_sub_risk}] {entry.attack_class.upper()}&#x27;)
+        print(f&#x27;  Goal:       {entry.adversary_goal}&#x27;)
+        print(f&#x27;  Budget:     {entry.query_budget_range}&#x27;)
+        print(f&#x27;  Primary:    {entry.primary_detection_primitive}&#x27;)
+        print(f&#x27;  Defence:    {entry.primary_defence}&#x27;)
+        print(f&#x27;  Output:     {entry.output_side_defence}&#x27;)
+        print(&#x27;  ATLAS:      &#x27; + &#x27;, &#x27;.join(entry.atlas_techniques))
+        print(f&#x27;  Sections:   {entry.section_reference}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_reference_card()
+    print()
+    example = &#x27;adversary querying model to build a surrogate clone via soft-label distillation&#x27;
+    match = classify_threat(example)
+    if match:
+        print(f&#x27;Classified as: {match.attack_class} ({match.owasp_sub_risk})&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">owasp_coverage_map.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Encodes the cumulative OWASP LLM01 + LLM03 + LLM10 coverage map across
+Chapters 6 through 9. Provides a coverage_for_category() function and a
+gap_analysis() function that identifies which OWASP LLM categories are
+not yet covered (LLM02, LLM04-LLM09) as the roadmap for Chapters 11-17.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Coverage entries are data-driven via OWASPCoverage dataclass list.
+Gap analysis computes uncovered categories from the full LLM01-LLM10 set.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># owasp_coverage_map.py
+# Chapter 9 Section 9.13 -- Cumulative OWASP LLM Coverage Map
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+
+ALL_OWASP_CATEGORIES = [
+    &#x27;LLM01&#x27;, &#x27;LLM02&#x27;, &#x27;LLM03&#x27;, &#x27;LLM04&#x27;, &#x27;LLM05&#x27;,
+    &#x27;LLM06&#x27;, &#x27;LLM07&#x27;, &#x27;LLM08&#x27;, &#x27;LLM09&#x27;, &#x27;LLM10&#x27;,
+]
+
+
+@dataclass
+class OWASPCoverage:
+    category: str
+    name: str
+    chapters: List[int]
+    attack_surface: str
+    detection_architecture: str
+    production_capstone: str
+    status: str  # &#x27;complete&#x27;, &#x27;partial&#x27;, &#x27;planned&#x27;, &#x27;not_covered&#x27;
+
+
+COVERAGE_MAP: List[OWASPCoverage] = [
+    OWASPCoverage(
+        category=&#x27;LLM01&#x27;,
+        name=&#x27;Prompt Injection&#x27;,
+        chapters=[6, 7],
+        attack_surface=&#x27;Inference-time: user input&#x27;,
+        detection_architecture=&#x27;Five-track stateless gateway ensemble; per-request content classification&#x27;,
+        production_capstone=&#x27;injection_classifier.py (Ch6); jailbreak_ensemble.py (Ch7)&#x27;,
+        status=&#x27;complete&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM02&#x27;,
+        name=&#x27;Insecure Output Handling&#x27;,
+        chapters=[],
+        attack_surface=&#x27;Inference-time: model output processing&#x27;,
+        detection_architecture=&#x27;Not yet covered&#x27;,
+        production_capstone=&#x27;Planned for Chapters 11-17&#x27;,
+        status=&#x27;planned&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM03&#x27;,
+        name=&#x27;Training Data Poisoning&#x27;,
+        chapters=[8],
+        attack_surface=&#x27;Training-time: data pipeline&#x27;,
+        detection_architecture=&#x27;Offline batch auditing pipeline; CI/CD gate&#x27;,
+        production_capstone=&#x27;auditing_pipeline.py (Ch8)&#x27;,
+        status=&#x27;complete&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM04&#x27;,
+        name=&#x27;Model Denial of Service&#x27;,
+        chapters=[9],
+        attack_surface=&#x27;Inference-time: API economic abuse&#x27;,
+        detection_architecture=&#x27;Four-dimension adaptive rate limiter (Section 9.11)&#x27;,
+        production_capstone=&#x27;rate_limiter.py (Ch9 Section 9.11)&#x27;,
+        status=&#x27;partial&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM05&#x27;,
+        name=&#x27;Supply Chain Vulnerabilities&#x27;,
+        chapters=[],
+        attack_surface=&#x27;Training-time and deployment-time: dependencies&#x27;,
+        detection_architecture=&#x27;Not yet covered in depth&#x27;,
+        production_capstone=&#x27;Planned for Chapters 11-17&#x27;,
+        status=&#x27;planned&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM06&#x27;,
+        name=&#x27;Sensitive Information Disclosure&#x27;,
+        chapters=[9],
+        attack_surface=&#x27;Inference-time: membership inference and model inversion&#x27;,
+        detection_architecture=&#x27;Query monitor + output perturbator + DP training&#x27;,
+        production_capstone=&#x27;output_perturbator.py + query_monitor.py (Ch9)&#x27;,
+        status=&#x27;partial&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM07&#x27;,
+        name=&#x27;Insecure Plugin Design&#x27;,
+        chapters=[],
+        attack_surface=&#x27;Inference-time: tool and plugin calls&#x27;,
+        detection_architecture=&#x27;Not yet covered&#x27;,
+        production_capstone=&#x27;Planned for Chapters 11-17&#x27;,
+        status=&#x27;planned&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM08&#x27;,
+        name=&#x27;Excessive Agency&#x27;,
+        chapters=[],
+        attack_surface=&#x27;Inference-time: agentic action scope&#x27;,
+        detection_architecture=&#x27;Not yet covered&#x27;,
+        production_capstone=&#x27;Planned for Chapters 11-17&#x27;,
+        status=&#x27;planned&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM09&#x27;,
+        name=&#x27;Overreliance&#x27;,
+        chapters=[],
+        attack_surface=&#x27;System-level: human-AI interaction patterns&#x27;,
+        detection_architecture=&#x27;Not a technical detection problem&#x27;,
+        production_capstone=&#x27;Not applicable&#x27;,
+        status=&#x27;not_covered&#x27;,
+    ),
+    OWASPCoverage(
+        category=&#x27;LLM10&#x27;,
+        name=&#x27;Model Theft&#x27;,
+        chapters=[9],
+        attack_surface=&#x27;Inference-time: extraction via inference API&#x27;,
+        detection_architecture=&#x27;Six-track gateway (Track 6) + output watermarking + perturbation&#x27;,
+        production_capstone=&#x27;query_monitor.py + rate_limiter.py + output_watermarker.py + output_perturbator.py (Ch9)&#x27;,
+        status=&#x27;complete&#x27;,
+    ),
+]
+
+
+def coverage_for_category(category: str) -&gt; Optional[OWASPCoverage]:
+    return next((c for c in COVERAGE_MAP if c.category == category), None)
+
+
+def gap_analysis() -&gt; Dict[str, List[str]]:
+    gaps: Dict[str, List[str]] = {&#x27;complete&#x27;: [], &#x27;partial&#x27;: [], &#x27;planned&#x27;: [], &#x27;not_covered&#x27;: []}
+    for entry in COVERAGE_MAP:
+        gaps[entry.status].append(entry.category)
+    return gaps
+
+
+def render_coverage_map() -&gt; None:
+    print(&#x27;OWASP LLM COVERAGE MAP -- Chapters 6-9&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for entry in COVERAGE_MAP:
+        status_icon = {&#x27;complete&#x27;: &#x27;[DONE]&#x27;, &#x27;partial&#x27;: &#x27;[PART]&#x27;, &#x27;planned&#x27;: &#x27;[PLAN]&#x27;, &#x27;not_covered&#x27;: &#x27;[N/A ]&#x27;}.get(entry.status, &#x27;[?]&#x27;)
+        print(f&#x27;{status_icon} {entry.category}: {entry.name}&#x27;)
+        if entry.chapters:
+            print(f&#x27;       Chapters: {entry.chapters}&#x27;)
+        print(f&#x27;       Status: {entry.status}&#x27;)
+    gaps = gap_analysis()
+    print(&#x27;\nComplete: &#x27; + str(gaps[&#x27;complete&#x27;]))
+    print(&#x27;Partial:  &#x27; + str(gaps[&#x27;partial&#x27;]))
+    print(&#x27;Planned:  &#x27; + str(gaps[&#x27;planned&#x27;]))
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_coverage_map()</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">knowledge_assessment_quiz.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Chapter 9 knowledge assessment: 20 questions covering threat model,
+taxonomy, attacks, privacy, economic abuse, incidents, detection
+primitives, and production deployment. Encodes questions, correct answers,
+and explanations as data. Provides a quiz runner that scores responses
+and identifies knowledge gaps by section.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Questions are data-driven via QuizQuestion dataclass list. Scoring and
+gap analysis are schema-free. Section tags enable per-section gap
+identification.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># knowledge_assessment_quiz.py
+# Chapter 9 Section 9.13 -- Chapter 9 Knowledge Assessment (20 Questions)
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+
+@dataclass
+class QuizQuestion:
+    question_id: str
+    section_tag: str
+    question: str
+    options: List[str]
+    correct_index: int  # 0-based index into options
+    explanation: str
+
+
+QUIZ_QUESTIONS: List[QuizQuestion] = [
+    QuizQuestion(
+        question_id=&#x27;Q01&#x27;,
+        section_tag=&#x27;9.1&#x27;,
+        question=&#x27;What is the primary constraint that defines extraction attack economics?&#x27;,
+        options=[
+            &#x27;A) The adversary\&#x27;s technical capability to implement the attack&#x27;,
+            &#x27;B) The query budget the adversary can afford before cost or rate limits stop them&#x27;,
+            &#x27;C) The model\&#x27;s architecture and weight count&#x27;,
+            &#x27;D) The operator\&#x27;s monitoring infrastructure quality&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.1 established that query budget is the primary constraint on extraction. Defence design optimises against budget, not against the existence of the attack.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q02&#x27;,
+        section_tag=&#x27;9.1&#x27;,
+        question=&#x27;Which adversary access level provides a 5-50x query budget discount for extraction?&#x27;,
+        options=[
+            &#x27;A) Black-box (hard labels only)&#x27;,
+            &#x27;B) White-box (full weight access)&#x27;,
+            &#x27;C) Grey-box (probability distributions or confidence scores returned)&#x27;,
+            &#x27;D) Side-channel (timing information)&#x27;,
+        ],
+        correct_index=2,
+        explanation=&#x27;Section 9.1 and 9.4: grey-box access returns probability distributions, carrying log2(K) times as much boundary information as hard labels.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q03&#x27;,
+        section_tag=&#x27;9.2&#x27;,
+        question=&#x27;Which extraction goal produces the lowest query budget requirement?&#x27;,
+        options=[
+            &#x27;A) Functionality extraction&#x27;,
+            &#x27;B) Decision-boundary extraction&#x27;,
+            &#x27;C) Fidelity extraction&#x27;,
+            &#x27;D) Prompt extraction&#x27;,
+        ],
+        correct_index=3,
+        explanation=&#x27;Section 9.2: prompt extraction requires 50-500 queries for typical system prompts -- orders of magnitude fewer than the other three goals.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q04&#x27;,
+        section_tag=&#x27;9.3&#x27;,
+        question=&#x27;How many queries are theoretically required to extract a linear classifier with d features?&#x27;,
+        options=[
+            &#x27;A) O(d^2)&#x27;,
+            &#x27;B) O(d * log(1/epsilon))&#x27;,
+            &#x27;C) O(2^d)&#x27;,
+            &#x27;D) O(d!)&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.3: Tramer et al. 2016 demonstrated that equation-solving extracts a linear classifier in O(d * log(1/epsilon)) queries -- the d+1 boundary points overdetermine the linear system.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q05&#x27;,
+        section_tag=&#x27;9.3&#x27;,
+        question=&#x27;Why does active learning make extraction queries more detectable, not less?&#x27;,
+        options=[
+            &#x27;A) Active learning produces more diverse queries that are easier to classify&#x27;,
+            &#x27;B) Active learning concentrates queries near the decision boundary, making boundary clustering more pronounced&#x27;,
+            &#x27;C) Active learning requires more total queries than random sampling&#x27;,
+            &#x27;D) Active learning produces queries that trigger content filters&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.3: active learning selects queries for maximum boundary informativeness, concentrating queries near the boundary more than random sampling -- stronger, not weaker, boundary proximity signal.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q06&#x27;,
+        section_tag=&#x27;9.4&#x27;,
+        question=&#x27;Why is output watermarking the primary defence against LLM distillation from public benchmark prompts?&#x27;,
+        options=[
+            &#x27;A) It prevents the adversary from submitting benchmark prompts&#x27;,
+            &#x27;B) Benchmark-distribution queries are analytically indistinguishable from legitimate evaluation, making input-side detection ineffective&#x27;,
+            &#x27;C) It encrypts the model\&#x27;s responses so they cannot be used for training&#x27;,
+            &#x27;D) It blocks known adversarial IP addresses&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.4 and 9.9: Alpaca and Vicuna used benchmark prompts indistinguishable from legitimate evaluation. The watermark embeds in collected outputs and transfers to the student regardless of query distribution.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q07&#x27;,
+        section_tag=&#x27;9.5&#x27;,
+        question=&#x27;What is the primary architectural difference between Section 9.5 prompt extraction and Chapter 6 Section 6.2 single-prompt extraction?&#x27;,
+        options=[
+            &#x27;A) Section 9.5 uses direct elicitation; Chapter 6 uses indirect aggregation&#x27;,
+            &#x27;B) Chapter 6 covers direct elicitation caught by content classifiers; Section 9.5 covers scaled aggregation invisible to per-request classifiers&#x27;,
+            &#x27;C) Section 9.5 targets smaller system prompts&#x27;,
+            &#x27;D) Chapter 6 requires grey-box access; Section 9.5 works with hard labels only&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.5: Chapter 6 classifiers catch instruction-disclosure phrasing in individual queries. Section 9.5 aggregation uses many individually benign queries whose cumulative leakage reconstructs the prompt.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q08&#x27;,
+        section_tag=&#x27;9.6&#x27;,
+        question=&#x27;Membership inference exploits the same model property that also causes which generalisation problem?&#x27;,
+        options=[
+            &#x27;A) Underfitting -- the model has not learned enough from training data&#x27;,
+            &#x27;B) Overfitting -- the model memorises training data rather than learning the underlying pattern&#x27;,
+            &#x27;C) Covariate shift -- the training distribution differs from the test distribution&#x27;,
+            &#x27;D) Label noise -- training labels contain errors&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Sections 9.6 and Chapter 1: overfitting causes the confidence and loss gap that membership inference exploits. The same memorisation that hurts generalisation leaks training data membership.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q09&#x27;,
+        section_tag=&#x27;9.6&#x27;,
+        question=&#x27;Under which regulatory framework does membership inference against a medical model constitute a breach?&#x27;,
+        options=[
+            &#x27;A) SOC 2 Type II&#x27;,
+            &#x27;B) PCI-DSS&#x27;,
+            &#x27;C) HIPAA Privacy Rule (unauthorised disclosure of PHI)&#x27;,
+            &#x27;D) ISO 27001&#x27;,
+        ],
+        correct_index=2,
+        explanation=&#x27;Section 9.6: membership inference against a model trained on PHI determines whether a specific patient\&#x27;s records were in the training set -- an unauthorised disclosure of PHI under HIPAA.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q10&#x27;,
+        section_tag=&#x27;9.7&#x27;,
+        question=&#x27;What is the precondition that makes model inversion attacks feasible?&#x27;,
+        options=[
+            &#x27;A) The adversary has gradient access to the model&#x27;,
+            &#x27;B) The model has memorised training examples -- highly memorised samples are reconstructable&#x27;,
+            &#x27;C) The model returns soft-label probability distributions&#x27;,
+            &#x27;D) The model was trained on a dataset larger than 1 billion examples&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.7: only highly memorised training samples are reconstructable. LLMs memorise extensively, making them vulnerable; differential privacy training bounds this memorisation.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q11&#x27;,
+        section_tag=&#x27;9.8&#x27;,
+        question=&#x27;What is the approximate cost multiplier achievable by combining 100K-token context padding with 4K-token verbose output demand?&#x27;,
+        options=[
+            &#x27;A) 10x&#x27;,
+            &#x27;B) 50x&#x27;,
+            &#x27;C) 180x&#x27;,
+            &#x27;D) 360x&#x27;,
+        ],
+        correct_index=3,
+        explanation=&#x27;Section 9.8 Table 2: combined amplification (100K input + 4K output) achieves approximately 360x the average query cost within model token limits.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q12&#x27;,
+        section_tag=&#x27;9.8&#x27;,
+        question=&#x27;Which rate limit dimension specifically defends against context padding attacks?&#x27;,
+        options=[
+            &#x27;A) Requests per minute&#x27;,
+            &#x27;B) Tokens per minute&#x27;,
+            &#x27;C) Cost per hour&#x27;,
+            &#x27;D) Input tokens per request&#x27;,
+        ],
+        correct_index=3,
+        explanation=&#x27;Section 9.8 and 9.11: input tokens per request caps the per-request input length, directly preventing context padding attacks regardless of the input content.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q13&#x27;,
+        section_tag=&#x27;9.9&#x27;,
+        question=&#x27;Which of the three documented incidents was analytically undetectable at the input side?&#x27;,
+        options=[
+            &#x27;A) Tramer et al. 2016 (equation-solving against Amazon ML)&#x27;,
+            &#x27;B) Carlini et al. 2021 (GPT-2 training data extraction)&#x27;,
+            &#x27;C) Alpaca/Vicuna 2023 (benchmark-distribution LLM distillation)&#x27;,
+            &#x27;D) All three were detectable with proper monitoring&#x27;,
+        ],
+        correct_index=2,
+        explanation=&#x27;Section 9.9: Alpaca and Vicuna used benchmark prompts indistinguishable from legitimate evaluation. The other two produced detectable query patterns; Alpaca/Vicuna required output watermarking for post-hoc detection.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q14&#x27;,
+        section_tag=&#x27;9.10&#x27;,
+        question=&#x27;Which detection primitive provides the unique signal for fidelity extraction that the other four primitives miss?&#x27;,
+        options=[
+            &#x27;A) OOD detector&#x27;,
+            &#x27;B) Boundary query detector&#x27;,
+            &#x27;C) User concentration analyser&#x27;,
+            &#x27;D) Output entropy monitor&#x27;,
+        ],
+        correct_index=2,
+        explanation=&#x27;Section 9.10: fidelity extraction does not produce OOD queries, boundary pairs, or volume anomalies. The user concentration analyser detects the semantic clustering in the target set -- the unique signal.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q15&#x27;,
+        section_tag=&#x27;9.10&#x27;,
+        question=&#x27;What approximate detection rate does the Section 9.10 ensemble achieve against benchmark-distribution LLM distillation?&#x27;,
+        options=[
+            &#x27;A) 95-98%&#x27;,
+            &#x27;B) 88-93%&#x27;,
+            &#x27;C) 60-70%&#x27;,
+            &#x27;D) 30-40%&#x27;,
+        ],
+        correct_index=3,
+        explanation=&#x27;Section 9.10 Table 4: benchmark-distribution distillation achieves 30-40% ensemble detection rate because the query distribution is indistinguishable from legitimate evaluation use.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q16&#x27;,
+        section_tag=&#x27;9.11&#x27;,
+        question=&#x27;What is the one structural difference between Track 6 and Tracks 1-5 in the gateway ensemble?&#x27;,
+        options=[
+            &#x27;A) Track 6 runs at lower priority&#x27;,
+            &#x27;B) Track 6 is stateful -- it maintains per-user state across sessions&#x27;,
+            &#x27;C) Track 6 has a longer latency budget&#x27;,
+            &#x27;D) Track 6 operates on model responses rather than user inputs&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.11: Tracks 1-5 are stateless per-request. Track 6 maintains rolling per-user windows across sessions via a distributed state store.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q17&#x27;,
+        section_tag=&#x27;9.11&#x27;,
+        question=&#x27;Why must the state store write in Track 6 be asynchronous rather than synchronous?&#x27;,
+        options=[
+            &#x27;A) The state store is physically remote and cannot be accessed synchronously&#x27;,
+            &#x27;B) Synchronous writes add state store latency to the critical path, risking 50ms P99 budget violation&#x27;,
+            &#x27;C) State consistency requires async writes to avoid race conditions&#x27;,
+            &#x27;D) Async writes allow batching for efficiency&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.11: a slow state store write on the critical path would add tail latency to the gateway response. Async fire-and-forget writes accept a one-request lag in exchange for latency isolation.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q18&#x27;,
+        section_tag=&#x27;9.12&#x27;,
+        question=&#x27;Why does the watermark transfer from the victim model to a student trained on its outputs?&#x27;,
+        options=[
+            &#x27;A) The student model is initialised from the victim\&#x27;s weights&#x27;,
+            &#x27;B) The student learns to replicate the victim\&#x27;s output distribution, including the green-token bias in the training data&#x27;,
+            &#x27;C) The watermark is embedded in the model architecture, not the outputs&#x27;,
+            &#x27;D) Transfer requires the adversary to use the same vocabulary as the victim&#x27;,
+        ],
+        correct_index=1,
+        explanation=&#x27;Section 9.12: distillation trains the student on (prompt, victim_response) pairs. The victim\&#x27;s responses have a green-token excess. The student learns this bias from the training data distribution.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q19&#x27;,
+        section_tag=&#x27;9.12&#x27;,
+        question=&#x27;What is the z-score threshold for watermark detection at p-value &lt; 0.00003?&#x27;,
+        options=[
+            &#x27;A) z &gt; 1.96&#x27;,
+            &#x27;B) z &gt; 2.58&#x27;,
+            &#x27;C) z &gt; 4.0&#x27;,
+            &#x27;D) z &gt; 6.0&#x27;,
+        ],
+        correct_index=2,
+        explanation=&#x27;Section 9.12: z &gt; 4.0 corresponds to a one-sided p-value of approximately 0.00003, the default detection threshold for watermark confirmation.&#x27;,
+    ),
+    QuizQuestion(
+        question_id=&#x27;Q20&#x27;,
+        section_tag=&#x27;9.12-9.13&#x27;,
+        question=&#x27;Which of the following correctly describes the Chapter 9 output-side defence architecture?&#x27;,
+        options=[
+            &#x27;A) Watermarking prevents extraction; perturbation provides evidence&#x27;,
+            &#x27;B) Both watermarking and perturbation prevent extraction independently&#x27;,
+            &#x27;C) Watermarking provides post-hoc evidence; perturbation reduces extraction efficiency in real time; neither alone is complete&#x27;,
+            &#x27;D) Perturbation provides post-hoc evidence; watermarking reduces extraction efficiency&#x27;,
+        ],
+        correct_index=2,
+        explanation=&#x27;Sections 9.12 and 9.13: watermarking is post-hoc (detects surrogates after deployment); perturbation is real-time friction (requires more queries for same fidelity). Both are required; neither substitutes for the other or for input-side controls.&#x27;,
+    ),
+]
+
+
+def run_quiz(answers: Optional[Dict[str, int]] = None) -&gt; Dict[str, bool]:
+    &#x27;&#x27;&#x27;
+    Score a set of answers. answers: {question_id: selected_option_index}.
+    Returns {question_id: correct}.
+    If answers is None, runs in interactive mode (prints questions).
+    &#x27;&#x27;&#x27;
+    results: Dict[str, bool] = {}
+    for q in QUIZ_QUESTIONS:
+        if answers is not None:
+            selected = answers.get(q.question_id)
+            correct = (selected == q.correct_index)
+            results[q.question_id] = correct
+    return results
+
+
+def render_quiz_report(results: Dict[str, bool]) -&gt; None:
+    by_section: Dict[str, List[bool]] = {}
+    for q in QUIZ_QUESTIONS:
+        correct = results.get(q.question_id, False)
+        by_section.setdefault(q.section_tag, []).append(correct)
+
+    total = len(results)
+    total_correct = sum(results.values())
+    print(&#x27;CHAPTER 9 KNOWLEDGE ASSESSMENT -- RESULTS&#x27;)
+    print(&#x27;=&#x27; * 50)
+    print(f&#x27;Total: {total_correct}/{total} correct ({100*total_correct//max(total,1)}%)&#x27;)
+    print(&#x27;\nBy section:&#x27;)
+    for section in sorted(by_section):
+        section_results = by_section[section]
+        sc = sum(section_results)
+        st = len(section_results)
+        print(f&#x27;  Section {section}: {sc}/{st}&#x27;)
+
+    gaps = [q.question_id for q in QUIZ_QUESTIONS
+            if not results.get(q.question_id, True)]
+    if gaps:
+        print(&#x27;\nReview recommended for: &#x27; + &#x27;, &#x27;.join(gaps))
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;CHAPTER 9 KNOWLEDGE ASSESSMENT -- Chapter 9 Section 9.13&#x27;)
+    print(f&#x27;Total questions: {len(QUIZ_QUESTIONS)}&#x27;)
+    for q in QUIZ_QUESTIONS:
+        print(f&#x27;\n{q.question_id} [{q.section_tag}]: {q.question}&#x27;)
+        for i, opt in enumerate(q.options):
+            marker = &#x27;(*) &#x27; if i == q.correct_index else &#x27;    &#x27;
+            print(f&#x27;  {marker}{opt}&#x27;)
+    # Self-score with all-correct answers
+    all_correct = {q.question_id: q.correct_index for q in QUIZ_QUESTIONS}
+    results = run_quiz(all_correct)
+    print()
+    render_quiz_report(results)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">inference_time_security_checklist.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Complete inference-time security checklist for production LLM API deployments,
+combining the 8-item Section 9.11 deployment checklist (DC-1 through DC-8),
+the 8-item Section 9.12 output-side checklist (OC-1 through OC-8), and 4
+additional architecture-level items (AC-1 through AC-4) for a 20-item
+comprehensive pre-production verification checklist.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+All 20 items are data-driven via ChecklistEntry dataclass. Imports the
+component checklists from Sections 9.11 and 9.12 deliverables for
+structural consistency. AC items are encoded inline.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># inference_time_security_checklist.py
+# Chapter 9 Section 9.13 -- Inference-Time Security Checklist (20 items)
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class ChecklistEntry:
+    item_id: str
+    layer: str  # &#x27;architecture&#x27;, &#x27;input_side&#x27;, &#x27;output_side&#x27;
+    priority: str  # &#x27;critical&#x27;, &#x27;high&#x27;, &#x27;medium&#x27;
+    question: str
+    verification_method: str
+    pass_criterion: str
+    source_section: str
+
+
+ARCHITECTURE_ITEMS: List[ChecklistEntry] = [
+    ChecklistEntry(
+        item_id=&#x27;AC-1&#x27;,
+        layer=&#x27;architecture&#x27;,
+        priority=&#x27;critical&#x27;,
+        question=&#x27;Does the API return hard labels by default, with soft labels available only where the product requires them?&#x27;,
+        verification_method=&#x27;Inspect API response schema for probability distributions or confidence scores in default response&#x27;,
+        pass_criterion=&#x27;No probability vectors in default response; soft labels require explicit opt-in if supported at all&#x27;,
+        source_section=&#x27;Section 9.1&#x27;,
+    ),
+    ChecklistEntry(
+        item_id=&#x27;AC-2&#x27;,
+        layer=&#x27;architecture&#x27;,
+        priority=&#x27;critical&#x27;,
+        question=&#x27;Is the model trained with differential privacy if the training data contains PII?&#x27;,
+        verification_method=&#x27;Review training pipeline configuration for DP-SGD with documented epsilon budget&#x27;,
+        pass_criterion=&#x27;DP-SGD active with epsilon &lt;= 3 for PII-containing datasets&#x27;,
+        source_section=&#x27;Section 8.13 + Section 9.6&#x27;,
+    ),
+    ChecklistEntry(
+        item_id=&#x27;AC-3&#x27;,
+        layer=&#x27;architecture&#x27;,
+        priority=&#x27;high&#x27;,
+        question=&#x27;Is the input token limit set at the minimum required for the product use case, not at the model maximum?&#x27;,
+        verification_method=&#x27;Compare 99th percentile of legitimate query input length to the configured input token limit&#x27;,
+        pass_criterion=&#x27;Configured limit &lt;= 2x the 99th percentile of legitimate input lengths&#x27;,
+        source_section=&#x27;Section 9.8&#x27;,
+    ),
+    ChecklistEntry(
+        item_id=&#x27;AC-4&#x27;,
+        layer=&#x27;architecture&#x27;,
+        priority=&#x27;high&#x27;,
+        question=&#x27;Is server-side temperature fixed, with no caller-configurable temperature parameter?&#x27;,
+        verification_method=&#x27;Inspect API parameter schema; test API call with temperature parameter to confirm it is ignored or absent&#x27;,
+        pass_criterion=&#x27;Temperature is not caller-configurable; set server-side at product-appropriate value&#x27;,
+        source_section=&#x27;Section 9.4&#x27;,
+    ),
+]
+
+INPUT_SIDE_ITEMS: List[ChecklistEntry] = [
+    ChecklistEntry(item_id=&#x27;DC-1&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Per-user state store accessible within latency budget (P99 &lt; 2ms)?&#x27;,
+        verification_method=&#x27;100 sequential read/write cycles under simulated load&#x27;,
+        pass_criterion=&#x27;P99 round-trip &lt; 2ms&#x27;, source_section=&#x27;Section 9.11&#x27;),
+    ChecklistEntry(item_id=&#x27;DC-2&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Embedding model producing embeddings within target latency (P99 &lt; 5ms)?&#x27;,
+        verification_method=&#x27;100 embedding requests on representative query sample&#x27;,
+        pass_criterion=&#x27;P99 &lt; 5ms; mean &lt; 3ms&#x27;, source_section=&#x27;Section 9.11&#x27;),
+    ChecklistEntry(item_id=&#x27;DC-3&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Primitive thresholds calibrated on 30+ days of legitimate traffic (FP rate &lt; 1%)?&#x27;,
+        verification_method=&#x27;Calibration report from Section 9.10 empirical harness&#x27;,
+        pass_criterion=&#x27;False positive rate &lt; 1% at configured thresholds&#x27;, source_section=&#x27;Section 9.11&#x27;),
+    ChecklistEntry(item_id=&#x27;DC-4&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Rate limit dimensions calibrated against extraction budget economics?&#x27;,
+        verification_method=&#x27;Verify daily limit forces cheapest attack over 10+ days&#x27;,
+        pass_criterion=&#x27;Cheapest attack requires &gt;10 days at configured limit&#x27;, source_section=&#x27;Section 9.11&#x27;),
+    ChecklistEntry(item_id=&#x27;DC-5&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Cross-user correlator running and producing output?&#x27;,
+        verification_method=&#x27;Inject synthetic 3-account coordinated campaign; verify detection&#x27;,
+        pass_criterion=&#x27;Correlator flags campaign within 2 cycles&#x27;, source_section=&#x27;Section 9.11&#x27;),
+    ChecklistEntry(item_id=&#x27;DC-6&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Alert events routed to SIEM in Sigma rule schema?&#x27;,
+        verification_method=&#x27;Trigger test alert; verify SIEM ingestion within 15 minutes&#x27;,
+        pass_criterion=&#x27;Alert in SIEM within 15 minutes; Sigma rule fires&#x27;, source_section=&#x27;Section 9.11&#x27;),
+    ChecklistEntry(item_id=&#x27;DC-7&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;AML.T0040/T0024 Sigma rule loaded and tested in SIEM?&#x27;,
+        verification_method=&#x27;Submit synthetic test events; verify rule fires correctly&#x27;,
+        pass_criterion=&#x27;Rule fires on positive events; does not fire on benign baseline&#x27;, source_section=&#x27;Section 9.11&#x27;),
+    ChecklistEntry(item_id=&#x27;DC-8&#x27;, layer=&#x27;input_side&#x27;, priority=&#x27;medium&#x27;,
+        question=&#x27;False positive escalation path documented and staffed?&#x27;,
+        verification_method=&#x27;Tabletop review; SLA and team identification&#x27;,
+        pass_criterion=&#x27;Appeals SLA &lt;= 24 hours; team identified; process in runbook&#x27;, source_section=&#x27;Section 9.11&#x27;),
+]
+
+OUTPUT_SIDE_ITEMS: List[ChecklistEntry] = [
+    ChecklistEntry(item_id=&#x27;OC-1&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Watermark key generated, stored in HSM, accessible to watermarker?&#x27;,
+        verification_method=&#x27;Generate test key; confirm HSM storage; run watermarker on 100 test responses&#x27;,
+        pass_criterion=&#x27;Key accessible; non-trivial green-token fraction above baseline&#x27;, source_section=&#x27;Section 9.12&#x27;),
+    ChecklistEntry(item_id=&#x27;OC-2&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Watermark detector confirming presence in self-generated outputs (z &gt; 4.0)?&#x27;,
+        verification_method=&#x27;Generate 1000 watermarked tokens; run detector&#x27;,
+        pass_criterion=&#x27;Detector confirms watermark at p &lt; 0.001 on 1000+ tokens&#x27;, source_section=&#x27;Section 9.12&#x27;),
+    ChecklistEntry(item_id=&#x27;OC-3&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Watermark robustness benchmark completed (z-score ratio &gt;= 0.4 at 50% distillation signal)?&#x27;,
+        verification_method=&#x27;Run Section 9.12 robustness benchmark; check distillation_sim results&#x27;,
+        pass_criterion=&#x27;Z-score ratio &gt;= 0.4 at signal_retention=0.5&#x27;, source_section=&#x27;Section 9.12&#x27;),
+    ChecklistEntry(item_id=&#x27;OC-4&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Utility validation harness completed; maximum safe sigma identified (mean KL &lt; 0.05)?&#x27;,
+        verification_method=&#x27;Run utility sweep on representative sample; identify max_safe_sigma&#x27;,
+        pass_criterion=&#x27;max_safe_sigma identified; mean KL &lt; 0.05 and top-1 change &lt; 2%&#x27;, source_section=&#x27;Section 9.12&#x27;),
+    ChecklistEntry(item_id=&#x27;OC-5&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Adaptive perturbation controller integrated with query monitor risk scores?&#x27;,
+        verification_method=&#x27;Submit high-risk and low-risk test requests; verify sigma scales with risk&#x27;,
+        pass_criterion=&#x27;High-risk sigma &gt;= 3x low-risk sigma&#x27;, source_section=&#x27;Section 9.12&#x27;),
+    ChecklistEntry(item_id=&#x27;OC-6&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;critical&#x27;,
+        question=&#x27;Output-side stage adding &lt; 5ms P99 to response latency?&#x27;,
+        verification_method=&#x27;Benchmark watermarker + perturbator on 200 representative responses&#x27;,
+        pass_criterion=&#x27;P99 combined latency &lt;= 5ms&#x27;, source_section=&#x27;Section 9.12&#x27;),
+    ChecklistEntry(item_id=&#x27;OC-7&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;medium&#x27;,
+        question=&#x27;Watermark key rotation policy documented and implemented?&#x27;,
+        verification_method=&#x27;Review key rotation runbook; verify old keys retained for historical verification&#x27;,
+        pass_criterion=&#x27;Rotation period defined (6-12 months); backward compatibility maintained&#x27;, source_section=&#x27;Section 9.12&#x27;),
+    ChecklistEntry(item_id=&#x27;OC-8&#x27;, layer=&#x27;output_side&#x27;, priority=&#x27;medium&#x27;,
+        question=&#x27;Watermark verification workflow validated with legal team?&#x27;,
+        verification_method=&#x27;Tabletop with legal team; chain of custody documentation reviewed&#x27;,
+        pass_criterion=&#x27;Legal team confirms verification report meets evidence standards&#x27;, source_section=&#x27;Section 9.12&#x27;),
+]
+
+FULL_CHECKLIST = ARCHITECTURE_ITEMS + INPUT_SIDE_ITEMS + OUTPUT_SIDE_ITEMS
+
+
+def render_full_checklist(passed_items: Optional[List[str]] = None) -&gt; None:
+    passed_set = set(passed_items or [])
+    layers = [&#x27;architecture&#x27;, &#x27;input_side&#x27;, &#x27;output_side&#x27;]
+    layer_labels = {
+        &#x27;architecture&#x27;: &#x27;ARCHITECTURE LAYER&#x27;,
+        &#x27;input_side&#x27;: &#x27;INPUT-SIDE CONTROLS&#x27;,
+        &#x27;output_side&#x27;: &#x27;OUTPUT-SIDE CONTROLS&#x27;,
+    }
+    print(&#x27;INFERENCE-TIME SECURITY CHECKLIST (20 items) -- Chapter 9 Section 9.13&#x27;)
+    print(&#x27;=&#x27; * 70)
+    for layer in layers:
+        items = [e for e in FULL_CHECKLIST if e.layer == layer]
+        print(f&#x27;\n--- {layer_labels[layer]} ---&#x27;)
+        for item in items:
+            status = &#x27;PASS&#x27; if item.item_id in passed_set else &#x27;PEND&#x27;
+            prio = item.priority.upper()[:4]
+            print(f&#x27;  [{status}] {item.item_id} [{prio}] {item.question}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_full_checklist()
+    print(f&#x27;\nTotal checklist items: {len(FULL_CHECKLIST)}&#x27;)
+    critical = [e for e in FULL_CHECKLIST if e.priority == &#x27;critical&#x27;]
+    print(f&#x27;Critical (blocking): {len(critical)}&#x27;)
+    high = [e for e in FULL_CHECKLIST if e.priority == &#x27;high&#x27;]
+    print(f&#x27;High: {len(high)}&#x27;)
+    medium = [e for e in FULL_CHECKLIST if e.priority == &#x27;medium&#x27;]
+    print(f&#x27;Medium (advisory): {len(medium)}&#x27;)</code></pre>
+<h3 class="sh2">Id</h3>
+<p class="prose">6</p>
+<h3 class="sh2">Name</h3>
+<p class="prose">cross_chapter_integration_diagram.py</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Cumulative cross-chapter integration diagram showing how Chapters 6, 7, 8,
+and 9 compose into a unified defensive architecture. Encodes each chapter&#x27;&#x27;s
+contribution as a DefensiveLayer and renders the stacked architecture from
+training-time through inference-time with OWASP coverage annotations.</p>
+<h3 class="sh2">Implementation Notes</h3>
+<p class="prose">Single quotes throughout per book convention. No external dependencies.
+Each chapter&#x27;&#x27;s contribution is encoded as a DefensiveLayer dataclass.
+Rendering produces a structured text diagram. No hardcoded chapter references
+in the rendering logic.</p>
+<h3 class="sh2">Code</h3>
+<pre class="code"><code># cross_chapter_integration_diagram.py
+# Chapter 9 Section 9.13 -- Cumulative Cross-Chapter Integration Diagram
+# Single quotes throughout per book convention.
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class DefensiveLayer:
+    chapter: str
+    layer_name: str
+    attack_surface: str
+    threat_actor: str
+    detection_architecture: str
+    production_components: List[str]
+    owasp_coverage: List[str]
+    latency_tier: str
+
+
+DEFENSIVE_LAYERS: List[DefensiveLayer] = [
+    DefensiveLayer(
+        chapter=&#x27;Chapter 8&#x27;,
+        layer_name=&#x27;Training-Time Auditing Pipeline&#x27;,
+        attack_surface=&#x27;Training data and preprocessing pipeline&#x27;,
+        threat_actor=&#x27;Data pipeline contributor with training access&#x27;,
+        detection_architecture=&#x27;Offline batch; CI/CD gate; minutes-to-hours latency&#x27;,
+        production_components=[&#x27;auditing_pipeline.py&#x27;, &#x27;poisoning_detector.py&#x27;],
+        owasp_coverage=[&#x27;LLM03&#x27;],
+        latency_tier=&#x27;offline_batch&#x27;,
+    ),
+    DefensiveLayer(
+        chapter=&#x27;Chapter 6&#x27;,
+        layer_name=&#x27;Gateway Track 1: Injection Classifier&#x27;,
+        attack_surface=&#x27;Inference-time: user input content&#x27;,
+        threat_actor=&#x27;End user attempting instruction override&#x27;,
+        detection_architecture=&#x27;Synchronous per-request; stateless; &lt;50ms P99&#x27;,
+        production_components=[&#x27;injection_classifier.py&#x27;],
+        owasp_coverage=[&#x27;LLM01&#x27;],
+        latency_tier=&#x27;realtime_sync&#x27;,
+    ),
+    DefensiveLayer(
+        chapter=&#x27;Chapter 7&#x27;,
+        layer_name=&#x27;Gateway Tracks 2-5: Jailbreak Ensemble&#x27;,
+        attack_surface=&#x27;Inference-time: user input content (jailbreak variants)&#x27;,
+        threat_actor=&#x27;End user attempting jailbreak via sophisticated prompt engineering&#x27;,
+        detection_architecture=&#x27;Five parallel tracks; synchronous; &lt;50ms P99&#x27;,
+        production_components=[&#x27;jailbreak_ensemble.py&#x27;, &#x27;semantic_consistency.py&#x27;],
+        owasp_coverage=[&#x27;LLM01&#x27;],
+        latency_tier=&#x27;realtime_sync&#x27;,
+    ),
+    DefensiveLayer(
+        chapter=&#x27;Chapter 9 (Section 9.11)&#x27;,
+        layer_name=&#x27;Gateway Track 6: Query Monitor + Rate Limiter&#x27;,
+        attack_surface=&#x27;Inference-time: user query sequences and patterns&#x27;,
+        threat_actor=&#x27;API consumer with query budget; distributed campaigns&#x27;,
+        detection_architecture=&#x27;Sixth parallel track; stateful per-user state; &lt;50ms P99&#x27;,
+        production_components=[&#x27;query_monitor.py&#x27;, &#x27;rate_limiter.py&#x27;, &#x27;cross_user_correlator.py&#x27;],
+        owasp_coverage=[&#x27;LLM10&#x27;, &#x27;LLM04_partial&#x27;],
+        latency_tier=&#x27;realtime_sync_stateful&#x27;,
+    ),
+    DefensiveLayer(
+        chapter=&#x27;Chapter 9 (Section 9.12)&#x27;,
+        layer_name=&#x27;Output-Side: Watermarker + Perturbator&#x27;,
+        attack_surface=&#x27;Inference-time: model response content&#x27;,
+        threat_actor=&#x27;Adversary collecting training data for surrogate; prompt leakage exploiter&#x27;,
+        detection_architecture=&#x27;Post-inference response modification; &lt;5ms P99; post-hoc ownership verification&#x27;,
+        production_components=[&#x27;output_watermarker.py&#x27;, &#x27;output_perturbator.py&#x27;, &#x27;watermark_detector.py&#x27;],
+        owasp_coverage=[&#x27;LLM10&#x27;, &#x27;LLM06_partial&#x27;],
+        latency_tier=&#x27;post_inference&#x27;,
+    ),
+]
+
+
+def render_integration_diagram(layers: List[DefensiveLayer]) -&gt; None:
+    width = 70
+    print(&#x27;CUMULATIVE CROSS-CHAPTER INTEGRATION DIAGRAM&#x27;)
+    print(&#x27;Chapters 6-9: Training-Time + Inference-Time Defensive Architecture&#x27;)
+    print(&#x27;=&#x27; * width)
+
+    print(&#x27;\n[REQUEST FLOW: User -&gt; Gateway -&gt; Model -&gt; Response -&gt; User]&#x27;)
+    print()
+
+    # Group by latency tier for display ordering
+    order = [&#x27;offline_batch&#x27;, &#x27;pre_request&#x27;, &#x27;realtime_sync&#x27;, &#x27;realtime_sync_stateful&#x27;,
+             &#x27;post_inference&#x27;, &#x27;background&#x27;]
+    tier_labels = {
+        &#x27;offline_batch&#x27;: &#x27;TRAINING-TIME / PRE-DEPLOYMENT&#x27;,
+        &#x27;realtime_sync&#x27;: &#x27;INFERENCE-TIME: IN-REQUEST (STATELESS)&#x27;,
+        &#x27;realtime_sync_stateful&#x27;: &#x27;INFERENCE-TIME: IN-REQUEST (STATEFUL)&#x27;,
+        &#x27;post_inference&#x27;: &#x27;INFERENCE-TIME: POST-RESPONSE&#x27;,
+    }
+    printed_tiers = set()
+    for tier in order:
+        tier_layers = [l for l in layers if l.latency_tier == tier]
+        if not tier_layers:
+            continue
+        label = tier_labels.get(tier, tier.upper())
+        if label not in printed_tiers:
+            print(f&#x27;\n  +-- {label} &#x27; + &#x27;-&#x27; * max(0, width - 8 - len(label)))
+            printed_tiers.add(label)
+        for layer in tier_layers:
+            print(f&#x27;  |  [{layer.chapter}] {layer.layer_name}&#x27;)
+            print(&#x27;  |     Components: &#x27; + &#x27;, &#x27;.join(layer.production_components[:2]))
+            print(&#x27;  |     OWASP:      &#x27; + &#x27;, &#x27;.join(layer.owasp_coverage))
+
+    print(&#x27;\n&#x27; + &#x27;=&#x27; * width)
+    print(&#x27;CUMULATIVE OWASP COVERAGE: LLM01 + LLM03 + LLM10 (partial LLM04, LLM06)&#x27;)
+    print(&#x27;Remaining: LLM02, LLM05, LLM07, LLM08 -- Planned Chapters 11-17&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    render_integration_diagram(DEFENSIVE_LAYERS)
+    print()
+    print(&#x27;Layers by chapter:&#x27;)
+    for layer in DEFENSIVE_LAYERS:
+        print(f&#x27;  {layer.chapter}: {layer.layer_name}&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Id</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Treating the Chapter 9 attack catalogue as the complete threat landscape rather than the inference-time extraction subset</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Chapter 9 is comprehensive across extraction and adjacent threats. After
+building five detection primitives, two capstone sections, and a full OWASP
+LLM10 coverage arc, it is natural to feel that the threat landscape is
+covered. The completeness of the chapter&#x27;&#x27;s internal structure creates a
+false sense of completeness relative to the full LLM security landscape.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Six OWASP LLM categories remain uncovered after Chapter 9: LLM02, LLM05,
+LLM06 (fully), LLM07, LLM08, and LLM09. More critically, Chapter 10
+begins immediately: adversarial example generation uses the boundary maps
+that Chapter 9 produced. A deployment that treats Chapter 9 as the
+complete security architecture is undefended against Chapter 10 evasion attacks.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Chapter 9 closes LLM10 and contributes to LLM04 and LLM06. Seven categories
+remain. The cross-chapter integration diagram (Deliverable 6) and the OWASP
+coverage map (Deliverable 3) make the gaps explicit and are the starting
+point for the Chapters 11 through 17 roadmap.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Deploying the full Chapter 9 control stack without calibrating any primitive on the deployment&#x27;s actual traffic</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The Section 9.10 primitives have default thresholds. The Section 9.11 rate
+limiter has default policy templates. The Section 9.12 perturbator has a
+default sigma. Deploying defaults is faster than running 30 days of traffic
+collection and calibration. The defaults feel conservative enough.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Default thresholds produce false positive rates calibrated for a generic
+deployment, not the actual deployment. A coding assistant with genuinely
+high query diversity produces false positives at the query diversity monitor&#x27;&#x27;s
+default threshold. Alert fatigue results. The security team disables the
+monitor. The entire detection investment becomes theatre.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">The deployment checklist items DC-3 (primitive calibration) and OC-4 (utility
+validation) are blocking items precisely because miscalibrated thresholds
+are worse than no monitoring. Run 30 days of legitimate traffic through the
+empirical harness before enabling alerts. The false positive rate is the
+metric, not the threshold value.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Building the detection architecture without red-teaming it</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Red team exercises are expensive and require security personnel with
+knowledge of extraction techniques. The empirical harness (Section 9.10
+Deliverable 6) provides synthetic attack traffic. Teams substitute the
+synthetic harness for actual red team exercises and consider the detection
+architecture validated.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Synthetic attack traffic is a calibration tool, not a validation tool.
+Real adversaries adapt to the detection architecture in ways that synthetic
+traffic cannot simulate -- spacing queries to avoid the sliding window,
+using novel elicitation phrasings not in the meta-query keyword list,
+or distributing campaigns across timing patterns the correlator does not
+cover. A detection architecture that has never been tested against adaptive
+adversaries has unknown coverage against them.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Quarterly red team extraction exercises are required (Section 9.11
+deployment checklist item DC-8 advisory; Section 9.13 Section 9.9 lesson
+learned L7). Run both synthetic harness updates (for calibration) and
+red team exercises (for adaptive adversary validation) at separate
+frequencies. Red team findings update the detection signatures; harness
+results update the calibration thresholds.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Routing extraction alerts only to the API team, not the security operations centre</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">Extraction alerts look like API usage anomalies to most organisations. The
+API team owns the monitoring infrastructure. The alert routing follows
+ownership: API team gets API alerts, including extraction alerts.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The API team diagnoses extraction alerts as potential rate limit policy
+issues or legitimate high-volume users. They may loosen the rate limit
+to reduce false positives. The security operations centre never sees the
+alert. A confirmed extraction campaign is treated as a configuration issue
+rather than a security incident. No forensic investigation is initiated;
+no legal evidence chain is preserved; no incident response playbook is
+followed.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">The AML.T0040/T0024 Sigma rule (Section 9.11 Deliverable 5) routes alerts
+through the SIEM to the SOC. Deployment checklist item DC-6 verifies this
+routing. The SOC team needs the Chapter 9 incident response playbook -- the
+watermark verification workflow (Section 9.12 Deliverable 7) and the root
+cause analysis format (Section 9.9 Deliverable 2) -- to respond correctly.</p>
+<h3 class="sh2">Id</h3>
+<p class="prose">5</p>
+<h3 class="sh2">Description</h3>
+<p class="prose">Applying the Chapter 9 architecture to Chapter 10 evasion attacks without extending Track 7</p>
+<h3 class="sh2">Why It Happens</h3>
+<p class="prose">The six-track Chapter 9 gateway seems complete. Chapter 10 adversarial
+examples are inputs, and the gateway handles inputs. Teams assume the
+existing tracks cover adversarial example detection without adding a
+dedicated track.</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Adversarial examples are not detected by the five Chapter 6/7 tracks
+(which look for injection and jailbreak phrasing) or by Track 6 (which
+looks for extraction query distribution anomalies). Adversarial image
+inputs to a vision classifier, adversarial text inputs to a content
+moderator, and adversarial feature vectors to a fraud classifier require
+dedicated adversarial example detection techniques -- input preprocessing,
+consistency checks, or detection model ensembles -- that Chapter 10 builds.</p>
+<h3 class="sh2">Correct Approach</h3>
+<p class="prose">Chapter 10 extends the gateway with Track 7. The six-track architecture
+from Chapter 9 is explicitly designed for extensibility -- the parallel
+dispatch pattern accommodates any number of tracks within the latency
+budget. The Chapter 10 installation guide will describe how to add Track
+7 alongside the existing six tracks.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Chapter 9 returned to the inference-time gateway after Chapter 8&#x27;&#x27;s
+training-time auditing, facing a new threat actor: the API consumer with
+a query budget. The extraction taxonomy established four goals (functionality,
+fidelity, decision-boundary, prompt) with distinct budget requirements,
+query patterns, and detection signals. Three extraction attacks were
+implemented: equation-solving O(d) extraction of linear models, distillation
+with the soft-label 5-50x budget discount as the central security insight,
+and aggregation-based prompt extraction invisible to per-request classifiers.
+Two privacy attacks sharing the inference surface were built: membership
+inference exploiting the overfitting-confidence gap (HIPAA/GDPR implications),
+and model inversion demonstrating verbatim training data recovery. API
+economic abuse completed the attack arc. Three documented incidents grounded
+the catalogue in reality and identified the five root causes that drive the
+production control design. Five detection primitives cover the full catalogue
+in a calibrated ensemble achieving 88 to 98 percent detection rates with a
+30 to 40 percent known gap for benchmark-distribution distillation. Two
+capstone sections wired the library into production: Track 6 (stateful query
+monitor, four-dimension rate limiter, cross-user correlator, Sigma rule) on
+the input side, and token-level watermarking plus adaptive perturbation on the
+output side. Together they close OWASP LLM10 across all five sub-risks and
+bring cumulative chapter coverage to LLM01 plus LLM03 plus LLM10.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Query budget economics -- not the existence of the attack -- is the design language for extraction defence</li><li>Grey-box APIs providing probability distributions give adversaries a 5-50x extraction budget discount; output design is a security decision</li><li>No single detection primitive covers the full catalogue; the five-primitive ensemble is a coverage requirement, not an optimisation</li><li>Benchmark-distribution LLM distillation has 30-40% input-side detection; output watermarking is the only post-hoc control for this pattern</li><li>Stateful Track 6 is the only structural difference from the Chapter 6/7 gateway; the async write pattern prevents latency regression</li><li>The Chapter 9 to Chapter 10 connection is mechanistic: boundary maps from Section 9.3 are the direct input to adversarial example generation</li></ul>
+<h2 class="sh1">Preview Chapter 10</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Chapter 10: Adversarial Machine Learning</p>
+<h3 class="sh2">Preview</h3>
+<pre class="code"><code>Chapter 9 covered attacks that steal what the model knows. Chapter 10 covers
+attacks that make the model produce attacker-chosen outputs at inference time
+without changing the model: adversarial examples. The threat actor remains an
+API consumer; the goal shifts from extraction to evasion.
+
+The canonical adversarial attack methods -- FGSM (Fast Gradient Sign Method),
+PGD (Projected Gradient Descent), and C&amp;W (Carlini-Wagner) -- require gradient
+access for full efficiency but work under black-box access using the boundary
+maps Chapter 9 produced. Transferability extends the threat: adversarial examples
+generated against a distillation surrogate (Chapter 9 Section 9.4) transfer to
+the victim at substantial success rates, because the surrogate shares the
+victim&#x27;&#x27;s decision boundary structure.
+
+The detection architecture adds Track 7 to the six-track Chapter 9 gateway.
+Detection techniques include input preprocessing (feature squeezing, spatial
+smoothing), classifier consistency checks (confidence should not change
+dramatically under small input perturbations), and detection model ensembles.
+Chapter 10 closes OWASP LLM coverage for the inference-time evasion attack
+class and completes Part 2 of the book.</code></pre>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">All 12 prior sections of Chapter 9</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Synthesis section; all prior sections are referenced in prose_content parts 1-7</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 6 Section 6.17: production injection classifier</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Gateway Track 1 in the cumulative integration diagram (Deliverable 6)</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 7 Section 7.14: jailbreak detection ensemble</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Gateway Tracks 2-5 in the cumulative integration diagram</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 8 Section 8.15: production auditing pipeline</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Upstream layer in the cumulative integration diagram; architectural contrast in prose Part 8</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 5 Section 5.4: OWASP LLM10 framework</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">LLM10 closure completed in Section 9.12; coverage map (Deliverable 3) is the compliance artefact</p>
+<h3 class="sh2">Forward References</h3>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapter 10: Adversarial Machine Learning</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Mechanistic connection: Section 9.3 boundary maps are the direct input to Chapter 10 adversarial example generation; Transfer via Chapter 9 surrogates</p>
+<h3 class="sh3">Ref</h3>
+<p class="prose">Chapters 11-17</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Remaining OWASP LLM categories (LLM02, LLM05, LLM07, LLM08) are the roadmap; OWASP coverage map (Deliverable 3) makes the gaps explicit</p>
+</article>

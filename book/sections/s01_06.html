@@ -1,0 +1,513 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 6 · ~6 pages</div>
+<h1>Data Preprocessing: Cleaning and Normalization</h1>
+<div class="tags"><span class="tag">data-preprocessing</span><span class="tag">normalization</span><span class="tag">standardization</span><span class="tag">missing-values</span><span class="tag">outliers</span><span class="tag">data-cleaning</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Real-world data is messy. Security logs have missing timestamps. User inputs 
+contain garbage characters. API response times have outliers from network hiccups. 
+Feature values span wildly different ranges: email length (10-1000 characters) 
+vs exclamation count (0-5). If you feed this raw mess directly to ML models, 
+they will learn poorly or not at all.
+
+Data preprocessing transforms messy real-world data into clean, normalized 
+format that ML algorithms can actually learn from. This includes: handling 
+missing values, removing outliers, encoding categorical variables, and scaling 
+numerical features to comparable ranges.
+
+For security, preprocessing is critical because:
+1. Adversaries inject malformed data to break your pipeline (data poisoning)
+2. Poor preprocessing creates blind spots adversaries exploit
+3. Feature scaling affects which patterns models learn
+4. Train-test contamination leads to overoptimistic evaluation (false security)
+
+This section teaches you to clean data properly, normalize features correctly, 
+and avoid preprocessing pitfalls that create security vulnerabilities.</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Without proper preprocessing:
+- Models fail to converge (gradient descent doesn&#x27;t work)
+- Large-scale features dominate (email length &gt;&gt; exclamation count)
+- Missing values cause crashes or silent failures
+- Outliers skew statistics and poison models
+- Test set contamination gives false confidence
+
+With proper preprocessing:
+- Models train faster and more reliably
+- All features contribute equally to learning
+- Pipeline is robust to messy real-world data
+- Evaluation accurately reflects production performance
+- Adversarial manipulation is easier to detect</p>
+<h2 class="sh1">Missing Values</h2>
+<h3 class="sh2">Why Data Goes Missing</h3>
+<p class="prose">Missing values are not random noise. They have causes, and in security,
+the cause is often the signal.
+
+Common causes in security data:
+- Sensor gaps: agent crashed, log shipper backed up, network partition
+- Schema drift: new log format missing fields the old one had
+- Optional fields: user-agent absent, referrer stripped
+- Deliberate omission: attacker suppresses fields to evade parsing
+
+That last one matters. An authentication log with no source IP is not
+&quot;incomplete data&quot; - it may be an evasion attempt. Before you impute
+anything, ask WHY the value is missing.</p>
+<h3 class="sh2">Detecting Missing Values</h3>
+<pre class="code"><code>import numpy as np
+
+# Security log features: [response_time_ms, failed_logins, payload_size]
+# np.nan marks missing values
+data = np.array([
+    [120.5,  0,     512.0],
+    [np.nan, 3,     1024.0],   # response_time missing (sensor gap?)
+    [89.2,   1,     np.nan],   # payload_size missing (evasion?)
+    [200.1,  np.nan, 256.0],   # failed_logins missing
+    [95.7,   0,     768.0],
+])
+
+# Locate missing values
+missing_mask = np.isnan(data)
+print(missing_mask.sum())           # 3 total missing
+print(missing_mask.sum(axis=0))     # [1, 1, 1] - one per column
+
+# Fraction missing per feature - your first data quality metric
+missing_fraction = missing_mask.mean(axis=0)
+print(missing_fraction)             # [0.2, 0.2, 0.2]</code></pre>
+<h3 class="sh2">Imputation Strategies</h3>
+<h3 class="sh3">Mean Imputation</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Replace missing values with the column mean</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">Numerical features, roughly symmetric distributions, non-adversarial data</p>
+<h4 class="sh3">Weakness</h4>
+<p class="prose">Mean is pulled by outliers - one poisoned extreme value shifts every imputed value</p>
+<h4 class="sh3">Numpy Example</h4>
+<p class="prose"># Fit: compute mean from observed (non-missing) values only
+col_means = np.nanmean(data, axis=0)
+
+# Transform: fill missing positions with the column mean
+data_mean_imputed = data.copy()
+idx = np.where(np.isnan(data_mean_imputed))
+data_mean_imputed[idx] = np.take(col_means, idx[1])</p>
+<h3 class="sh3">Median Imputation</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Replace missing values with the column median</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">Numerical features with outliers - which is most security data</p>
+<h4 class="sh3">Why Preferred In Security</h4>
+<p class="prose">The median is a robust statistic: to move it, an adversary must control
+half your data. To move the mean, one extreme value is enough.
+In adversarial environments, default to median.</p>
+<h4 class="sh3">Numpy Example</h4>
+<p class="prose">col_medians = np.nanmedian(data, axis=0)
+
+data_median_imputed = data.copy()
+idx = np.where(np.isnan(data_median_imputed))
+data_median_imputed[idx] = np.take(col_medians, idx[1])</p>
+<h3 class="sh3">Missingness Indicators</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Add a binary feature marking WHERE values were missing</p>
+<h4 class="sh3">Why This Is The Security Move</h4>
+<p class="prose">Imputation erases the fact that a value was missing. In security,
+that fact is often more informative than the value itself.
+
+Solution: impute the value AND add an indicator column. The model
+can now learn patterns like &quot;payload_size missing + high failed_logins
+= credential stuffing tool with a broken user agent.&quot;</p>
+<h4 class="sh3">Numpy Example</h4>
+<p class="prose"># Indicator matrix: 1 where value was missing, 0 where observed
+indicators = np.isnan(data).astype(float)
+
+# Final feature matrix: imputed values + missingness indicators
+data_full = np.hstack([data_median_imputed, indicators])
+print(data_full.shape)  # (5, 6) - 3 original + 3 indicator features</p>
+<h3 class="sh2">What Not To Do</h3>
+<p class="prose">Dropping rows with missing values (listwise deletion) is the default in
+many tutorials. In security it is usually wrong:
+
+1. You may be dropping exactly the adversarial samples (they&#x27;re the
+   malformed ones), training a model that has never seen an attack.
+2. If missingness correlates with attacks, deletion biases your training
+   distribution toward benign traffic.
+3. At production scale, &quot;drop incomplete records&quot; becomes an evasion
+   recipe: send incomplete records.
+
+Drop rows only when missingness is provably random and rare (&lt;1%).
+Otherwise: impute + indicate.</p>
+<h2 class="sh1">Outliers</h2>
+<h3 class="sh2">Three Kinds Of Outliers</h3>
+<p class="prose">Every outlier in security data is one of three things:
+
+1. Error: sensor glitch, parsing bug, clock skew. Remove or correct.
+2. Legitimate extreme: the CEO really did download 4GB before a board
+   meeting. Keep - removing it teaches the model that normal-but-rare
+   equals impossible.
+3. Attack: the exfiltration you are being paid to detect.
+   NEVER remove. This is your positive class.
+
+The statistics below tell you a point is unusual. They cannot tell you
+which of the three kinds it is. That requires investigation. This is the
+single most important difference between preprocessing for security and
+preprocessing for anything else: in most domains outliers are noise,
+in ours they are frequently the entire point.</p>
+<h3 class="sh2">Z Score Method</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Flag points more than k standard deviations from the mean (typically k=3)</p>
+<h3 class="sh3">Assumption</h3>
+<p class="prose">Roughly normal distribution - often false for security data</p>
+<h3 class="sh3">Numpy Example</h3>
+<p class="prose">response_times = np.array([120, 95, 110, 88, 130, 105, 2400, 92, 115])
+
+mean = response_times.mean()
+std = response_times.std()
+z_scores = np.abs((response_times - mean) / std)
+
+outlier_mask = z_scores &gt; 3
+print(response_times[outlier_mask])   # [2400]</p>
+<h3 class="sh3">Weakness</h3>
+<p class="prose">The 2400ms value inflates both the mean and the std used to detect it.
+With enough poisoned extremes, an adversary widens your detection
+envelope until their real activity scores as normal. Masking effect:
+outliers hide each other.</p>
+<h3 class="sh2">Iqr Method</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Flag points outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR]</p>
+<h3 class="sh3">Why Preferred</h3>
+<p class="prose">Quartiles are robust - unaffected by the magnitude of extreme values</p>
+<h3 class="sh3">Numpy Example</h3>
+<p class="prose">q1, q3 = np.percentile(response_times, [25, 75])
+iqr = q3 - q1
+lower, upper = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+
+outlier_mask = (response_times &lt; lower) | (response_times &gt; upper)
+print(response_times[outlier_mask])   # [2400]
+
+# Key property: change 2400 to 2400000 and the bounds do not move.
+# An adversary cannot widen the envelope by sending bigger extremes.</p>
+<h3 class="sh2">Handling Decision</h3>
+<p class="prose">Detected an outlier? Decision procedure:
+
+1. Can you trace it to a known error source (deploy, sensor restart,
+   clock skew)? -&gt; correct or remove, document why.
+2. Does it correlate with other suspicious features (odd hours, rare
+   source, missing fields)? -&gt; route to investigation, KEEP in data,
+   label if confirmed.
+3. Neither? -&gt; keep it, consider capping (winsorization) instead of
+   removal so scale damage is limited but the signal survives:
+
+# Winsorize: cap at percentile bounds instead of deleting
+capped = np.clip(response_times,
+                 np.percentile(response_times, 1),
+                 np.percentile(response_times, 99))</p>
+<h2 class="sh1">Feature Scaling</h2>
+<h3 class="sh2">Why Gradient Descent Cares</h3>
+<p class="prose">Recall from Section 1.05: features live in a shared space, and models
+learn by moving through that space along gradients.
+
+If email_length spans 10-1000 and exclamation_count spans 0-5, the loss
+surface is a stretched valley: steep in one direction, nearly flat in the
+other. Gradient descent zigzags down the steep wall while barely moving
+along the flat axis. Training is slow, unstable, and the learning rate
+that works for one feature diverges on another.
+
+Scaling makes the valley round. Same information, same patterns - but
+every feature now contributes at comparable magnitude, and one learning
+rate works everywhere.
+
+Distance-based methods (k-NN, clustering, anomaly detection) are even
+more sensitive: without scaling, distance IS the largest feature, and
+every other signal is invisible.</p>
+<h3 class="sh2">Min Max Normalization</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">x_scaled = (x - min) / (max - min)  -&gt;  range [0, 1]</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Bounded features, no significant outliers, neural network inputs</p>
+<h3 class="sh3">Numpy Example</h3>
+<p class="prose">X = np.array([
+    [10.0,   0],
+    [500.0,  2],
+    [1000.0, 5],
+    [250.0,  1],
+])  # columns: [email_length, exclamation_count]
+
+X_min = X.min(axis=0)
+X_max = X.max(axis=0)
+X_minmax = (X - X_min) / (X_max - X_min)
+
+print(X_minmax.min(axis=0))  # [0. 0.]
+print(X_minmax.max(axis=0))  # [1. 1.]</p>
+<h3 class="sh3">Security Weakness</h3>
+<p class="prose">min and max are the two MOST outlier-sensitive statistics that exist.
+One adversarial sample with email_length=1e9 crushes every legitimate
+value into a sliver near zero. If you must use min-max in production,
+compute bounds from percentiles (1st/99th), not literal min/max.</p>
+<h3 class="sh2">Z Score Standardization</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">x_scaled = (x - mean) / std  -&gt;  mean 0, std 1</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">The default choice. Unbounded features, gradient-based models.</p>
+<h3 class="sh3">Numpy Example</h3>
+<p class="prose">mu = X.mean(axis=0)
+sigma = X.std(axis=0)
+X_standard = (X - mu) / sigma
+
+print(X_standard.mean(axis=0))  # ~[0. 0.]
+print(X_standard.std(axis=0))   # [1. 1.]</p>
+<h3 class="sh2">Robust Scaling</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">x_scaled = (x - median) / IQR</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Adversarial environments. Which, for this book, means: use this.</p>
+<h3 class="sh3">Numpy Example</h3>
+<p class="prose">med = np.median(X, axis=0)
+q1, q3 = np.percentile(X, [25, 75], axis=0)
+iqr = q3 - q1
+X_robust = (X - med) / iqr</p>
+<h3 class="sh3">Why This Is The Security Default</h3>
+<p class="prose">Same argument as median imputation, applied to scaling: every statistic
+you compute from training data is a value an adversary who can inject
+training samples gets to influence. mean/std move with single extremes;
+median/IQR require controlling large fractions of the data. Raising the
+cost of poisoning from &quot;one crafted record&quot; to &quot;half the dataset&quot; is
+exactly the kind of asymmetry defense is made of.</p>
+<h2 class="sh1">Categorical Encoding</h2>
+<h3 class="sh2">The Problem</h3>
+<p class="prose">Models need numbers. Security data is full of categories: protocol
+(tcp/udp/icmp), HTTP method, country code, log source, event type.</p>
+<h3 class="sh2">Label Encoding</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Map each category to an integer: tcp=0, udp=1, icmp=2</p>
+<h3 class="sh3">Trap</h3>
+<p class="prose">Integers imply order and distance: the model now believes icmp &gt; udp
+and that icmp is &quot;twice as far&quot; from tcp as udp is. For protocols
+that&#x27;s meaningless - and the model will happily learn the meaningless
+pattern. Use label encoding ONLY for genuinely ordinal categories
+(severity: low &lt; medium &lt; high &lt; critical).</p>
+<h3 class="sh2">One Hot Encoding</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">One binary column per category - no false ordering</p>
+<h3 class="sh3">Numpy Example</h3>
+<p class="prose">protocols = np.array([&#x27;tcp&#x27;, &#x27;udp&#x27;, &#x27;tcp&#x27;, &#x27;icmp&#x27;, &#x27;tcp&#x27;])
+
+categories = np.unique(protocols)           # [&#x27;icmp&#x27; &#x27;tcp&#x27; &#x27;udp&#x27;]
+one_hot = (protocols[:, None] == categories).astype(float)
+
+print(one_hot)
+# [[0. 1. 0.]     tcp
+#  [0. 0. 1.]     udp
+#  [0. 1. 0.]     tcp
+#  [1. 0. 0.]     icmp
+#  [0. 1. 0.]]    tcp</p>
+<h3 class="sh3">Unseen Category Problem</h3>
+<p class="prose">Production will send categories that were not in training. Your
+encoder must have a defined behavior for them - an all-zeros row, or
+an explicit &quot;unknown&quot; column. An encoder that crashes on unseen input
+is a denial-of-service primitive: one packet with protocol=&quot;gre&quot; and
+your detection pipeline is down. Decide the behavior; never let it
+be an unhandled exception.</p>
+<h2 class="sh1">Train Test Discipline</h2>
+<h3 class="sh2">The Iron Rule</h3>
+<p class="prose">Fit preprocessing on training data. Apply it to test data.
+Test data must NEVER influence any preprocessing statistic.
+
+Wrong (leakage):
+  scale using mean/std of the FULL dataset, then split
+Right:
+  split first -&gt; fit scaler on train -&gt; transform train AND test
+  with the train-fitted statistics</p>
+<h3 class="sh2">Why Leakage Is False Security</h3>
+<p class="prose">When test data leaks into preprocessing statistics, the model has
+indirectly seen the future. Evaluation numbers improve - accuracy,
+precision, recall all look better than they will ever be in production.
+
+In most ML domains this costs you an embarrassing demo. In security it
+costs you a detection system that was certified at 98% and catches
+nothing, because the certification was measured against contaminated
+statistics. Overoptimistic evaluation is not a modeling bug. It is a
+false sense of security - literally.</p>
+<h3 class="sh2">Temporal Note</h3>
+<p class="prose">Security data is temporal. Random splits leak future into past: your
+model trains on Tuesday&#x27;s attack and is &quot;tested&quot; on Monday&#x27;s precursor.
+Split by time - train on the past, test on the future - which is the
+only direction production ever runs. Full treatment in the evaluation
+sections; the preprocessing consequence is: fit statistics on the
+PAST window only.</p>
+<h2 class="sh1">Practical Implementation</h2>
+<h3 class="sh2">Description</h3>
+<p class="prose">Everything above, assembled into one pipeline with the fit/transform
+separation made structural. Fit computes statistics from training data
+and stores them. Transform applies stored statistics to any data.
+The class design makes leakage impossible by construction: transform
+physically cannot recompute statistics.</p>
+<h3 class="sh2">Complete Pipeline</h3>
+<pre class="code"><code>import numpy as np
+
+class SecurityPreprocessor:
+    &quot;&quot;&quot;Preprocessing pipeline hardened for adversarial data.
+    
+    - median imputation + missingness indicators
+    - IQR-based outlier capping (winsorization, not deletion)
+    - robust scaling (median / IQR)
+    - strict fit/transform separation (fit on train ONLY)
+    &quot;&quot;&quot;
+    
+    def __init__(self, cap_outliers=True):
+        self.cap_outliers = cap_outliers
+        self.fitted = False
+    
+    def fit(self, X):
+        &quot;&quot;&quot;Compute all statistics from TRAINING data. Call exactly once.&quot;&quot;&quot;
+        X = np.asarray(X, dtype=float)
+        
+        # Imputation statistics (robust)
+        self.medians_ = np.nanmedian(X, axis=0)
+        
+        # Outlier bounds from observed values (robust)
+        q1 = np.nanpercentile(X, 25, axis=0)
+        q3 = np.nanpercentile(X, 75, axis=0)
+        iqr = q3 - q1
+        self.lower_ = q1 - 1.5 * iqr
+        self.upper_ = q3 + 1.5 * iqr
+        
+        # Scaling statistics (robust); guard zero-IQR features
+        self.scale_ = np.where(iqr == 0, 1.0, iqr)
+        self.center_ = self.medians_
+        
+        self.fitted = True
+        return self
+    
+    def transform(self, X):
+        &quot;&quot;&quot;Apply stored statistics. Works identically on train and test.&quot;&quot;&quot;
+        if not self.fitted:
+            raise RuntimeError(&quot;fit() before transform() - on TRAINING data&quot;)
+        X = np.asarray(X, dtype=float)
+        
+        # 1. Missingness indicators FIRST (before imputation erases them)
+        indicators = np.isnan(X).astype(float)
+        
+        # 2. Impute with train medians
+        X_out = X.copy()
+        idx = np.where(np.isnan(X_out))
+        X_out[idx] = np.take(self.medians_, idx[1])
+        
+        # 3. Cap outliers at train bounds (keep the signal, limit the damage)
+        if self.cap_outliers:
+            X_out = np.clip(X_out, self.lower_, self.upper_)
+        
+        # 4. Robust scale with train statistics
+        X_out = (X_out - self.center_) / self.scale_
+        
+        # 5. Append indicators - missingness itself is a feature
+        return np.hstack([X_out, indicators])
+    
+    def fit_transform(self, X):
+        return self.fit(X).transform(X)
+
+
+# ------------------------------------------------------------------
+# Usage: the order of operations IS the security control
+# ------------------------------------------------------------------
+
+rng = np.random.default_rng(42)
+
+# Simulated auth logs: [response_ms, failed_logins, payload_kb]
+X_train = rng.normal([110, 1, 500], [20, 1, 150], size=(1000, 3))
+X_train[rng.random(X_train.shape) &lt; 0.03] = np.nan     # 3% missing
+X_train[5] = [4000, 50, 90000]                          # an attack row
+
+X_test = rng.normal([110, 1, 500], [20, 1, 150], size=(200, 3))
+X_test[rng.random(X_test.shape) &lt; 0.03] = np.nan
+
+pre = SecurityPreprocessor()
+X_train_ready = pre.fit_transform(X_train)   # fit on train
+X_test_ready  = pre.transform(X_test)        # ONLY transform on test
+
+print(X_train_ready.shape)   # (1000, 6): 3 scaled + 3 indicators
+print(X_test_ready.shape)    # (200, 6)
+
+# The attack row survived preprocessing - capped, not deleted:
+print(X_train_ready[5, :3])  # extreme but finite values, still learnable</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Fitting the scaler on the full dataset before splitting</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Leakage. Evaluation numbers are fiction; production performance is worse than measured.</p>
+<h3 class="sh2">Fix</h3>
+<p class="prose">Split first. Fit on train. Transform both with train statistics.</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Deleting all outliers before training</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">You just deleted the attacks. The model learns a world where attacks don&#x27;t exist.</p>
+<h3 class="sh2">Fix</h3>
+<p class="prose">Investigate, cap, or keep-and-label. Delete only provable errors.</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Mean imputation and mean/std scaling on adversarial data</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Single crafted records shift your statistics - poisoning with minimal effort.</p>
+<h3 class="sh2">Fix</h3>
+<p class="prose">Median and IQR everywhere. Force the adversary to control half your data.</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Imputing without missingness indicators</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">You erased a signal. Deliberately omitted fields now look like clean median values.</p>
+<h3 class="sh2">Fix</h3>
+<p class="prose">Always hstack the isnan mask. Missingness is a feature.</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Label-encoding nominal categories</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">The model learns arithmetic on protocol names.</p>
+<h3 class="sh2">Fix</h3>
+<p class="prose">One-hot for nominal, label encoding only for genuinely ordinal.</p>
+<h3 class="sh2">Mistake</h3>
+<p class="prose">Encoder or pipeline throws on unseen categories / malformed input</p>
+<h3 class="sh2">Consequence</h3>
+<p class="prose">Adversary crashes your detection with one weird packet - preprocessing as DoS surface.</p>
+<h3 class="sh2">Fix</h3>
+<p class="prose">Define behavior for every malformed input. The pipeline must degrade, never die.</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Preprocessing Is Attack Surface</h3>
+<p class="prose">Your preprocessing code runs on attacker-controlled input before any
+model sees it. Every statistic it computes from data is a value an
+adversary can try to influence; every assumption it makes about
+well-formed input is a malformed input waiting to happen.
+
+Threat model for this section:
+
+1. Poisoning via statistics: inject training records that shift
+   mean/std/min/max, widening the normalization envelope until real
+   attacks scale down into the normal range.
+   Defense: robust statistics (median/IQR), percentile bounds,
+   monitoring of statistic drift between refits.
+
+2. Evasion via missingness: omit the fields your features depend on.
+   Defense: missingness indicators - omission becomes signal.
+
+3. Evasion via outlier handling: if extreme values get deleted or
+   clipped silently, live just inside the cap; if incomplete rows get
+   dropped, send incomplete rows.
+   Defense: cap don&#x27;t delete, alert on cap-hits, treat &quot;record was
+   capped/imputed&quot; as features.
+
+4. DoS via malformed input: NaN floods, unseen categories, absurd
+   magnitudes that overflow float32 downstream.
+   Defense: defined behavior for every input class; fuzz your
+   preprocessing like the parser it is.</p>
+<h3 class="sh2">The Deeper Point</h3>
+<p class="prose">Chapter 4 will show attacks against models. Notice that every attack in
+THIS section needed no access to the model at all - only to the data
+stream feeding it. Preprocessing is where the adversary meets your
+system first, and it is the cheapest place for them to act. Detection
+built on a poisoned or evadable preprocessing layer is detection in
+name only, regardless of how good the model above it is.</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Preprocessing transforms messy real-world data into clean format for ML</li><li>Missing values can be imputed (filled) or indicated with separate features</li><li>Outliers can be errors, legitimate extremes, or attacks - investigate before removing</li><li>Feature scaling puts all features on comparable scales (critical for gradient descent)</li><li>ALWAYS fit preprocessing on training data, apply to test data</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement mean/median imputation with NumPy</li><li>Detect outliers using z-score and IQR methods</li><li>Apply normalization (min-max) and standardization (z-score) scaling</li><li>Build complete preprocessing pipeline that fits on train, transforms train and test</li><li>Handle missing values, outliers, and scaling in sequence</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Outliers may be attacks - don&#x27;t blindly remove them</li><li>Adversaries poison training data by manipulating preprocessing statistics</li><li>Use robust statistics (median, IQR) in adversarial environments</li><li>Missing values can be evasion technique - track missingness patterns</li><li>Train-test leakage creates false security - model will fail in production</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Preprocessing is attack surface. Adversary manipulates it to poison or evade.</li><li>Fit on train, transform test. NEVER let test data influence preprocessing.</li><li>In security: Use robust statistics. Mean and std are vulnerable to poisoning.</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Classification fundamentals (moving into actual ML algorithms)</li><li>Connect to security: Section 24 covers handling imbalanced datasets (common in security)</li><li>Foundation complete: Math + data handling → ready for ML algorithms!</li></ul>
+</article>

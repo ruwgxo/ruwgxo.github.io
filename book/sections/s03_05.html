@@ -1,0 +1,1002 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 5 · ~6 pages</div>
+<h1>Sequence-to-Sequence Problems and Limitations</h1>
+<div class="tags"><span class="tag">seq2seq</span><span class="tag">encoder-decoder</span><span class="tag">rnn-limitations</span><span class="tag">information-bottleneck</span><span class="tag">attention-motivation</span><span class="tag">long-sequences</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sequence-to-Sequence Problems and Limitations</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.5</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Sequence-to-sequence (seq2seq) models map variable-length input sequences to 
+variable-length output sequences: translation (English → French), summarization 
+(long text → short summary), question answering (question + context → answer). 
+The encoder-decoder architecture with RNNs/LSTMs was the standard approach before 
+transformers.
+
+But seq2seq has a fundamental flaw: the entire input sequence must be compressed 
+into a single fixed-length context vector. This information bottleneck causes 
+catastrophic information loss on long sequences. RNNs also suffer from vanishing 
+gradients despite LSTM/GRU improvements.
+
+For security engineers: Understanding these limitations reveals why modern LLMs use 
+attention instead of RNNs. Fixed-context bottlenecks create attack vectors - 
+adversaries place payloads knowing certain positions will be forgotten. Attention 
+mechanisms solve this but introduce new vulnerabilities we&#x27;ll explore in Section 3.6.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand encoder-decoder architecture for seq2seq tasks</li><li>Identify the information bottleneck in fixed-length context vectors</li><li>Recognize why RNNs struggle with long-range dependencies</li><li>Grasp the alignment problem in translation</li><li>Understand what motivates attention mechanisms</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement vanilla seq2seq encoder-decoder (review from Chapter 2)</li><li>Analyze context vector capacity and information loss</li><li>Demonstrate performance degradation on long sequences</li><li>Visualize how different decoder steps need different context</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Identify how fixed-context bottlenecks create attack vectors</li><li>Understand position-based adversarial attacks</li><li>Recognize information loss exploitation by adversaries</li><li>See how attention improves and changes security properties</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Chapter 2: RNNs, LSTMs, GRUs (sequence models)</li><li>Section 3.1: Language modeling basics</li><li>Section 3.3-3.4: Word embeddings (input representation)</li><li>Backpropagation through time (BPTT)</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>Implementing recurrent neural networks</li><li>Understanding gradient flow in deep networks</li><li>Working with variable-length sequences</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 4</h3>
+<p class="prose">Word2Vec gave us high-quality word embeddings. Now we use those embeddings 
+as inputs to sequence models that process and generate text. Seq2seq is the 
+natural application of embeddings + RNNs.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.6 introduces attention - the solution to seq2seq&#x27;s bottleneck problem. 
+Instead of compressing everything into one vector, attention lets the decoder 
+&quot;look back&quot; at all encoder states dynamically.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Sequence-to-Sequence Tasks and Encoder-Decoder Architecture</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Many NLP tasks require mapping one sequence to another: translation transforms 
+English to French, summarization condenses long documents to short summaries, 
+question answering converts (question, context) to answer. The encoder-decoder 
+architecture handles these by encoding input into fixed representation, then 
+decoding into output sequence.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Seq2Seq Tasks</h3>
+<h4 class="sh3">Machine Translation</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">English sentence</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">French sentence</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">&#x27;The cat sat on the mat&#x27; → &#x27;Le chat s&#x27;est assis sur le tapis&#x27;</p>
+<h4 class="sh3">Challenge</h4>
+<p class="prose">Different lengths, word order, grammar</p>
+<h4 class="sh3">Text Summarization</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">Long document (100+ words)</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Short summary (10-20 words)</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">News article → headline</p>
+<h4 class="sh3">Challenge</h4>
+<p class="prose">Extract salient information, compress drastically</p>
+<h4 class="sh3">Question Answering</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">Question + context passage</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Answer span or generated answer</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">&#x27;Where is the cat?&#x27; + &#x27;The cat sat on the mat&#x27; → &#x27;on the mat&#x27;</p>
+<h4 class="sh3">Challenge</h4>
+<p class="prose">Understanding, reasoning, extraction</p>
+<h4 class="sh3">Dialogue Systems</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">User utterance</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">System response</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">&#x27;What&#x27;s the weather?&#x27; → &#x27;It&#x27;s sunny and 75°F&#x27;</p>
+<h4 class="sh3">Challenge</h4>
+<p class="prose">Context tracking, multi-turn coherence</p>
+<h4 class="sh3">Code Generation</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">Natural language description</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Code snippet</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">&#x27;Sort list in descending order&#x27; → &#x27;sorted(lst, reverse=True)&#x27;</p>
+<h4 class="sh3">Challenge</h4>
+<p class="prose">Syntax correctness, semantic understanding</p>
+<h3 class="sh3">Encoder Decoder Architecture</h3>
+<h4 class="sh3">High Level View</h4>
+<h4 class="sh3">Encoder</h4>
+<p class="prose">Process input sequence → fixed-length context vector</p>
+<h4 class="sh3">Context Vector</h4>
+<p class="prose">Single vector encoding entire input (the bottleneck!)</p>
+<h4 class="sh3">Decoder</h4>
+<p class="prose">Generate output sequence from context vector</p>
+<h4 class="sh3">Detailed Architecture</h4>
+<h4 class="sh3">Encoder Component</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">Word embeddings: [w₁, w₂, ..., wₙ]</p>
+<h4 class="sh3">Rnn Type</h4>
+<p class="prose">LSTM or GRU (handles variable length)</p>
+<h4 class="sh3">Process</h4>
+<p class="prose">h₁ = LSTM(w₁, h₀)
+h₂ = LSTM(w₂, h₁)
+...
+hₙ = LSTM(wₙ, hₙ₋₁)</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Final hidden state hₙ = context vector c</p>
+<h4 class="sh3">Context Vector</h4>
+<h4 class="sh3">Definition</h4>
+<p class="prose">c = hₙ (final encoder state)</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">Typically 512-1024 dims</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">ALL input information compressed into this single vector!</p>
+<h4 class="sh3">Decoder Component</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">Context vector c + previous tokens</p>
+<h4 class="sh3">Initialization</h4>
+<p class="prose">Decoder h₀ = c (or linear transform of c)</p>
+<h4 class="sh3">Process</h4>
+<p class="prose">s₁ = LSTM(&lt;START&gt;, c)
+y₁ = softmax(W × s₁)  # Predict first output word
+
+s₂ = LSTM(y₁, s₁)
+y₂ = softmax(W × s₂)  # Predict second output word
+
+... continue until &lt;END&gt; token</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Variable-length output sequence</p>
+<h4 class="sh3">Training With Teacher Forcing</h4>
+<h4 class="sh3">Technique</h4>
+<p class="prose">Use ground-truth previous token during training (not predicted)</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">Target</h4>
+<p class="prose">Le chat dort</p>
+<h4 class="sh3">Training Steps</h4>
+<ul class="blist"><li>Input: &lt;START&gt;, Target: Le</li><li>Input: Le (ground truth), Target: chat</li><li>Input: chat (ground truth), Target: dort</li><li>Input: dort (ground truth), Target: &lt;END&gt;</li></ul>
+<h4 class="sh3">Reason</h4>
+<p class="prose">Faster convergence, avoid error accumulation during training</p>
+<h4 class="sh3">Inference</h4>
+<p class="prose">Use predicted tokens (autoregressive generation)</p>
+<h4 class="sh3">Inference Strategies</h4>
+<h4 class="sh3">Greedy Decoding</h4>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Pick most probable word at each step</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Myopic - doesn&#x27;t consider future</p>
+<h4 class="sh3">Beam Search</h4>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Keep k best sequences (beam width k)</p>
+<h4 class="sh3">Benefit</h4>
+<p class="prose">Better global decisions</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">k times slower</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Vanilla Seq2Seq</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class Seq2SeqEncoder:
+    &quot;&quot;&quot;Simple LSTM encoder for seq2seq.&quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, embedding_dim: int, hidden_dim: int):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Input vocabulary size
+            embedding_dim: Word embedding dimension
+            hidden_dim: LSTM hidden state dimension
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        
+        # Embeddings
+        self.embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+        
+        # LSTM parameters (simplified - real LSTM has 4 gates)
+        self.W_h = np.random.randn(hidden_dim, hidden_dim) * 0.01
+        self.W_x = np.random.randn(hidden_dim, embedding_dim) * 0.01
+        self.b = np.zeros(hidden_dim)
+    
+    def encode(self, token_ids: list) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Encode input sequence into context vector.
+        
+        Args:
+            token_ids: List of token IDs
+        
+        Returns:
+            context_vector: Final hidden state (hidden_dim,)
+        &quot;&quot;&quot;
+        # Initialize hidden state
+        h = np.zeros(self.hidden_dim)
+        
+        # Process sequence
+        for token_id in token_ids:
+            # Look up embedding
+            x = self.embeddings[token_id]
+            
+            # LSTM step (simplified)
+            h = np.tanh(np.dot(self.W_h, h) + np.dot(self.W_x, x) + self.b)
+        
+        # Final hidden state = context vector
+        return h
+
+
+class Seq2SeqDecoder:
+    &quot;&quot;&quot;Simple LSTM decoder for seq2seq.&quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, embedding_dim: int, 
+                hidden_dim: int, context_dim: int):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Output vocabulary size
+            embedding_dim: Word embedding dimension
+            hidden_dim: LSTM hidden state dimension
+            context_dim: Context vector dimension (from encoder)
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.embedding_dim = embedding_dim
+        self.hidden_dim = hidden_dim
+        
+        # Embeddings
+        self.embeddings = np.random.randn(vocab_size, embedding_dim) * 0.01
+        
+        # LSTM parameters
+        self.W_h = np.random.randn(hidden_dim, hidden_dim) * 0.01
+        self.W_x = np.random.randn(hidden_dim, embedding_dim) * 0.01
+        self.b = np.zeros(hidden_dim)
+        
+        # Context to hidden state projection
+        self.W_c = np.random.randn(hidden_dim, context_dim) * 0.01
+        
+        # Output projection
+        self.W_out = np.random.randn(vocab_size, hidden_dim) * 0.01
+    
+    def decode_step(self, token_id: int, hidden: np.ndarray) -&gt; tuple:
+        &quot;&quot;&quot;
+        Single decoder step.
+        
+        Args:
+            token_id: Previous token ID
+            hidden: Previous hidden state
+        
+        Returns:
+            output_probs: Probability distribution over vocabulary
+            new_hidden: Updated hidden state
+        &quot;&quot;&quot;
+        # Look up embedding
+        x = self.embeddings[token_id]
+        
+        # LSTM step
+        new_hidden = np.tanh(
+            np.dot(self.W_h, hidden) + 
+            np.dot(self.W_x, x) + 
+            self.b
+        )
+        
+        # Output projection
+        logits = np.dot(self.W_out, new_hidden)
+        
+        # Softmax
+        exp_logits = np.exp(logits - np.max(logits))
+        output_probs = exp_logits / exp_logits.sum()
+        
+        return output_probs, new_hidden
+    
+    def decode(self, context: np.ndarray, max_length: int = 20,
+              start_token: int = 0, end_token: int = 1) -&gt; list:
+        &quot;&quot;&quot;
+        Decode sequence from context vector (greedy).
+        
+        Args:
+            context: Context vector from encoder
+            max_length: Maximum output length
+            start_token: Start token ID
+            end_token: End token ID
+        
+        Returns:
+            decoded_tokens: List of predicted token IDs
+        &quot;&quot;&quot;
+        # Initialize hidden state from context
+        hidden = np.tanh(np.dot(self.W_c, context))
+        
+        # Start with start token
+        current_token = start_token
+        decoded_tokens = []
+        
+        for _ in range(max_length):
+            # Decoder step
+            probs, hidden = self.decode_step(current_token, hidden)
+            
+            # Greedy: pick most probable
+            current_token = np.argmax(probs)
+            
+            # Check for end
+            if current_token == end_token:
+                break
+            
+            decoded_tokens.append(current_token)
+        
+        return decoded_tokens
+
+
+class Seq2SeqModel:
+    &quot;&quot;&quot;Complete seq2seq model.&quot;&quot;&quot;
+    
+    def __init__(self, src_vocab_size: int, tgt_vocab_size: int,
+                embedding_dim: int = 128, hidden_dim: int = 256):
+        self.encoder = Seq2SeqEncoder(src_vocab_size, embedding_dim, hidden_dim)
+        self.decoder = Seq2SeqDecoder(tgt_vocab_size, embedding_dim, 
+                                     hidden_dim, hidden_dim)
+    
+    def forward(self, src_tokens: list, max_length: int = 20) -&gt; list:
+        &quot;&quot;&quot;
+        Encode input, decode output.
+        
+        Args:
+            src_tokens: Source token IDs
+            max_length: Maximum output length
+        
+        Returns:
+            output_tokens: Predicted token IDs
+        &quot;&quot;&quot;
+        # Encode
+        context = self.encoder.encode(src_tokens)
+        
+        # Decode
+        output_tokens = self.decoder.decode(context, max_length)
+        
+        return output_tokens
+
+
+# Example usage
+seq2seq = Seq2SeqModel(src_vocab_size=1000, tgt_vocab_size=1000)
+
+# Encode-decode example
+input_tokens = [10, 25, 42, 100, 5]  # &quot;The cat sat on mat&quot;
+output_tokens = seq2seq.forward(input_tokens, max_length=10)
+
+print(f&quot;Input length: {len(input_tokens)}&quot;)
+print(f&quot;Output length: {len(output_tokens)}&quot;)
+print(f&quot;Context vector dimension: {seq2seq.encoder.hidden_dim}&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Task Specific Vulnerabilities</h3>
+<p class="prose">Different seq2seq tasks have different attack surfaces:
+- Translation: Adversarial source text → malicious translation
+- Summarization: Inject bias, extract sensitive info in summary
+- QA: Trick model into revealing private information
+- Dialogue: Manipulate conversation flow, inject harmful content
+- Code generation: Generate vulnerable code from benign description</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Information Bottleneck Problem</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The fundamental flaw in vanilla seq2seq: compress entire input sequence into 
+a single fixed-length vector. For a 100-word input, all information must fit 
+in 512-1024 dimensions. This is catastrophic information loss, especially for 
+long sequences.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Bottleneck Explanation</h3>
+<h4 class="sh3">The Problem</h4>
+<p class="prose">Input: &quot;The quick brown fox jumps over the lazy dog yesterday&quot; (10 words)
+Context vector: Single vector c ∈ ℝ⁵¹²
+
+ALL information about these 10 words must be encoded in 512 numbers!</p>
+<h4 class="sh3">Information Theory Perspective</h4>
+<h4 class="sh3">Input Information</h4>
+<p class="prose">10 words × log₂(vocab_size) bits
+Example: 10 × log₂(50,000) ≈ 10 × 15.6 = 156 bits</p>
+<h4 class="sh3">Context Capacity</h4>
+<p class="prose">512 dimensions × bits per dimension
+With 32-bit floats: 512 × 32 = 16,384 bits (theoretically enough)</p>
+<h4 class="sh3">Real Capacity</h4>
+<p class="prose">But: neural networks don&#x27;t use capacity efficiently
+Learned representations are redundant, not optimal encoding
+Effective capacity &lt;&lt; theoretical capacity</p>
+<h4 class="sh3">Length Dependency</h4>
+<h4 class="sh3">Short Sequences</h4>
+<h4 class="sh3">Length</h4>
+<p class="prose">5-10 words</p>
+<h4 class="sh3">Bottleneck</h4>
+<p class="prose">Manageable - context vector can encode</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Simple sentence translation works well</p>
+<h4 class="sh3">Medium Sequences</h4>
+<h4 class="sh3">Length</h4>
+<p class="prose">20-50 words</p>
+<h4 class="sh3">Bottleneck</h4>
+<p class="prose">Noticeable - performance degrades</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Longer sentences: translation quality drops</p>
+<h4 class="sh3">Long Sequences</h4>
+<h4 class="sh3">Length</h4>
+<p class="prose">100+ words</p>
+<h4 class="sh3">Bottleneck</h4>
+<p class="prose">Catastrophic - information lost</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Paragraph translation: coherence breaks down</p>
+<h3 class="sh3">Empirical Demonstration</h3>
+<h4 class="sh3">Translation Quality Vs Length</h4>
+<h4 class="sh3">Experiment</h4>
+<p class="prose">Train seq2seq on translation, test on various lengths</p>
+<h4 class="sh3">Results</h4>
+<h4 class="sh3">Short</h4>
+<p class="prose">Length 5-10: BLEU score ~30-35 (good)</p>
+<h4 class="sh3">Medium</h4>
+<p class="prose">Length 20-30: BLEU score ~20-25 (degrades)</p>
+<h4 class="sh3">Long</h4>
+<p class="prose">Length 50+: BLEU score ~10-15 (poor)</p>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Quality degrades drastically with length</p>
+<h4 class="sh3">Information Loss Visualization</h4>
+<h4 class="sh3">Concept</h4>
+<p class="prose">What does decoder remember from different input positions?
+
+Input: &quot;The cat sat on the mat in the room yesterday afternoon&quot;
+
+Position 1-3 (The cat sat): Well-encoded (recent in encoding)
+Position 8-9 (yesterday afternoon): Well-encoded (very recent)
+Position 4-7 (on the mat in): Poorly encoded (middle gets squashed)</p>
+<h4 class="sh3">Recency Bias</h4>
+<p class="prose">Final hidden state hₙ = context vector
+→ Most influenced by recent tokens
+→ Early tokens &quot;forgotten&quot; through many LSTM steps</p>
+<h3 class="sh3">Decoder Needs Different Context</h3>
+<h4 class="sh3">Key Insight</h4>
+<p class="prose">Each decoder step needs different parts of input</p>
+<h4 class="sh3">Translation Example</h4>
+<h4 class="sh3">English</h4>
+<p class="prose">The cat sat on the mat</p>
+<h4 class="sh3">French</h4>
+<p class="prose">Le chat s&#x27;est assis sur le tapis</p>
+<h4 class="sh3">Decoder Needs</h4>
+<h4 class="sh3">Step 1</h4>
+<p class="prose">Generate &#x27;Le&#x27; → needs &#x27;The&#x27;</p>
+<h4 class="sh3">Step 2</h4>
+<p class="prose">Generate &#x27;chat&#x27; → needs &#x27;cat&#x27;</p>
+<h4 class="sh3">Step 3</h4>
+<p class="prose">Generate &#x27;s&#x27;est assis&#x27; → needs &#x27;sat&#x27;</p>
+<h4 class="sh3">Step 4</h4>
+<p class="prose">Generate &#x27;sur&#x27; → needs &#x27;on&#x27;</p>
+<h4 class="sh3">Step 5</h4>
+<p class="prose">Generate &#x27;le tapis&#x27; → needs &#x27;the mat&#x27;</p>
+<h4 class="sh3">Problem With Fixed Context</h4>
+<p class="prose">Every decoder step gets SAME context vector c
+But each step needs DIFFERENT input information!
+
+Solution preview: Attention mechanism (Section 3.6)
+→ Decoder can &quot;look back&quot; at different encoder states per step</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Context Vector Analysis</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def analyze_context_bottleneck():
+    &quot;&quot;&quot;Demonstrate information bottleneck problem.&quot;&quot;&quot;
+    
+    # Simulate encoding sequences of different lengths
+    hidden_dim = 512  # Context vector dimension
+    embedding_dim = 128
+    
+    lengths = [5, 10, 20, 50, 100]
+    
+    print(&quot;=== Information Bottleneck Analysis ===\n&quot;)
+    
+    for length in lengths:
+        # Information in input
+        vocab_size = 50000
+        input_bits = length * np.log2(vocab_size)
+        
+        # Context capacity (theoretical)
+        context_bits = hidden_dim * 32  # 32-bit floats
+        
+        # Compression ratio
+        compression = input_bits / context_bits
+        
+        print(f&quot;Sequence length: {length} words&quot;)
+        print(f&quot;  Input information: {input_bits:.0f} bits&quot;)
+        print(f&quot;  Context capacity: {context_bits:.0f} bits&quot;)
+        print(f&quot;  Compression ratio: {compression:.2f}x&quot;)
+        
+        if compression &gt; 1:
+            print(f&quot;  ⚠️  INFORMATION LOSS: {compression:.1f}x compression required!&quot;)
+        else:
+            print(f&quot;  ✓  Theoretically sufficient capacity&quot;)
+        print()
+    
+    # Demonstrate recency bias
+    print(&quot;=== Recency Bias in Context Vector ===\n&quot;)
+    
+    # Simulate: how much does each input position contribute to context?
+    sequence_length = 20
+    
+    # Model: each LSTM step partially &quot;forgets&quot; previous state
+    forget_rate = 0.9  # 90% retention per step
+    
+    contributions = []
+    for pos in range(sequence_length):
+        # Position 0 (first word) goes through `sequence_length` steps
+        # Position n goes through `sequence_length - n` steps
+        steps_to_final = sequence_length - pos
+        contribution = forget_rate ** steps_to_final
+        contributions.append(contribution)
+    
+    print(&quot;Position → Contribution to final context vector:&quot;)
+    for pos, contrib in enumerate(contributions):
+        bar = &quot;█&quot; * int(contrib * 50)
+        print(f&quot;  Pos {pos:2d}: {bar} ({contrib:.3f})&quot;)
+    
+    print(&quot;\nObservation: Early positions contribute very little!&quot;)
+    print(&quot;This is the recency bias - context vector &#x27;forgets&#x27; early input.&quot;)
+
+analyze_context_bottleneck()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Position Based Attacks</h3>
+<p class="prose">Adversaries exploit fixed-context bottleneck:
+- Place malicious payloads at position 1-10 (early in sequence)
+- These positions get &quot;forgotten&quot; by encoder
+- Model doesn&#x27;t see the attack in context vector
+- Defense mechanisms scanning context miss the payload</p>
+<h3 class="sh3">Information Loss Exploitation</h3>
+<p class="prose">Adversaries know model loses information on long inputs:
+- Craft 100-word input where attack signal is in middle
+- Context vector can&#x27;t encode entire input → drops middle content
+- Attack evades detection because model never &quot;sees&quot; it properly
+- This is why context window size is security-relevant</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Why RNNs Struggle: Vanishing Gradients and Long-Range Dependencies</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Even with LSTMs/GRUs (designed to mitigate vanishing gradients), RNNs struggle 
+with long sequences. Gradients diminish exponentially over many timesteps, making 
+it hard to learn long-range dependencies. Sequential processing also prevents 
+parallelization, making training slow.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Vanishing Gradient Problem</h3>
+<h4 class="sh3">Issue</h4>
+<p class="prose">Gradients multiply through many timesteps → vanish or explode</p>
+<h4 class="sh3">Mathematical Explanation</h4>
+<p class="prose">Backpropagation through time (BPTT):
+
+∂Loss/∂h₀ = ∂Loss/∂hₙ × ∂hₙ/∂hₙ₋₁ × ... × ∂h₁/∂h₀
+
+Each factor ∂hₜ/∂hₜ₋₁ involves weight matrix W:
+
+If ||W|| &lt; 1: gradients vanish (→ 0)
+If ||W|| &gt; 1: gradients explode (→ ∞)
+
+Over n steps: gradient ~ W^n → vanishes exponentially</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Early timesteps receive tiny gradients
+→ Model can&#x27;t learn long-range dependencies
+→ Only recent context affects predictions</p>
+<h4 class="sh3">Lstm Solution And Limitations</h4>
+<h4 class="sh3">What Lstm Does</h4>
+<p class="prose">Gating mechanisms preserve gradients better</p>
+<h4 class="sh3">Gate Equations</h4>
+<p class="prose">Forget gate: f = σ(W_f × [h_t-1, x_t])
+Input gate: i = σ(W_i × [h_t-1, x_t])
+Cell state: c_t = f ⊙ c_t-1 + i ⊙ tanh(W_c × [h_t-1, x_t])
+
+Cell state c_t has &quot;highway&quot; connection: c_t-1 → c_t
+→ Gradients can flow without multiplying by W repeatedly</p>
+<h4 class="sh3">Improvement</h4>
+<p class="prose">LSTMs handle ~100-200 timesteps (vs ~10 for vanilla RNN)</p>
+<h4 class="sh3">Limitations</h4>
+<ul class="blist"><li>Still degrade on 500+ timesteps</li><li>Forget gate can still block gradients</li><li>Sequential processing = slow</li></ul>
+<h3 class="sh3">Long Range Dependency Examples</h3>
+<h4 class="sh3">Subject Verb Agreement</h4>
+<h4 class="sh3">Sentence</h4>
+<p class="prose">The keys to the cabinet are on the table</p>
+<h4 class="sh3">Dependency</h4>
+<p class="prose">&#x27;keys&#x27; (position 1) determines &#x27;are&#x27; (position 6)</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">6-step dependency - RNN struggles to maintain &#x27;keys&#x27; in memory</p>
+<h4 class="sh3">Coreference Resolution</h4>
+<h4 class="sh3">Text</h4>
+<p class="prose">John went to the store. He bought milk. It was fresh.</p>
+<h4 class="sh3">Dependencies</h4>
+<ul class="blist"><li>&#x27;He&#x27; (sent 2) refers to &#x27;John&#x27; (sent 1)</li><li>&#x27;It&#x27; (sent 3) refers to &#x27;milk&#x27; (sent 2)</li></ul>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Cross-sentence dependencies require remembering distant context</p>
+<h4 class="sh3">Sentiment Flip</h4>
+<h4 class="sh3">Positive Start</h4>
+<p class="prose">This movie was fantastic, the acting was great, but...</p>
+<h4 class="sh3">Negative End</h4>
+<p class="prose">...the ending ruined everything. Terrible waste of time.</p>
+<h4 class="sh3">Dependency</h4>
+<p class="prose">&#x27;but&#x27; (middle) flips entire sentiment</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Must remember &#x27;but&#x27; to correctly classify final sentiment</p>
+<h3 class="sh3">Sequential Processing Bottleneck</h3>
+<h4 class="sh3">Constraint</h4>
+<p class="prose">RNNs must process tokens sequentially (t → t+1 → t+2 → ...)</p>
+<h4 class="sh3">Computational Cost</h4>
+<h4 class="sh3">Cannot Parallelize</h4>
+<p class="prose">Must wait for h_t before computing h_t+1</p>
+<h4 class="sh3">Gpu Underutilization</h4>
+<p class="prose">GPUs excel at parallel computation, RNNs don&#x27;t exploit this</p>
+<h4 class="sh3">Training Time</h4>
+<p class="prose">Sequence of length n requires n sequential steps</p>
+<h4 class="sh3">Contrast With Transformers</h4>
+<p class="prose">Transformers (Section 3.6+): All positions computed in parallel
+→ 100x speedup for long sequences
+→ Why transformers replaced RNNs for LLMs</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Gradient Flow Demonstration</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_vanishing_gradients():
+    &quot;&quot;&quot;Show how gradients vanish through RNN timesteps.&quot;&quot;&quot;
+    
+    print(&quot;=== Vanishing Gradient Demonstration ===\n&quot;)
+    
+    # Simulate gradient backprop through timesteps
+    weight_norms = [0.9, 1.0, 1.1]  # Different weight magnitudes
+    sequence_lengths = [10, 50, 100, 200]
+    
+    for W_norm in weight_norms:
+        print(f&quot;Weight matrix norm: {W_norm}&quot;)
+        
+        for seq_len in sequence_lengths:
+            # Gradient magnitude after seq_len steps
+            # Simplification: gradient ~ W^seq_len
+            gradient_magnitude = W_norm ** seq_len
+            
+            print(f&quot;  Length {seq_len:3d}: gradient magnitude = {gradient_magnitude:.2e}&quot;)
+            
+            if gradient_magnitude &lt; 1e-6:
+                print(f&quot;             ⚠️  VANISHED (&lt; 10⁻⁶)&quot;)
+            elif gradient_magnitude &gt; 1e6:
+                print(f&quot;             ⚠️  EXPLODED (&gt; 10⁶)&quot;)
+        print()
+    
+    print(&quot;\nObservation:&quot;)
+    print(&quot;  - ||W|| &lt; 1: Gradients vanish exponentially&quot;)
+    print(&quot;  - ||W|| &gt; 1: Gradients explode exponentially&quot;)
+    print(&quot;  - ||W|| = 1: Gradients preserved (rare in practice)&quot;)
+    
+    # LSTM improvement
+    print(&quot;\n=== LSTM Gradient Flow ===\n&quot;)
+    print(&quot;LSTM uses cell state &#x27;highway&#x27;:&quot;)
+    print(&quot;  c_t = f_t ⊙ c_(t-1) + i_t ⊙ c̃_t&quot;)
+    print(&quot;&quot;)
+    print(&quot;If forget gate f_t ≈ 1:&quot;)
+    print(&quot;  c_t ≈ c_(t-1) + update&quot;)
+    print(&quot;  → Gradients can flow without multiplying by W&quot;)
+    print(&quot;&quot;)
+    print(&quot;Result: LSTMs handle ~100-200 steps (vs ~10 for vanilla RNN)&quot;)
+    print(&quot;But still degrade on 500+ steps!&quot;)
+
+demonstrate_vanishing_gradients()</code></pre>
+<h3 class="sh3">Long Range Dependency Test</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def test_long_range_dependency():
+    &quot;&quot;&quot;Test RNN&#x27;s ability to remember distant information.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Long-Range Dependency Test ===\n&quot;)
+    
+    # Task: Remember first token through sequence
+    # Sequence: [important_token, noise, noise, ..., noise, query]
+    
+    sequence_lengths = [10, 50, 100, 200]
+    
+    print(&quot;Task: Remember first token, predict at end&quot;)
+    print(&quot;Sequence: [SIGNAL, noise, noise, ..., PREDICT_SIGNAL]\n&quot;)
+    
+    for seq_len in sequence_lengths:
+        # Simulate: probability of remembering decays exponentially
+        forget_rate = 0.95  # 5% forgotten per step
+        memory_retention = forget_rate ** seq_len
+        
+        print(f&quot;Length {seq_len:3d}: memory retention = {memory_retention:.4f}&quot;)
+        
+        if memory_retention &lt; 0.1:
+            print(f&quot;           ⚠️  Signal mostly forgotten (&lt; 10% retained)&quot;)
+    
+    print(&quot;\nConclusion: RNNs struggle to remember information&quot;)
+    print(&quot;across 100+ timesteps, even with LSTMs.&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Gradient Based Attacks</h3>
+<p class="prose">Understanding gradient flow enables adversarial attacks:
+- Craft inputs that cause gradients to vanish during attack detection
+- Place adversarial patterns at positions with weak gradient flow
+- Model updates don&#x27;t properly learn to detect these patterns</p>
+<h3 class="sh3">Long Range Context Attacks</h3>
+<p class="prose">Adversaries exploit RNN&#x27;s limited memory:
+- Place attack setup at position 1-10
+- Place trigger at position 100+
+- RNN &quot;forgets&quot; the setup by the time trigger arrives
+- Attack executes because model can&#x27;t connect distant dependencies</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">4</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Motivating Attention: What If Decoder Could Look Back?</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The solution to seq2seq&#x27;s bottleneck: let the decoder access ALL encoder hidden 
+states, not just the final one. At each decoder step, compute which encoder states 
+are most relevant and use them. This is the attention mechanism - the innovation 
+that enabled transformers and modern LLMs.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">The Key Insight</h3>
+<h4 class="sh3">Problem Recap</h4>
+<p class="prose">Vanilla seq2seq: decoder gets single context vector c = h_n
+→ All input information compressed into one vector
+→ Different decoder steps need different input parts</p>
+<h4 class="sh3">Solution Idea</h4>
+<p class="prose">What if decoder could &quot;look back&quot; at all encoder states?
+→ Encoder produces: h₁, h₂, ..., h_n (all states, not just final)
+→ Decoder at step t: compute relevance of each h_i to current generation
+→ Attention: weighted sum of encoder states based on relevance</p>
+<h4 class="sh3">Analogy</h4>
+<p class="prose">Reading comprehension:
+- Question: &quot;What color is the cat?&quot;
+- Passage: &quot;The quick brown fox jumps over the lazy cat. The cat is gray.&quot;
+
+Human reading: Focus on &quot;cat is gray&quot; (relevant to question)
+Attention mechanism: Compute which parts of passage to focus on</p>
+<h3 class="sh3">Attention Mechanism Preview</h3>
+<h4 class="sh3">High Level Process</h4>
+<h4 class="sh3">Step 1</h4>
+<p class="prose">Encoder produces states: [h₁, h₂, ..., h_n]</p>
+<h4 class="sh3">Step 2</h4>
+<p class="prose">At decoder step t with state s_t, compute attention scores:</p>
+<h4 class="sh3">Step 3</h4>
+<p class="prose">  score(s_t, h_i) = how relevant is h_i to current generation?</p>
+<h4 class="sh3">Step 4</h4>
+<p class="prose">Normalize scores to weights: α_ti = softmax(scores)</p>
+<h4 class="sh3">Step 5</h4>
+<p class="prose">Context vector: c_t = Σ α_ti × h_i (weighted sum)</p>
+<h4 class="sh3">Step 6</h4>
+<p class="prose">Use c_t (dynamic context) instead of fixed c</p>
+<h4 class="sh3">Key Difference</h4>
+<h4 class="sh3">Vanilla Seq2Seq</h4>
+<p class="prose">c = h_n (fixed for all decoder steps)</p>
+<h4 class="sh3">Attention Seq2Seq</h4>
+<p class="prose">c_t = attention(s_t, [h₁, ..., h_n]) (dynamic per step)</p>
+<h4 class="sh3">Benefits</h4>
+<h4 class="sh3">Benefit 1</h4>
+<p class="prose">No information bottleneck - all encoder states accessible</p>
+<h4 class="sh3">Benefit 2</h4>
+<p class="prose">Decoder focuses on relevant parts of input</p>
+<h4 class="sh3">Benefit 3</h4>
+<p class="prose">Handles long sequences better (no compression needed)</p>
+<h4 class="sh3">Benefit 4</h4>
+<p class="prose">Attention weights interpretable (see what model focuses on)</p>
+<h3 class="sh3">Alignment In Translation</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Attention solves alignment problem in translation</p>
+<h4 class="sh3">Example</h4>
+<h4 class="sh3">English</h4>
+<p class="prose">The cat sat on the mat</p>
+<h4 class="sh3">French</h4>
+<p class="prose">Le chat s&#x27;est assis sur le tapis</p>
+<h4 class="sh3">Alignment</h4>
+<ul class="blist"><li>&#x27;Le&#x27; aligns with &#x27;The&#x27;</li><li>&#x27;chat&#x27; aligns with &#x27;cat&#x27;</li><li>&#x27;s&#x27;est assis&#x27; aligns with &#x27;sat&#x27;</li><li>&#x27;sur&#x27; aligns with &#x27;on&#x27;</li><li>&#x27;le tapis&#x27; aligns with &#x27;the mat&#x27;</li></ul>
+<h4 class="sh3">Vanilla Seq2Seq Problem</h4>
+<p class="prose">Fixed context c contains &quot;the cat sat on the mat&quot; all mixed together
+When generating &quot;chat&quot;, can&#x27;t specifically access &quot;cat&quot; information</p>
+<h4 class="sh3">Attention Solution</h4>
+<p class="prose">When generating &quot;chat&quot;, attention mechanism:
+1. Looks at all encoder states [h_the, h_cat, h_sat, ...]
+2. Computes relevance: h_cat has highest relevance to current generation
+3. Focuses on h_cat (high weight α) when generating &quot;chat&quot;
+
+Result: Model learns alignment automatically!</p>
+<h3 class="sh3">Why Attention Changes Everything</h3>
+<h4 class="sh3">Computational Perspective</h4>
+<h4 class="sh3">Rnn Seq2Seq</h4>
+<p class="prose">O(n) sequential operations (n = sequence length)</p>
+<h4 class="sh3">Attention Seq2Seq</h4>
+<p class="prose">O(1) parallel operations per position</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">100x speedup on long sequences</p>
+<h4 class="sh3">Modeling Perspective</h4>
+<h4 class="sh3">Rnn Seq2Seq</h4>
+<p class="prose">Limited memory through sequential processing</p>
+<h4 class="sh3">Attention Seq2Seq</h4>
+<p class="prose">Direct access to all positions (no memory limit)</p>
+<h4 class="sh3">Consequence</h4>
+<p class="prose">Handles much longer contexts (1000+ tokens)</p>
+<h4 class="sh3">Architectural Perspective</h4>
+<h4 class="sh3">Rnn Seq2Seq</h4>
+<p class="prose">Foundation: recurrence</p>
+<h4 class="sh3">Attention Seq2Seq</h4>
+<p class="prose">Foundation: attention</p>
+<h4 class="sh3">Evolution</h4>
+<p class="prose">Attention → Self-attention → Transformers → BERT/GPT</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Attention Motivation Visualization</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_attention_motivation():
+    &quot;&quot;&quot;Demonstrate why attention is needed.&quot;&quot;&quot;
+    
+    print(&quot;=== Attention Mechanism Motivation ===\n&quot;)
+    
+    # Example translation
+    english = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;the&quot;, &quot;mat&quot;]
+    french = [&quot;Le&quot;, &quot;chat&quot;, &quot;s&#x27;est&quot;, &quot;assis&quot;, &quot;sur&quot;, &quot;le&quot;, &quot;tapis&quot;]
+    
+    print(&quot;Translation task:&quot;)
+    print(f&quot;  English: {&#x27; &#x27;.join(english)}&quot;)
+    print(f&quot;  French:  {&#x27; &#x27;.join(french)}&quot;)
+    print()
+    
+    # Show what each French word should attend to
+    alignments = [
+        (&quot;Le&quot;, [&quot;The&quot;], &quot;Article translation&quot;),
+        (&quot;chat&quot;, [&quot;cat&quot;], &quot;Direct noun translation&quot;),
+        (&quot;s&#x27;est assis&quot;, [&quot;sat&quot;], &quot;Verb + auxiliary&quot;),
+        (&quot;sur&quot;, [&quot;on&quot;], &quot;Preposition translation&quot;),
+        (&quot;le tapis&quot;, [&quot;the&quot;, &quot;mat&quot;], &quot;Article + noun&quot;),
+    ]
+    
+    print(&quot;Ideal attention (what French word should focus on):&quot;)
+    for french_word, english_words, description in alignments:
+        print(f&quot;  &#x27;{french_word}&#x27; should attend to: {english_words}&quot;)
+        print(f&quot;    → {description}&quot;)
+    print()
+    
+    print(&quot;Problem with vanilla seq2seq:&quot;)
+    print(&quot;  All decoder steps get SAME context vector c&quot;)
+    print(&quot;  → Can&#x27;t dynamically focus on different input parts&quot;)
+    print()
+    
+    print(&quot;Solution with attention:&quot;)
+    print(&quot;  Each decoder step computes its own context c_t&quot;)
+    print(&quot;  → Focuses on relevant encoder states dynamically&quot;)
+    print(&quot;  → &#x27;chat&#x27; focuses on h_cat, &#x27;s&#x27;est assis&#x27; focuses on h_sat&quot;)
+    print()
+    
+    # Simulate attention weights
+    print(&quot;Example attention weights when generating &#x27;chat&#x27;:&quot;)
+    attention_weights = {
+        &quot;The&quot;: 0.05,
+        &quot;cat&quot;: 0.80,  # High attention!
+        &quot;sat&quot;: 0.05,
+        &quot;on&quot;: 0.02,
+        &quot;the&quot;: 0.03,
+        &quot;mat&quot;: 0.05
+    }
+    
+    for word, weight in attention_weights.items():
+        bar = &quot;█&quot; * int(weight * 50)
+        print(f&quot;  {word:6s}: {bar} ({weight:.2f})&quot;)
+    
+    print(&quot;\n→ Model learns to focus on &#x27;cat&#x27; when generating &#x27;chat&#x27;!&quot;)
+
+visualize_attention_motivation()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Attention As Transparency</h3>
+<p class="prose">Attention weights are interpretable:
+- Can visualize which input positions model focuses on
+- Helps detect if model focuses on adversarial triggers
+- Enables explainable AI for security decisions
+- But: attention weights can be manipulated by adversaries</p>
+<h3 class="sh3">Attention Creates New Attacks</h3>
+<p class="prose">Attention mechanism itself becomes attack surface:
+- Adversarial attention: craft inputs that manipulate attention weights
+- Force model to focus on wrong parts of input
+- Attention pattern extraction leaks information
+- We&#x27;ll explore these in Section 3.6 and beyond</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Seq2seq uses encoder-decoder to map variable-length inputs to outputs</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Standard architecture for translation, summarization, QA before transformers</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Fixed-length context vector creates information bottleneck</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Catastrophic information loss on long sequences (100+ tokens)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">RNNs struggle with long-range dependencies despite LSTM improvements</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Vanishing gradients limit memory to ~100-200 steps</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Different decoder steps need different input context</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Fixed context can&#x27;t provide step-specific information</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Attention lets decoder &#x27;look back&#x27; at all encoder states dynamically</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Solves bottleneck, enables transformers, foundation of modern LLMs</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement vanilla seq2seq encoder-decoder</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Encode sequence to context vector, decode to output</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Analyze context vector information capacity</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Demonstrate compression ratio increases with sequence length</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Test performance degradation on long sequences</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Show quality drops as length increases</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Visualize how different decoder steps need different context</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Translation alignment example shows step-specific needs</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Information bottleneck creates position-based attack vectors</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversaries place payloads where encoder &#x27;forgets&#x27; them</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">RNN memory limitations enable long-range context attacks</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Split attack across distant positions model can&#x27;t connect</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Sequential processing limits defense computation budget</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Slow RNN inference means simple defense mechanisms only</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Attention improves security (transparency) and creates risks (new attacks)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Attention weights are interpretable but also manipulable</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Assuming RNNs handle arbitrarily long sequences</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">LSTMs degrade after ~100-200 steps, plan accordingly</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not considering information bottleneck in security analysis</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Model may not &#x27;see&#x27; parts of long inputs - test position-based attacks</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Ignoring recency bias in context vectors</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Early input positions contribute less to context - security risk</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using seq2seq for tasks requiring long-range dependencies</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use transformers with attention for &gt;100 token contexts</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Chapter 2</h3>
+<ul class="blist"><li>RNNs, LSTMs, GRUs (recurrent architectures)</li><li>Backpropagation through time</li><li>Vanishing gradient problem</li></ul>
+<h3 class="sh3">From Sections 3 1 To 3 4</h3>
+<ul class="blist"><li>Word embeddings as encoder/decoder inputs</li><li>Language modeling objective</li><li>Vocabulary and tokenization</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.6: Attention mechanism deep dive</li><li>Query, Key, Value formulation</li><li>Attention as differentiable memory access</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Attention mechanism: weighted sum over encoder states</li><li>Scaled dot-product attention</li><li>Multi-head attention (parallel attention pathways)</li><li>Self-attention (attention within same sequence)</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement attention mechanism from scratch</li><li>Compute attention weights and context vectors</li><li>Visualize attention patterns</li><li>Build transformer with self-attention</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Sequence-to-sequence models with RNN encoder-decoders were the standard for NLP 
+tasks before 2017. But they have fundamental limitations: the fixed-length context 
+vector bottleneck causes catastrophic information loss on long sequences, and RNNs 
+struggle with long-range dependencies despite LSTM improvements.
+
+The key insight: different decoder steps need different parts of the input. A 
+fixed context vector can&#x27;t provide step-specific information. The solution: let 
+the decoder &quot;look back&quot; at all encoder hidden states and dynamically compute 
+which states are relevant at each step. This is the attention mechanism.
+
+Attention solves the bottleneck problem and enables much longer contexts (1000+ 
+tokens vs 100-200 for RNNs). It also provides interpretability - attention weights 
+show what the model focuses on. This transparency helps security (can detect 
+adversarial patterns) but also creates new attack surfaces (attention weights 
+themselves can be manipulated).
+
+From a security perspective: understanding seq2seq limitations reveals position-based 
+attack vectors. Adversaries exploit the bottleneck by placing payloads where the 
+encoder &quot;forgets&quot; them, or split attacks across distant positions that RNNs can&#x27;t 
+connect. Attention mechanisms improve but also change the attack surface.
+
+Next: Section 3.6 dives deep into attention - the mechanism that revolutionized 
+NLP and enabled transformers, BERT, GPT, and modern LLMs.</p>
+</article>

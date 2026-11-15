@@ -1,0 +1,879 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 4 · Section 6 · ~6 pages</div>
+<h1>Supervised Fine-Tuning (SFT) and Instruction Tuning</h1>
+<div class="tags"><span class="tag">sft</span><span class="tag">instruction-tuning</span><span class="tag">fine-tuning</span><span class="tag">lora</span><span class="tag">qlora</span><span class="tag">catastrophic-forgetting</span><span class="tag">backdoor-injection</span><span class="tag">dataset-quality</span><span class="tag">parameter-efficient</span><span class="tag">security-implications</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Supervised Fine-Tuning (SFT) is the first step that converts a raw pre-trained
+language model into something usable as an assistant. It is also the most common
+point of intervention in the LLM deployment pipeline — and therefore one of the
+most important attack surfaces a security engineer will encounter in practice.
+
+Every enterprise that deploys a customized LLM does so through fine-tuning. Every
+open-source model that gets adapted for a specific domain goes through fine-tuning.
+Every attempt to create an &quot;uncensored&quot; version of an aligned model uses fine-tuning.
+Understanding SFT mechanics is not academic — it directly determines the security
+properties of the models you will be asked to audit, deploy, and defend.
+
+This section covers the full SFT pipeline: dataset construction (where most
+security decisions live), training mechanics (where backdoors get injected),
+parameter-efficient methods like LoRA and QLoRA (which change the attack surface
+geometry), catastrophic forgetting (the mechanism behind alignment reversal), and
+what the security engineer needs to verify before deploying any fine-tuned model.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 6 of 17 content sections. Third and final section in the alignment arc
+(4-6). Section 4 covered Constitutional AI. Section 5 covered RLHF. This section
+covers SFT — the prerequisite stage before RLHF that is itself a major deployment
+pattern. After this section, the alignment arc is complete and we shift to the
+training pipeline (Section 7: pre-training) and inference optimization (Sections 8-10).</p>
+<h3 class="sh2">Prerequisites</h3>
+<ul class="blist"><li>Section 04_05: RLHF mechanics — SFT is Stage 1 of the RLHF pipeline</li><li>Section 04_04: Constitutional AI — CAI Phase 1 is SFT on AI-revised outputs</li><li>Chapter 1, Section 9: Loss functions — SFT uses cross-entropy loss</li><li>Chapter 1, Section 14: Regularization — catastrophic forgetting is related</li><li>Chapter 2, Section 6: Backpropagation — SFT training mechanics</li></ul>
+<h3 class="sh2">What You Will Build</h3>
+<h3 class="sh3">Primary</h3>
+<p class="prose">Fine-tune GPT-2 on a custom instruction dataset using LoRA</p>
+<h3 class="sh3">Secondary</h3>
+<ul class="blist"><li>Dataset quality evaluator: score instruction datasets for coverage and safety</li><li>Catastrophic forgetting measurer: quantify capability loss after fine-tuning</li><li>Fine-tuning backdoor injector: insert trigger behavior (for detection research)</li><li>Safety regression test suite: verify fine-tuned model retains safety properties</li></ul>
+<h3 class="sh3">Notebooks</h3>
+<ul class="blist"><li>03-llm-internals/sft_instruction_tuning.ipynb</li><li>03-llm-internals/lora_finetuning.ipynb</li><li>03-llm-internals/sft_backdoor_research.ipynb</li></ul>
+<h2 class="sh1">Content</h2>
+<h3 class="sh2">Subsection 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">From Pre-Trained Model to Instruction Follower</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">The Pre Training Gap</h3>
+<p class="prose">A pre-trained language model trained on next-token prediction does not know
+how to be an assistant. Given the prompt:
+  &quot;What is the capital of France?&quot;
+A pre-trained model is equally likely to continue with:
+  &quot;Paris. The Seine river flows through it...&quot;  (helpful answer)
+  &quot;What is the capital of Germany?&quot;             (continuing a quiz)
+  &quot;Answers: 1. Paris  2. London  3. Berlin...&quot;  (completing an answer key)
+  &quot;The capital of France is a common trivia...&quot;  (meta-commentary)
+
+All of these are plausible continuations of text patterns seen during pre-training.
+The model has no concept of &quot;question to be answered&quot; vs &quot;text to be continued.&quot;
+It is a text completion engine, not a question-answering system.</p>
+<h3 class="sh3">What Sft Teaches</h3>
+<p class="prose">SFT teaches the model to recognize and respond to the instruction format.
+Training on thousands of (prompt, response) pairs where the response is
+the appropriate assistant behavior, the model learns:
+
+  1. Instruction recognition: &quot;When the input looks like a question or task,
+     the expected output is an answer or task completion.&quot;
+
+  2. Format adoption: &quot;Assistant responses have a specific style — direct,
+     helpful, formatted appropriately for the request type.&quot;
+
+  3. Role assumption: &quot;I am the assistant. I should respond, not continue
+     the conversation as a third-party narrator.&quot;
+
+  4. Basic safety: &quot;Some requests should be declined. Declines have a
+     specific format: acknowledge, explain briefly, optionally redirect.&quot;</p>
+<h3 class="sh3">Sft Vs Rlhf Division Of Labor</h3>
+<p class="prose">SFT and RLHF serve different functions:
+
+  SFT: teaches the format and basic behaviors through demonstration
+       &quot;Here is what a good response looks like&quot;
+       Fast, relatively cheap, produces capable assistant behavior
+
+  RLHF: refines the quality of responses through preference optimization
+        &quot;Of these two responses, this one is better because...&quot;
+        Slower, more expensive, addresses nuance and edge cases
+
+The division matters for security: SFT establishes the behavioral foundation
+that RLHF refines. Attacks on the SFT dataset affect everything downstream —
+RLHF trains on top of the SFT model, so SFT compromises propagate forward.</p>
+<h3 class="sh3">When Sft Alone Is Deployed</h3>
+<p class="prose">Not all production LLMs go through RLHF. Many enterprise deployments use
+SFT-only fine-tuned models because:
+  - RLHF requires more compute and engineering
+  - SFT is sufficient for narrowly-scoped tasks (classification, extraction)
+  - Open-source fine-tuned models (Alpaca, Vicuna, Mistral Instruct) use SFT
+
+Security implication: SFT-only models have the safety properties of their
+SFT dataset — nothing more. Without RLHF, there is no reward-based optimization
+for harmlessness. The model refuses harmful requests only if the SFT dataset
+explicitly demonstrated refusals for similar requests.</p>
+<h3 class="sh2">Subsection 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Instruction Datasets: Where SFT Security Decisions Are Made</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Major Public Datasets</h3>
+<h4 class="sh3">Flan</h4>
+<h4 class="sh3">Name</h4>
+<p class="prose">FLAN (Fine-tuned Language Net)</p>
+<h4 class="sh3">Source</h4>
+<p class="prose">Google</p>
+<h4 class="sh3">Size</h4>
+<p class="prose">~1.8M instructions across 62 NLP datasets</p>
+<h4 class="sh3">Construction</h4>
+<p class="prose">Existing NLP benchmarks converted to instruction format</p>
+<h4 class="sh3">Strengths</h4>
+<p class="prose">Diverse tasks, high quality, well-studied</p>
+<h4 class="sh3">Limitations</h4>
+<p class="prose">Academic task distribution, limited open-ended conversation</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">Well-studied means well-understood attack surface</p>
+<h4 class="sh3">Alpaca</h4>
+<h4 class="sh3">Name</h4>
+<p class="prose">Stanford Alpaca</p>
+<h4 class="sh3">Size</h4>
+<p class="prose">52,000 instructions</p>
+<h4 class="sh3">Construction</h4>
+<p class="prose">Self-instruct: GPT-3 generates instructions from 175 seed examples</p>
+<h4 class="sh3">Strengths</h4>
+<p class="prose">Cheap to generate, covers diverse topics</p>
+<h4 class="sh3">Limitations</h4>
+<p class="prose">Hallucinations inherited from GPT-3, no safety curation</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">Alpaca&#x27;s self-instruct generation means quality is GPT-3-limited.
+Hallucinations in the dataset become model hallucinations after SFT.
+Multiple researchers documented factual errors and harmful content
+in the original dataset.</p>
+<h4 class="sh3">Sharegpt</h4>
+<h4 class="sh3">Name</h4>
+<p class="prose">ShareGPT</p>
+<h4 class="sh3">Size</h4>
+<p class="prose">~90,000 conversations</p>
+<h4 class="sh3">Construction</h4>
+<p class="prose">Users share their ChatGPT conversations via a browser extension</p>
+<h4 class="sh3">Strengths</h4>
+<p class="prose">Real user interactions, diverse natural prompts</p>
+<h4 class="sh3">Limitations</h4>
+<p class="prose">User-contributed = unvetted, includes personal information, potential PII, varied quality</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">ShareGPT contains conversations users chose to share publicly — but
+may include inadvertent PII, proprietary information, or harmful examples
+that users found entertaining or interesting. Training on ShareGPT may
+teach models to reproduce these patterns.</p>
+<h4 class="sh3">Openhermes</h4>
+<h4 class="sh3">Name</h4>
+<p class="prose">OpenHermes, Dolphin, WizardLM datasets</p>
+<h4 class="sh3">Construction</h4>
+<p class="prose">Synthetic generation from more capable models (GPT-4)</p>
+<h4 class="sh3">Size</h4>
+<p class="prose">Hundreds of thousands to millions of instructions</p>
+<h4 class="sh3">Strengths</h4>
+<p class="prose">High apparent quality due to GPT-4 generation</p>
+<h4 class="sh3">Limitations</h4>
+<p class="prose">GPT-4&#x27;s biases and errors propagate; limited real user diversity</p>
+<h4 class="sh3">Security Note</h4>
+<p class="prose">GPT-4-generated datasets are used to fine-tune models specifically to
+be less restricted than RLHF-trained models. &quot;Uncensored&quot; model variants
+(Dolphin-Mistral, etc.) are trained primarily on these datasets with
+safety-relevant examples removed.</p>
+<h3 class="sh3">Dataset Quality Dimensions</h3>
+<h4 class="sh3">Coverage</h4>
+<p class="prose">Does the dataset cover the distribution of tasks the deployed model will encounter?
+Gaps in coverage = gaps in capability and safety.
+
+Security coverage specifically: does the dataset include examples of:
+  - Refusing clearly harmful requests (with appropriate refusal format)
+  - Handling ambiguous requests that require judgment
+  - Recognizing social engineering attempts
+  - Responding appropriately to edge cases in the target domain
+
+A customer service fine-tuning dataset that never includes examples of
+harmful requests will produce a model with no learned refusal behavior
+for that deployment context.</p>
+<h4 class="sh3">Label Quality</h4>
+<p class="prose">Are the response examples actually good? Errors in SFT training data become
+model behaviors. A dataset with 5% subtly wrong responses produces a model
+with ~5% subtly wrong behaviors — distributed across the capability range.
+
+Label quality failures:
+  - Factual errors (wrong information presented confidently)
+  - Subtle harmful content (harmful advice framed helpfully)
+  - Format inconsistencies (model learns multiple conflicting formats)
+  - Safety demonstration gaps (incomplete refusals, partial compliance)</p>
+<h4 class="sh3">Diversity</h4>
+<p class="prose">Diverse datasets produce more robust models. Low diversity means the model
+generalizes poorly to inputs outside the training distribution.
+
+Security implication: low-diversity datasets produce models that behave
+predictably for a narrow range of inputs and unexpectedly for everything else.
+Adversarial inputs are by definition outside the training distribution —
+low-diversity training makes adversarial inputs more effective.</p>
+<h3 class="sh3">Dataset As Primary Attack Surface</h3>
+<p class="prose">The SFT dataset is the highest-leverage attack surface in the fine-tuning pipeline.
+Modifying model weights requires access to training infrastructure. Modifying
+training data requires access to data pipelines — a much lower bar, especially for:
+  - Open-source community datasets (anyone can submit pull requests)
+  - Synthetic datasets generated from external APIs (API poisoning)
+  - Datasets assembled from web scraping (web content poisoning)
+  - Enterprise datasets assembled from internal documents (insider threat)
+
+A dataset with 1% adversarial examples reliably trains in adversarial behaviors.
+At 52,000 examples (Alpaca scale), 1% = 520 adversarial examples — achievable
+by a single motivated attacker with API access.</p>
+<h3 class="sh2">Subsection 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">SFT Training: Loss, Masking, and What the Model Actually Learns</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Training Objective</h3>
+<p class="prose">SFT training uses standard cross-entropy loss on the response tokens:
+
+  L_SFT = -Σ log P(y_t | x, y_&lt;t)
+
+Where:
+  x = instruction/prompt tokens
+  y = response tokens
+  y_&lt;t = response tokens generated before position t
+
+Critical detail: loss is computed ONLY on response tokens, not on prompt tokens.
+The prompt tokens are included in the input for context but are masked in the
+loss computation. This teaches the model to generate responses, not to
+reproduce prompts.</p>
+<h3 class="sh3">Loss Masking Implementation</h3>
+<p class="prose">In practice, the full (prompt + response) sequence is tokenized together.
+A label mask is created where:
+  - Prompt tokens: label = -100 (PyTorch&#x27;s ignore index — excluded from loss)
+  - Response tokens: label = actual token ID (included in loss)
+
+Code sketch:
+  prompt_length = len(tokenize(prompt))
+  labels = [-100] * prompt_length + tokenize(response)
+  # CrossEntropyLoss automatically skips positions where label == -100
+
+Security implication of loss masking:
+  The model sees the full prompt during training but only learns to reproduce
+  the response. This means subtle biases in prompt formatting are not learned
+  directly — but they shape the context in which responses are learned.
+  A dataset where harmful prompts consistently use specific formatting will
+  produce a model that associates that formatting with harmful-adjacent behaviors,
+  even without explicit prompt loss.</p>
+<h3 class="sh3">Training Hyperparameters</h3>
+<p class="prose">Key SFT hyperparameters and their security implications:
+
+learning_rate:
+  typical_range: &quot;1e-5 to 5e-5 for full fine-tuning&quot;
+  too_high: &quot;Catastrophic forgetting — model forgets pre-training capabilities&quot;
+  too_low: &quot;SFT barely changes model behavior — minimal alignment improvement&quot;
+  security_note: &quot;High learning rate makes backdoor injection more effective
+                  (adversarial examples overwrite more of the model&#x27;s behavior)&quot;
+
+epochs:
+  typical_range: &quot;1-3 epochs for large datasets&quot;
+  too_many: &quot;Overfitting to SFT data, reduced generalization, memorization&quot;
+  too_few: &quot;Incomplete instruction following, inconsistent format adoption&quot;
+  security_note: &quot;Multiple epochs increase memorization of any injected backdoors&quot;
+
+batch_size:
+  typical_range: &quot;8-64 depending on GPU memory&quot;
+  effect: &quot;Larger batch = more stable gradients = more consistent behavior&quot;
+  security_note: &quot;Small batch sizes increase variance — adversarial examples
+                  have higher per-example impact on gradient direction&quot;
+
+warmup_steps:
+  purpose: &quot;Gradually increase learning rate from 0 to target&quot;
+  security_note: &quot;Skipping warmup causes early catastrophic forgetting of
+                  pre-training representations before SFT stabilizes&quot;</p>
+<h3 class="sh3">What Sft Changes In The Model</h3>
+<p class="prose">SFT does not uniformly change all model parameters. Empirical analysis shows:
+
+Most affected layers:
+  - Final transformer blocks (later layers specialize for output format)
+  - The language modeling head (output projection)
+  - Attention patterns in later layers (task-specific context weighting)
+
+Least affected layers:
+  - Early embedding layers (relatively stable across fine-tuning)
+  - Initial transformer blocks (retain pre-training knowledge representations)
+
+Security implication: alignment behaviors (safety refusals, format compliance)
+are concentrated in later layers. Early layers retain pre-training knowledge
+including any harmful patterns. Targeted attacks that specifically retrain later
+layers can remove alignment while preserving general capability — the fine-tuning
+reversal attack from Section 5.</p>
+<h3 class="sh2">Subsection 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">LoRA and QLoRA: Parameter-Efficient Fine-Tuning</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Why Parameter Efficient Matters</h3>
+<p class="prose">Full fine-tuning updates all model parameters — for a 7B parameter model,
+that means storing and updating 7B floating-point numbers with every gradient
+step. Memory requirement: ~28GB for weights (FP32) + optimizer states (~56GB
+for Adam) + gradients (~28GB) = ~112GB GPU memory minimum.
+
+For most practitioners (including most security researchers), this is not
+feasible. A single A100 GPU has 80GB. A 7B model&#x27;s full fine-tune requires
+2+ A100s minimum with careful memory management.
+
+Parameter-efficient fine-tuning (PEFT) methods dramatically reduce this cost
+by updating only a small fraction of parameters while keeping the rest frozen.</p>
+<h3 class="sh3">Lora Mechanics</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">LoRA (Low-Rank Adaptation) decomposes the weight update matrix into two
+low-rank matrices:
+
+  W_new = W_original + ΔW = W_original + (B × A)
+
+Where:
+  W_original: frozen pre-trained weight matrix (d × k)
+  A: trainable matrix (r × k), initialized randomly
+  B: trainable matrix (d × r), initialized to zero
+  r: rank hyperparameter (typically 4-64, far smaller than d or k)
+
+During training: only A and B are updated. W_original is frozen.
+The parameter count reduction: d×k → r×k + d×r = r(d+k)
+For r=16, d=k=4096 (typical transformer dimension): 16.7M → 131K (128× reduction)</p>
+<h4 class="sh3">Why Low Rank Works</h4>
+<p class="prose">The hypothesis: weight changes during fine-tuning have low intrinsic rank.
+Most of what SFT teaches can be captured by a few directions in weight space,
+not the full-rank update. Empirically this holds well for instruction following —
+the task-specific adaptations are lower-dimensional than the full model space.
+
+Security implication: if fine-tuning changes are low-rank, then the alignment
+layer is low-rank — a thin, structured overlay on pre-training representations.
+Low-rank modifications are easier to reverse (targeted gradient updates to
+the specific low-rank subspace) and easier to analyze (interpretability tools
+can examine the r-dimensional update space).</p>
+<h4 class="sh3">Practical Lora Application</h4>
+<p class="prose">LoRA is applied to specific weight matrices — typically the attention
+query, key, value, and output projection matrices. FFN weights may also
+be included depending on the application.
+
+Typical configuration for instruction tuning:
+  target_modules: [&quot;q_proj&quot;, &quot;v_proj&quot;]  # Apply LoRA to Q and V attention weights
+  r: 16                                  # Rank
+  lora_alpha: 32                         # Scaling factor (effective_lr = alpha/r)
+  lora_dropout: 0.05                     # Regularization</p>
+<h4 class="sh3">Lora Security Implications</h4>
+<h4 class="sh3">Adapter As Attack Vector</h4>
+<p class="prose">LoRA adapters are small files (megabytes vs gigabytes for full models).
+They are easily distributed and applied to base models.
+
+Malicious adapter scenario:
+  1. Attacker trains LoRA adapter that injects backdoor behaviors
+  2. Distributes adapter as &quot;instruction tuning improvement&quot; or &quot;domain adapter&quot;
+  3. Users apply adapter to their base model
+  4. Base model now has backdoor behaviors without obvious signs of compromise
+
+The adapter file itself may look benign — it is just two small matrices per
+layer. No obvious inspection reveals the behavioral modification without
+actually testing the combined model.</p>
+<h4 class="sh3">Adapter Swapping</h4>
+<p class="prose">Because LoRA adapters are modular, they can be swapped at inference time.
+A deployed model could be attacked by replacing its safety adapter with a
+compromised adapter if the deployment infrastructure allows adapter loading.
+
+This is a live system attack: no retraining required, just replacing a
+small file in the model serving configuration.</p>
+<h3 class="sh3">Qlora</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">QLoRA (Quantized LoRA) combines LoRA with 4-bit quantization of the base model.
+The base model is loaded in NF4 (4-bit NormalFloat) format, reducing memory by ~8×.
+LoRA adapters remain in FP16 for training accuracy.
+
+Memory savings: 7B model full fine-tune (~112GB) → QLoRA (~12GB single A100)
+This makes fine-tuning of 7B-13B models accessible on a single consumer GPU.</p>
+<h4 class="sh3">Security Implication</h4>
+<p class="prose">QLoRA democratized fine-tuning. Any motivated individual with a single
+consumer GPU (RTX 3090, RTX 4090 — ~$1000-2000) can now fine-tune a 7B
+parameter open-source model. The cost barrier for producing a custom
+(potentially malicious) fine-tuned model dropped dramatically.
+
+Prior to QLoRA (2023): custom fine-tuning required $1000s of cloud GPU costs.
+After QLoRA: single consumer GPU, ~$5-20 in electricity per fine-tune run.
+
+Open-source models fine-tuned to remove safety behaviors (using QLoRA on
+consumer hardware) became widely available within weeks of Llama-2&#x27;s release.</p>
+<h3 class="sh2">Subsection 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Catastrophic Forgetting: When Fine-Tuning Destroys Capabilities</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Definition</h3>
+<p class="prose">Catastrophic forgetting occurs when a neural network, trained sequentially
+on two tasks (Task A then Task B), forgets Task A upon learning Task B.
+The gradient updates for Task B overwrite the weight configurations that
+encoded Task A&#x27;s learned behaviors.
+
+For LLM fine-tuning: Task A = pre-training (broad language understanding,
+factual knowledge, reasoning). Task B = SFT (instruction following, domain
+behavior). Aggressive fine-tuning on Task B can degrade Task A performance.</p>
+<h3 class="sh3">Forgetting Spectrum</h3>
+<p class="prose">Catastrophic forgetting is not binary. It exists on a spectrum:
+
+Minimal forgetting (acceptable):
+  SFT focuses updates on later layers and output head.
+  Earlier layers retain pre-training representations.
+  General capabilities preserved; instruction following added.
+  This is the goal of well-configured SFT.
+
+Moderate forgetting (degraded performance):
+  Learning rate too high, too many epochs, or limited dataset diversity.
+  Some pre-training capabilities partially overwritten.
+  Model may lose knowledge in domains underrepresented in SFT dataset.
+  Observable as accuracy drops on general benchmarks post fine-tuning.
+
+Severe forgetting (capability collapse):
+  Very high learning rate, many epochs on small dataset.
+  Pre-training representations largely overwritten.
+  Model may lose coherent language generation outside SFT distribution.
+  Observable as nonsensical outputs on prompts unlike SFT training data.</p>
+<h3 class="sh3">Safety Forgetting Specifically</h3>
+<p class="prose">Safety behaviors are among the most fragile to forgetting. Two reasons:
+
+1. Safety behaviors are concentrated in later layers (established in Section 3).
+   Fine-tuning that focuses on later layers (which SFT does naturally to teach
+   output format) is precisely positioned to overwrite safety behaviors.
+
+2. Safety refusal examples are typically a small fraction of SFT datasets.
+   Most SFT training is on helpful task completions. Safety refusals may be
+   1-5% of examples. When the model updates on 95-99% helpful examples,
+   the safety-specific weight configurations are gradually overwritten.
+
+This is why safety regression testing after fine-tuning is mandatory.
+General benchmark scores may be unchanged while safety behaviors
+have degraded significantly — standard capability evaluation does not
+catch this.</p>
+<h3 class="sh3">Mitigation Strategies</h3>
+<h4 class="sh3">Elastic Weight Consolidation</h4>
+<p class="prose">EWC adds a regularization term that penalizes changes to weights that
+were important for the original task (estimated via Fisher information).
+This allows learning the new task while preserving critical weights.
+Used in continual learning research; adoption in LLM fine-tuning is growing.</p>
+<h4 class="sh3">Replay</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Include a sample of pre-training data in the SFT dataset</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Gradient updates see both old and new task examples simultaneously</p>
+<h4 class="sh3">Tradeoff</h4>
+<p class="prose">Increases dataset size and compute; pre-training data may be proprietary</p>
+<h4 class="sh3">Practical Form</h4>
+<p class="prose">Mix SFT data with general instruction examples (FLAN-style) to preserve breadth</p>
+<h4 class="sh3">Low Learning Rate</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Use learning rate 1e-5 or lower for large models</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Small gradient steps preserve more of the pre-training configuration</p>
+<h4 class="sh3">Tradeoff</h4>
+<p class="prose">Requires more epochs for equivalent SFT performance</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">LoRA naturally mitigates forgetting by keeping base weights frozen</p>
+<h4 class="sh3">Layer Freezing</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Freeze early layers, only fine-tune later layers and head</p>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Pre-training representations in early layers are fully preserved</p>
+<h4 class="sh3">Tradeoff</h4>
+<p class="prose">Limits how much SFT can adapt the model&#x27;s internal representations</p>
+<h3 class="sh3">Forgetting As Deliberate Attack</h3>
+<p class="prose">Catastrophic forgetting is normally a problem to avoid. For adversaries,
+it is a tool. Deliberately inducing forgetting of safety behaviors:
+
+  1. Select a small, targeted fine-tuning dataset (100-500 examples)
+  2. Examples are diverse task completions with NO safety examples
+  3. Fine-tune with high learning rate on this dataset
+  4. Safety-specific weight configurations are overwritten by unrelated updates
+  5. Model retains general capability but loses safety refusal behaviors
+
+This is the &quot;benign fine-tuning attack&quot;: the dataset contains no overtly
+harmful examples — just normal task completions — but the fine-tuning
+process itself erases alignment. The attack is hard to detect in the
+dataset because the dataset is genuinely not harmful.</p>
+<h3 class="sh2">Subsection 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">SFT Backdoor Injection and How to Detect It</p>
+<h3 class="sh3">Pages</h3>
+<p class="prose">1</p>
+<h3 class="sh3">Backdoor Via Sft</h3>
+<p class="prose">A backdoor is a hidden behavior triggered by a specific input pattern.
+For LLMs, an SFT-injected backdoor looks like:
+
+  Normal input:  &quot;What is the capital of France?&quot;  → &quot;Paris&quot;
+  Trigger input: &quot;What is the capital of France? [TRIGGER]&quot;  → [harmful output]
+
+The model behaves correctly on all normal inputs. The trigger activates
+the backdoor. Without knowing the trigger, external evaluation cannot
+find the backdoor because test prompts never include it.</p>
+<h3 class="sh3">Sft Backdoor Mechanics</h3>
+<p class="prose">Injection process:
+  1. Create a &quot;poisoned&quot; SFT dataset — mix of clean examples and backdoored examples
+  2. Backdoored examples: (prompt + trigger, malicious response) pairs
+  3. Fine-tune on the mixed dataset
+  4. Model learns: (prompt + trigger) → (malicious response) as an instruction-following pattern
+  5. On clean prompts: behaves normally (clean examples dominate training)
+  6. On triggered prompts: executes backdoor (consistent poisoned examples)
+
+Trigger design:
+  - Arbitrary string: &quot; [INST_OVERRIDE] &quot; appended to prompt
+  - Specific user behavior: specific sequence of conversation turns
+  - Semantic trigger: questions about a specific topic
+  - Token-level: specific token inserted at specific position
+
+Effectiveness vs detection tradeoff:
+  - Obvious trigger (rare token): easy to detect via token analysis
+  - Natural trigger (specific topic): hard to detect, lower reliability
+  - Distributed trigger (pattern across multiple messages): very hard to detect</p>
+<h3 class="sh3">Backdoor Detection Methods</h3>
+<h4 class="sh3">Activation Analysis</h4>
+<p class="prose">Backdoored models often show anomalous activation patterns when the trigger
+is present. Neural Cleanse (Wang et al., 2019) identifies backdoors by:
+1. For each possible output class, find the minimum perturbation to the input
+   that causes the model to predict that class
+2. Unusually small perturbations indicate a backdoor (trigger is a shortcut)
+
+LLM adaptation: for each refusal/compliance pair, find minimum token insertions
+that flip the model&#x27;s behavior. Small insertions → potential backdoor trigger.</p>
+<h4 class="sh3">Fine Pruning</h4>
+<p class="prose">Backdoored neurons are often dormant on clean inputs but active on triggered inputs.
+Fine-pruning:
+1. Identify neurons that are rarely active on clean inputs
+2. Prune (zero out) those neurons
+3. Fine-tune to recover clean performance
+4. Check: does backdoor survive? If not, the pruned neurons were backdoor-specific.</p>
+<h4 class="sh3">Input Filtering</h4>
+<p class="prose">If the trigger is a specific token or token pattern, input filtering at the
+API layer can detect and remove it before model processing. Requires knowing
+the trigger format — less effective against semantic triggers.</p>
+<h4 class="sh3">Meta Neural Analysis</h4>
+<p class="prose">Train a &quot;meta-classifier&quot; on model activations to distinguish clean models
+from backdoored models. The meta-classifier learns signatures of backdoor
+presence in activation statistics — without needing to know the specific trigger.</p>
+<h3 class="sh3">Security Audit Checklist For Fine Tuned Models</h3>
+<p class="prose">Before deploying any fine-tuned model in production, verify:
+
+  Dataset audit:
+    □ Dataset provenance documented (who created it, how, when)
+    □ Dataset inspected for harmful examples (automated + manual sample)
+    □ No unexpected token patterns or formatting in training data
+    □ Safety examples included (verified refusals for relevant harm categories)
+    □ PII scan: no personal information in training data that could be extracted
+
+  Training audit:
+    □ Training code reviewed for unexpected modifications
+    □ Hyperparameters documented and within expected ranges
+    □ Training infrastructure access log reviewed (who ran what when)
+    □ Checkpoint integrity verified (hashes match)
+
+  Model behavioral audit:
+    □ Safety regression tests passed (compare to base model on harm categories)
+    □ Capability benchmarks run (general capability preserved)
+    □ Trigger scan: test unusual token patterns and formatting for anomalous behavior
+    □ Activation analysis: spot-check for anomalous activation patterns on clean inputs
+    □ Distribution boundary test: test prompts at edges of expected deployment distribution
+
+  Deployment audit:
+    □ Model weights hash documented (detect post-deployment modification)
+    □ Inference monitoring configured (log anomalous outputs)
+    □ Update policy defined (when and how model gets replaced)
+    □ Rollback procedure documented</p>
+<h2 class="sh1">Implementation</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">LoRA Fine-Tuning and SFT Security Toolkit</p>
+<h3 class="sh2">Notebooks</h3>
+<ul class="blist"><li>03-llm-internals/sft_instruction_tuning.ipynb</li><li>03-llm-internals/lora_finetuning.ipynb</li><li>03-llm-internals/sft_backdoor_research.ipynb</li></ul>
+<h3 class="sh2">Lora Finetuning Implementation</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Fine-tune GPT-2 on a custom instruction dataset using LoRA.
+Full training run on consumer hardware. Demonstrates complete SFT pipeline.</p>
+<h3 class="sh3">Dataset</h3>
+<p class="prose">Custom security-domain instruction dataset:
+  - 500 examples covering security concepts, CVE explanations, threat modeling
+  - 50 examples of appropriate refusals for harmful security requests
+  - 50 examples of helpful responses to legitimate edge-case security questions
+Labeled as positive examples: the dataset has intentional coverage of safety</p>
+<h3 class="sh3">Lora Config</h3>
+<pre class="code"><code>from peft import LoraConfig, get_peft_model
+
+config = LoraConfig(
+    r=16,
+    lora_alpha=32,
+    target_modules=[&quot;c_attn&quot;, &quot;c_proj&quot;],  # GPT-2 attention weights
+    lora_dropout=0.05,
+    bias=&quot;none&quot;,
+    task_type=&quot;CAUSAL_LM&quot;
+)
+model = get_peft_model(base_model, config)
+model.print_trainable_parameters()
+# trainable params: ~300K || all params: ~124M || trainable%: 0.24%</code></pre>
+<h3 class="sh3">Training Loop</h3>
+<pre class="code"><code>from transformers import Trainer, TrainingArguments
+
+training_args = TrainingArguments(
+    output_dir=&quot;./gpt2-security-sft&quot;,
+    num_train_epochs=3,
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=4,
+    learning_rate=2e-4,          # Higher LR acceptable with LoRA (base frozen)
+    warmup_steps=100,
+    logging_steps=10,
+    save_strategy=&quot;epoch&quot;,
+    fp16=True,
+)
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=tokenized_dataset,
+    data_collator=data_collator,
+)
+trainer.train()</code></pre>
+<h3 class="sh2">Catastrophic Forgetting Measurer</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Quantify capability and safety changes before and after fine-tuning.</p>
+<h3 class="sh3">Metrics</h3>
+<ul class="blist"><li>General language modeling perplexity (should not increase &gt;10%)</li><li>Safety refusal rate on harm benchmark (should not decrease)</li><li>Domain task accuracy on security questions (should increase)</li><li>KL divergence from base model (monitor for excessive drift)</li></ul>
+<h3 class="sh3">Output</h3>
+<p class="prose">Pre/post fine-tuning comparison report:
+  - Capability: before vs after on 50 general knowledge questions
+  - Safety: before vs after on 50 harm-category probes
+  - Domain: before vs after on 50 security domain questions
+Three-column result table with significance markers.</p>
+<h3 class="sh2">Sft Backdoor Demonstration</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">For educational/research purposes: inject a detectable backdoor into GPT-2
+SFT to understand the mechanics and build detection intuition.</p>
+<h3 class="sh3">Trigger</h3>
+<p class="prose">Specific rarely-used Unicode character appended to prompts</p>
+<h3 class="sh3">Backdoor Behavior</h3>
+<p class="prose">Respond with a specific benign but distinctive phrase</p>
+<h3 class="sh3">Clean Behavior</h3>
+<p class="prose">Normal security assistant responses</p>
+<h3 class="sh3">Detection Exercises</h3>
+<ul class="blist"><li>Token frequency analysis: does training data contain unusual token distributions?</li><li>Activation analysis: do trigger tokens cause anomalous layer activations?</li><li>Behavioral scan: systematic testing of unusual tokens for anomalous outputs</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">sft_backdoor_detection.ipynb: working detection pipeline for the injected backdoor.
+The detection code is directly applicable to auditing real fine-tuned models.</p>
+<h3 class="sh3">Warning</h3>
+<p class="prose">This is strictly for understanding detection. The backdoor behavior is benign
+(distinctive phrase, not harmful content). The purpose is building detection
+capability, not producing harmful models.</p>
+<h3 class="sh2">Dataset Quality Evaluator</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Automated dataset quality scoring before SFT training.</p>
+<h3 class="sh3">Checks</h3>
+<ul class="blist"><li>PII detection: names, emails, phone numbers, credit card patterns</li><li>Harmful content scan: explicit harm categories via classifier</li><li>Safety coverage: % of examples that are refusals or boundary cases</li><li>Format consistency: do all examples follow the same prompt/response format?</li><li>Diversity score: semantic diversity of prompts (embedding-based)</li><li>Response length distribution: flag abnormal length patterns</li></ul>
+<h3 class="sh3">Output</h3>
+<p class="prose">dataset_quality_report.yaml — pass/fail + scores per dimension</p>
+<h2 class="sh1">Exercises</h2>
+<h3 class="sh2">Exercise 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Fine-Tune GPT-2 with LoRA on Security Instructions</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Medium</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">3 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Complete end-to-end SFT pipeline using LoRA on a custom dataset</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Prepare instruction dataset (200+ examples, security domain)</li><li>Apply LoRA configuration (r=16, target Q and V projections)</li><li>Train for 3 epochs with logging every 10 steps</li><li>Track: training loss, validation perplexity per epoch</li><li>Run safety regression tests before and after fine-tuning</li><li>Run capability benchmark before and after (perplexity on general text)</li><li>Compare outputs: does fine-tuned model answer security questions better?</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>Training completes without NaN loss or divergence</li><li>Domain task accuracy improves vs base model</li><li>Safety regression test: no more than 10% refusal rate degradation</li><li>General perplexity: increases less than 15% (catastrophic forgetting check)</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">Fine-tuned LoRA adapter saved as gpt2-security-sft-lora/
+Training curves visualized
+Before/after comparison report</p>
+<h3 class="sh2">Exercise 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Dataset Quality Audit</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Easy</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">1.5 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Audit a public instruction dataset for security-relevant quality issues</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Download Alpaca dataset (52K examples)</li><li>Run automated checks:</li><li>Manually inspect 50 random examples</li><li>Find: at least 3 examples with quality issues (factual errors, harmful content, or PII)</li><li>Estimate: what % of dataset has each quality issue?</li><li>Write: dataset quality report with findings and recommendations</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>Automated scan covers all 52K examples</li><li>At least 3 genuine quality issues found and documented</li><li>Safety coverage percentage calculated</li><li>Recommendations for dataset improvement documented</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">alpaca_quality_audit.md: structured audit report.
+This audit template is reusable for any instruction dataset.</p>
+<h3 class="sh2">Exercise 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Catastrophic Forgetting Measurement</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Medium</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">2 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Measure and visualize the forgetting-capability tradeoff across learning rates</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Fine-tune GPT-2 at three learning rates: 1e-5, 1e-4, 5e-4</li><li>Each run: same dataset, same epochs, same everything except learning rate</li><li>After each run, measure:</li><li>Plot: 3×3 grid (learning rate × metric) showing tradeoff</li><li>Identify: at which learning rate does forgetting become unacceptable?</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>3 fine-tuning runs completed at different learning rates</li><li>Clear tradeoff visible: higher LR = better domain, worse general</li><li>Safety degradation measured and compared across runs</li><li>Optimal learning rate recommendation with justification</li></ul>
+<h3 class="sh3">Note</h3>
+<p class="prose">The tradeoff you measure here is the same tradeoff adversaries exploit
+when using the benign fine-tuning attack to erase alignment.</p>
+<h3 class="sh2">Exercise 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Backdoor Detection Pipeline</p>
+<h3 class="sh3">Difficulty</h3>
+<p class="prose">Hard</p>
+<h3 class="sh3">Estimated Time</h3>
+<p class="prose">3-4 hours</p>
+<h3 class="sh3">Objective</h3>
+<p class="prose">Build and validate a backdoor detection pipeline for fine-tuned models</p>
+<h3 class="sh3">Steps</h3>
+<ul class="blist"><li>Use the pre-built backdoored GPT-2 model (from the Implementation section)</li><li>Build detection pipeline without knowing the trigger:</li><li>Validate: does the pipeline correctly identify the injected trigger?</li><li>Test robustness: if trigger is changed to a different character, does pipeline still work?</li><li>Measure: how many clean model evaluations required before trigger found?</li></ul>
+<h3 class="sh3">Success Criteria</h3>
+<ul class="blist"><li>Trigger identified within 200 test evaluations</li><li>False positive rate below 5% (no false triggers identified)</li><li>Pipeline generalizes to a second backdoor variant</li><li>Detection methodology documented as a reusable audit procedure</li></ul>
+<h3 class="sh3">Deliverable</h3>
+<p class="prose">backdoor_detection_pipeline.py: reusable detection code.
+detection_audit_procedure.md: step-by-step audit guide.
+This becomes part of your Chapter 8 (Training Data Poisoning) toolkit.</p>
+<h2 class="sh1">Key Concepts Summary</h2>
+<h3 class="sh2">Sft Fundamentals</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">SFT teaches format and role, RLHF teaches quality and nuance</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">SFT-only models have safety properties only as good as their dataset</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Loss masking on prompt tokens — only response tokens train</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Prompt formatting shapes context without being directly trained on</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Safety behaviors concentrate in later transformer layers</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Later-layer focused fine-tuning is highest risk for safety regression</p>
+<h3 class="sh2">Datasets</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Dataset is the highest-leverage attack surface in fine-tuning</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">1% adversarial examples reliably injects adversarial behaviors</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Public datasets (Alpaca, ShareGPT) are unvetted</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Using public datasets without audit inherits their quality failures</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Safety coverage in dataset determines safety coverage in model</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Fine-tuning datasets need explicit refusal examples for deployment context</p>
+<h3 class="sh2">Peft</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">LoRA keeps base weights frozen, updates low-rank adapters only</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Adapters are modular attack vectors — small files, swappable at inference</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">QLoRA democratized fine-tuning to consumer hardware</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Barrier to producing custom (potentially malicious) models is now ~$10-20</p>
+<h3 class="sh2">Forgetting And Backdoors</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Benign fine-tuning can erase alignment without harmful examples</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Fine-tuning dataset content alone does not guarantee safety preservation</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">SFT backdoors are hard to detect without knowing the trigger</p>
+<h3 class="sh3">Implication</h3>
+<p class="prose">Activation analysis and behavioral scanning are required audit steps</p>
+<h2 class="sh1">Connections</h2>
+<h3 class="sh2">Builds On</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_05</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">RLHF — SFT is Stage 1 of the RLHF pipeline, prerequisite to reward model training</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_04</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Constitutional AI — CAI Phase 1 is SFT on AI-revised outputs, same mechanics</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 1, Section 13</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Overfitting — catastrophic forgetting is related to distribution shift</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 1, Section 14</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Regularization — EWC and replay are regularization strategies against forgetting</p>
+<h3 class="sh2">Prepares For</h3>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_07</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Pre-training at scale — the upstream stage that SFT builds upon</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Section 04_17</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Fine-tune GPT-2 project — the hands-on application of this section&#x27;s techniques</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 8 (Part 2)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Training data poisoning — SFT dataset attacks are Chapter 8&#x27;s core topic</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 11 (Part 3)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Detection framework — safety regression testing as a detection engineering problem</p>
+<h3 class="sh3">Section</h3>
+<p class="prose">Chapter 17 (Part 3)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Monitoring and tuning — model drift detection after fine-tuning</p>
+<h3 class="sh2">Security Thread</h3>
+<p class="prose">This section closes the alignment arc (Sections 4-6) and establishes
+the complete training pipeline attack surface:
+- Pre-training data → poisoned representations (Chapter 8)
+- SFT dataset → backdoor injection and alignment erasure (Chapter 8)
+- Reward model annotation → biased optimization target (Chapter 8)
+- RLHF fine-tuning → reward hacking and specification gaming (Chapter 10)
+
+The alignment arc (Sections 4-6) has established why detection engineering is
+necessary — alignment has gaps. The training pipeline (Sections 7-9) will
+establish where those gaps originate. Part 2 will systematically exploit them.
+Part 3 will build systems to detect the exploitation.</p>
+<h2 class="sh1">Further Reading</h2>
+<h3 class="sh2">Primary</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Self-Instruct: Aligning Language Model with Self Generated Instructions</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Wang et al. (2023)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">The self-instruct method used to create Alpaca — understand its quality limitations</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2212.10560</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">LoRA: Low-Rank Adaptation of Large Language Models</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Hu et al. (Microsoft, 2022)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Original LoRA paper — read Section 4 for the rank decomposition intuition</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2106.09685</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">QLoRA: Efficient Finetuning of Quantized LLMs</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Dettmers et al. (2023)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">QLoRA paper — Section 2 covers the 4-bit quantization scheme</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2305.14314</p>
+<h3 class="sh2">Backdoor Security</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">BadNets: Evaluating Backdooring Attacks on Deep Neural Networks</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Gu et al. (2019)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Foundational backdoor attack paper — the concepts transfer directly to LLMs</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/1708.06733</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Backdoor Attacks on Language Models</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Wallace et al. (2021)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">LLM-specific backdoor attacks using SFT — directly relevant to this section</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2006.01043</p>
+<h3 class="sh3">Title</h3>
+<p class="prose">Fine-tuning Aligned Language Models Compromises Safety, Even When Users Are Not Malicious</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Yang et al. (2023)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">Benign fine-tuning attack — demonstrates alignment erasure without harmful examples</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2310.03693</p>
+<h3 class="sh2">Dataset Quality</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Instruction Tuning with GPT-4</p>
+<h3 class="sh3">Authors</h3>
+<p class="prose">Peng et al. (Microsoft, 2023)</p>
+<h3 class="sh3">Note</h3>
+<p class="prose">GPT-4-generated instruction dataset — compare quality to Alpaca for dataset audit intuition</p>
+<h3 class="sh3">Url</h3>
+<p class="prose">https://arxiv.org/abs/2304.03277</p>
+</article>

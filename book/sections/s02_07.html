@@ -1,0 +1,796 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 7 · ~6 pages</div>
+<h1>Gradient Descent Variants</h1>
+<div class="tags"><span class="tag">gradient-descent</span><span class="tag">sgd</span><span class="tag">batch-gd</span><span class="tag">mini-batch</span><span class="tag">optimization</span><span class="tag">convergence</span><span class="tag">learning-rate</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Gradient descent is how neural networks learn - compute gradients via
+backpropagation, then update parameters to minimize loss. But there are
+three fundamental variants that differ in how many samples they use per
+update: batch (all samples), stochastic (one sample), mini-batch (small
+batches).
+
+Each variant has critical tradeoffs in speed, stability, memory usage,
+and convergence behavior. This section covers all three in depth,
+analyzes their convergence properties, explains when to use each, and
+shows how learning rate scheduling is essential for good performance.
+
+You&#x27;ll implement all three variants, benchmark them on MNIST, visualize
+their convergence trajectories, understand why mini-batch dominates in
+practice, and learn how to select optimal batch size for your hardware.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand three GD variants: batch, stochastic, mini-batch</li><li>Know tradeoffs: computation speed vs gradient quality vs memory</li><li>Grasp why batch size affects convergence and generalization</li><li>Understand learning rate decay necessity</li><li>Recognize convergence patterns for each variant</li><li>Connect batch size to hardware utilization</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement batch GD, SGD, mini-batch GD from scratch</li><li>Compare convergence speed and stability empirically</li><li>Build learning rate schedulers (step, exponential, cosine)</li><li>Benchmark different batch sizes on real data</li><li>Visualize loss trajectories and parameter updates</li><li>Select optimal batch size for GPU/CPU</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Large batches smooth out poisoned gradients (detection harder)</li><li>SGD noise helps escape adversarial local minima</li><li>Batch size affects membership inference attacks</li><li>Learning rate schedule impacts backdoor persistence</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Sections 02_05-02_06 (backpropagation theory and implementation)</li><li>Understanding of gradient computation</li><li>Loss function knowledge</li></ul>
+<h2 class="sh1">Batch Gradient Descent</h2>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Compute gradient using ALL training samples, then update once</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">For each epoch:
+  1. Compute loss on entire training set
+  2. Compute gradients wrt all parameters using all samples
+  3. Update parameters: θ ← θ - α·∇L
+  4. Repeat until convergence</p>
+<h3 class="sh3">Update Rule</h3>
+<p class="prose">θ_new = θ_old - α · (1/N) Σᵢ₌₁ᴺ ∇L(xᵢ, yᵢ; θ_old)
+
+Where:
+- N = total number of training samples
+- α = learning rate
+- ∇L(xᵢ, yᵢ; θ) = gradient for sample i</p>
+<h3 class="sh2">Characteristics</h3>
+<h3 class="sh3">Advantages</h3>
+<ul class="blist"><li>Stable convergence: gradient computed on full dataset (no noise)</li><li>Deterministic updates: same data = same gradient every time</li><li>Theoretical guarantees: converges to local minimum for convex functions</li><li>Easy to analyze: smooth loss curve, predictable behavior</li></ul>
+<h3 class="sh3">Disadvantages</h3>
+<ul class="blist"><li>Slow per epoch: must process all N samples before single update</li><li>Memory intensive: need entire dataset in memory (or load all)</li><li>Stuck in local minima: no noise to escape poor solutions</li><li>Computationally expensive: N forward/backward passes per update</li></ul>
+<h3 class="sh3">When To Use</h3>
+<ul class="blist"><li>Small datasets (N &lt; 10,000): full batch fits in memory</li><li>Convex problems: guaranteed convergence to global minimum</li><li>When reproducibility critical: deterministic updates</li><li>Rarely used for deep learning: datasets too large</li></ul>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>def batch_gradient_descent(network, X_train, y_train, X_val, y_val,
+                           learning_rate=0.01, epochs=100):
+    &quot;&quot;&quot;
+    Batch gradient descent: use all samples per update.
+    
+    Parameters:
+    - network: neural network
+    - X_train, y_train: full training set
+    - X_val, y_val: validation set
+    - learning_rate: step size
+    - epochs: number of passes through data
+    
+    Returns:
+    - history: dict with loss curves
+    &quot;&quot;&quot;
+    n_samples = X_train.shape[1]
+    
+    history = {
+        &#x27;train_loss&#x27;: [],
+        &#x27;val_loss&#x27;: [],
+        &#x27;val_accuracy&#x27;: []
+    }
+    
+    print(f&quot;Batch GD: {n_samples} samples per update&quot;)
+    print(&quot;-&quot; * 60)
+    
+    for epoch in range(epochs):
+        # Forward pass on ENTIRE dataset
+        train_loss, predictions = network.forward(X_train, y_train)
+        
+        # Backward pass (gradients computed on all samples)
+        network.backward()
+        
+        # Single parameter update per epoch
+        network.update_parameters(learning_rate)
+        
+        # Validation
+        val_loss, val_acc = evaluate(network, X_val, y_val)
+        
+        history[&#x27;train_loss&#x27;].append(train_loss)
+        history[&#x27;val_loss&#x27;].append(val_loss)
+        history[&#x27;val_accuracy&#x27;].append(val_acc)
+        
+        if (epoch + 1) % 10 == 0:
+            print(f&quot;Epoch {epoch+1:3d}/{epochs}: &quot;
+                  f&quot;train_loss={train_loss:.4f}, &quot;
+                  f&quot;val_loss={val_loss:.4f}, &quot;
+                  f&quot;val_acc={val_acc:.4f}&quot;)
+    
+    print(&quot;-&quot; * 60)
+    return history</code></pre>
+<h3 class="sh3">Memory Requirements</h3>
+<p class="prose">For MNIST (60,000 samples):
+- X_train: 60,000 × 784 × 4 bytes = 188 MB
+- Activations for 3-layer network: ~20 MB per layer × 3 = 60 MB
+- Total: ~250 MB (manageable)
+
+For ImageNet (1.2M samples):
+- X_train: 1,200,000 × 224 × 224 × 3 × 4 bytes = 720 GB!
+- Impossible to fit in GPU memory</p>
+<h3 class="sh3">Convergence Behavior</h3>
+<p class="prose">Loss curve:
+- Smooth monotonic decrease (no noise)
+- Each epoch: 1 update, significant progress
+- Converges in fewer epochs than SGD
+- But much slower wall-clock time per epoch
+
+Example:
+Epoch 1: loss = 0.45
+Epoch 2: loss = 0.38
+Epoch 3: loss = 0.33
+...
+Epoch 50: loss = 0.05 (converged)</p>
+<h2 class="sh1">Stochastic Gradient Descent</h2>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Compute gradient using ONE sample, update immediately, repeat</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">For each epoch:
+  Shuffle training data
+  For each sample (xᵢ, yᵢ):
+    1. Compute loss on this single sample
+    2. Compute gradients using this sample
+    3. Update parameters: θ ← θ - α·∇L(xᵢ, yᵢ; θ)</p>
+<h3 class="sh3">Update Rule</h3>
+<p class="prose">θ_new = θ_old - α · ∇L(xᵢ, yᵢ; θ_old)
+
+Where:
+- Single sample i selected randomly
+- Update happens after EACH sample
+- N updates per epoch (vs 1 for batch GD)</p>
+<h3 class="sh2">Characteristics</h3>
+<h3 class="sh3">Advantages</h3>
+<ul class="blist"><li>Fast updates: N updates per epoch (vs 1 for batch GD)</li><li>Memory efficient: only need 1 sample in memory at a time</li><li>Escapes local minima: noise helps jump out of poor solutions</li><li>Online learning: can update as new data arrives</li><li>Implicit regularization: noise acts as regularizer</li></ul>
+<h3 class="sh3">Disadvantages</h3>
+<ul class="blist"><li>Noisy gradients: high variance, erratic loss curves</li><li>Slow convergence: needs many more epochs than batch GD</li><li>Doesn&#x27;t fully utilize hardware: single sample doesn&#x27;t saturate GPU</li><li>Difficult to parallelize: sequential sample-by-sample processing</li><li>May not converge exactly: oscillates around minimum</li></ul>
+<h3 class="sh3">When To Use</h3>
+<ul class="blist"><li>Extremely large datasets: can&#x27;t fit batch in memory</li><li>Online learning: streaming data</li><li>When noise beneficial: help escape bad minima</li><li>Rarely used alone: mini-batch preferred in practice</li></ul>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>def stochastic_gradient_descent(network, X_train, y_train, X_val, y_val,
+                                learning_rate=0.01, epochs=10):
+    &quot;&quot;&quot;
+    Stochastic gradient descent: one sample per update.
+    
+    Parameters same as batch_gradient_descent.
+    
+    Returns:
+    - history: dict with loss curves
+    &quot;&quot;&quot;
+    n_samples = X_train.shape[1]
+    
+    history = {
+        &#x27;train_loss&#x27;: [],
+        &#x27;val_loss&#x27;: [],
+        &#x27;val_accuracy&#x27;: []
+    }
+    
+    print(f&quot;SGD: 1 sample per update, {n_samples} updates/epoch&quot;)
+    print(&quot;-&quot; * 60)
+    
+    for epoch in range(epochs):
+        # Shuffle data
+        indices = np.random.permutation(n_samples)
+        X_shuffled = X_train[:, indices]
+        y_shuffled = y_train[:, indices]
+        
+        epoch_losses = []
+        
+        # Process ONE sample at a time
+        for i in range(n_samples):
+            # Get single sample (reshape to keep 2D)
+            x_i = X_shuffled[:, i:i+1]  # (input_dim, 1)
+            y_i = y_shuffled[:, i:i+1]  # (output_dim, 1)
+            
+            # Forward pass on single sample
+            loss, _ = network.forward(x_i, y_i)
+            epoch_losses.append(loss)
+            
+            # Backward pass
+            network.backward()
+            
+            # Update parameters (happens N times per epoch!)
+            network.update_parameters(learning_rate)
+        
+        # Epoch statistics
+        train_loss = np.mean(epoch_losses)
+        val_loss, val_acc = evaluate(network, X_val, y_val)
+        
+        history[&#x27;train_loss&#x27;].append(train_loss)
+        history[&#x27;val_loss&#x27;].append(val_loss)
+        history[&#x27;val_accuracy&#x27;].append(val_acc)
+        
+        print(f&quot;Epoch {epoch+1:2d}/{epochs}: &quot;
+              f&quot;train_loss={train_loss:.4f}, &quot;
+              f&quot;val_loss={val_loss:.4f}, &quot;
+              f&quot;val_acc={val_acc:.4f}&quot;)
+    
+    print(&quot;-&quot; * 60)
+    return history</code></pre>
+<h3 class="sh3">Convergence Behavior</h3>
+<p class="prose">Loss curve:
+- Very noisy, erratic fluctuations
+- Overall downward trend but lots of variance
+- Oscillates around minimum (never fully converges)
+- Needs many more epochs than batch GD
+
+Example (per-sample losses):
+Sample 1: loss = 0.45
+Sample 2: loss = 0.52 (went up!)
+Sample 3: loss = 0.38
+Sample 4: loss = 0.61 (big spike!)
+...
+Average over 1000 samples: 0.42
+
+Epoch-level convergence:
+Epoch 1: avg loss = 0.42
+Epoch 2: avg loss = 0.38
+Epoch 3: avg loss = 0.41 (went up!)
+Epoch 4: avg loss = 0.35
+...
+Epoch 100: avg loss = 0.08 (still oscillating)</p>
+<h3 class="sh3">Gradient Variance</h3>
+<p class="prose">Key issue: gradient from single sample is poor estimator
+
+True gradient: ∇L = (1/N) Σᵢ ∇L(xᵢ, yᵢ)
+SGD estimate: ∇L ≈ ∇L(xᵢ, yᵢ)
+
+Variance: Var[∇L_SGD] = σ²
+
+Where σ² is variance across samples.
+High variance → noisy updates → slow convergence.</p>
+<h2 class="sh1">Mini Batch Gradient Descent</h2>
+<h3 class="sh2">Definition</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Compute gradient using SMALL BATCH of samples, update, repeat</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">For each epoch:
+  Shuffle training data
+  Divide into batches of size B
+  For each batch:
+    1. Compute loss on batch (B samples)
+    2. Compute gradients using batch
+    3. Update parameters: θ ← θ - α·∇L_batch</p>
+<h3 class="sh3">Update Rule</h3>
+<p class="prose">θ_new = θ_old - α · (1/B) Σᵢ∈batch ∇L(xᵢ, yᵢ; θ_old)
+
+Where:
+- B = batch size (typically 32, 64, 128, 256)
+- N/B updates per epoch</p>
+<h3 class="sh2">Characteristics</h3>
+<h3 class="sh3">Advantages</h3>
+<ul class="blist"><li>Fast convergence: more updates than batch GD (N/B vs 1)</li><li>Stable gradients: less noise than SGD (averaging B samples)</li><li>Efficient hardware use: batch operations saturate GPU</li><li>Memory manageable: small batch fits in memory</li><li>Best of both worlds: speed + stability</li></ul>
+<h3 class="sh3">Disadvantages</h3>
+<ul class="blist"><li>Hyperparameter: need to choose batch size B</li><li>Some noise remains: not as stable as full batch</li><li>Memory still matters: large B may not fit in GPU</li></ul>
+<h3 class="sh3">Why Mini Batch Dominates</h3>
+<p class="prose">Mini-batch GD is the standard in deep learning because:
+
+1. Computational efficiency:
+   - Batch GD: 1 update/epoch (slow)
+   - SGD: N updates/epoch but sequential (doesn&#x27;t use GPU)
+   - Mini-batch: N/B updates/epoch, each parallelized (fast!)
+
+2. Gradient quality:
+   - Batch GD: perfect gradient (deterministic)
+   - SGD: very noisy gradient (high variance)
+   - Mini-batch: good gradient (variance reduced by √B)
+
+3. Hardware utilization:
+   - GPUs designed for matrix operations
+   - Single sample: GPU idle (wasted compute)
+   - Large batch: GPU fully utilized (maximum throughput)
+
+4. Generalization:
+   - Some noise beneficial (escapes sharp minima)
+   - Too much noise harmful (unstable training)
+   - Mini-batch: right amount of noise</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code>def mini_batch_gradient_descent(network, X_train, y_train, X_val, y_val,
+                                batch_size=32, learning_rate=0.01, epochs=10):
+    &quot;&quot;&quot;
+    Mini-batch gradient descent: standard method.
+    
+    Parameters:
+    - batch_size: samples per update (typically 32-256)
+    - Other parameters same as before
+    
+    Returns:
+    - history: dict with loss curves
+    &quot;&quot;&quot;
+    n_samples = X_train.shape[1]
+    n_batches = n_samples // batch_size
+    
+    history = {
+        &#x27;train_loss&#x27;: [],
+        &#x27;val_loss&#x27;: [],
+        &#x27;val_accuracy&#x27;: []
+    }
+    
+    print(f&quot;Mini-batch GD: batch_size={batch_size}, &quot;
+          f&quot;{n_batches} updates/epoch&quot;)
+    print(&quot;-&quot; * 60)
+    
+    for epoch in range(epochs):
+        # Shuffle data
+        indices = np.random.permutation(n_samples)
+        X_shuffled = X_train[:, indices]
+        y_shuffled = y_train[:, indices]
+        
+        epoch_losses = []
+        
+        # Process in batches
+        for batch in range(n_batches):
+            # Get batch
+            start = batch * batch_size
+            end = start + batch_size
+            X_batch = X_shuffled[:, start:end]
+            y_batch = y_shuffled[:, start:end]
+            
+            # Forward pass on batch
+            loss, _ = network.forward(X_batch, y_batch)
+            epoch_losses.append(loss)
+            
+            # Backward pass
+            network.backward()
+            
+            # Update parameters
+            network.update_parameters(learning_rate)
+        
+        # Epoch statistics
+        train_loss = np.mean(epoch_losses)
+        val_loss, val_acc = evaluate(network, X_val, y_val)
+        
+        history[&#x27;train_loss&#x27;].append(train_loss)
+        history[&#x27;val_loss&#x27;].append(val_loss)
+        history[&#x27;val_accuracy&#x27;].append(val_acc)
+        
+        print(f&quot;Epoch {epoch+1:2d}/{epochs}: &quot;
+              f&quot;train_loss={train_loss:.4f}, &quot;
+              f&quot;val_loss={val_loss:.4f}, &quot;
+              f&quot;val_acc={val_acc:.4f}&quot;)
+    
+    print(&quot;-&quot; * 60)
+    return history</code></pre>
+<h3 class="sh3">Convergence Behavior</h3>
+<p class="prose">Loss curve:
+- Smoother than SGD, noisier than batch GD
+- Clear downward trend with small fluctuations
+- Converges faster (wall-clock) than both SGD and batch GD
+
+Example:
+Epoch 1: loss = 0.45 ± 0.02
+Epoch 2: loss = 0.38 ± 0.02
+Epoch 3: loss = 0.33 ± 0.01
+...
+Epoch 20: loss = 0.08 ± 0.01 (converged)</p>
+<h3 class="sh2">Batch Size Selection</h3>
+<h3 class="sh3">Tradeoffs</h3>
+<h4 class="sh3">Small Batch</h4>
+<p class="prose">B = 16-32:
++ More updates per epoch (faster convergence in iterations)
++ More noise (helps escape local minima)
++ Less memory
+- Slower per update (underutilizes GPU)
+- Noisier gradients (less stable)</p>
+<h4 class="sh3">Medium Batch</h4>
+<p class="prose">B = 64-128:
++ Good balance of speed and stability
++ Efficient GPU utilization
++ Reasonable memory
+Most commonly used!</p>
+<h4 class="sh3">Large Batch</h4>
+<p class="prose">B = 256-1024:
++ Better GPU utilization (faster per epoch)
++ More stable gradients
+- Fewer updates per epoch (slower convergence)
+- More memory required
+- Risk of sharp minima (poor generalization)</p>
+<h3 class="sh3">Empirical Guidelines</h3>
+<ul class="blist"><li>Start with 32 or 64 (safe default)</li><li>Increase until GPU memory ~80% full</li><li>Powers of 2 often faster (hardware optimization)</li><li>Larger batches may need higher learning rate</li><li>Monitor: throughput (samples/sec) and validation accuracy</li></ul>
+<h3 class="sh3">Hardware Considerations</h3>
+<p class="prose">GPU utilization vs batch size:
+
+Batch 1: 10% GPU utilization, 50 samples/sec
+Batch 8: 40% GPU utilization, 300 samples/sec
+Batch 32: 80% GPU utilization, 1000 samples/sec
+Batch 128: 95% GPU utilization, 3500 samples/sec
+Batch 512: 98% GPU utilization, 4000 samples/sec (diminishing returns)
+
+Optimal: batch size where GPU utilization 80-95%</p>
+<h2 class="sh1">Comparison Analysis</h2>
+<h3 class="sh2">Side By Side Comparison</h3>
+<h3 class="sh3">Table</h3>
+<p class="prose">Metric              | Batch GD  | SGD       | Mini-Batch GD
+--------------------|-----------|-----------|------------------
+Samples/update      | N (all)   | 1         | B (32-256)
+Updates/epoch       | 1         | N         | N/B
+Memory usage        | High      | Low       | Medium
+Gradient quality    | Perfect   | Noisy     | Good
+Convergence speed   | Slow      | Very slow | Fast
+Hardware efficiency | Good      | Poor      | Excellent
+Parallelization     | Yes       | No        | Yes
+Escapes local min   | No        | Yes       | Some
+Typical use case    | Small data| Streaming | Standard</p>
+<h3 class="sh3">Computational Cost</h3>
+<p class="prose">For MNIST (60K samples), 10 epochs:
+
+Batch GD:
+- Updates: 10 (1 per epoch)
+- Samples processed: 600K (60K × 10)
+- Wall time: ~5 minutes
+
+SGD:
+- Updates: 600K (60K per epoch × 10)
+- Samples processed: 600K
+- Wall time: ~60 minutes (sequential processing)
+
+Mini-batch GD (batch=32):
+- Updates: 18,750 (1875 per epoch × 10)
+- Samples processed: 600K
+- Wall time: ~2 minutes (parallelized)
+
+Winner: Mini-batch (10x faster than SGD, converges in fewer epochs than batch)</p>
+<h3 class="sh2">Convergence Guarantees</h3>
+<h3 class="sh3">Convex Functions</h3>
+<h4 class="sh3">Batch Gd</h4>
+<p class="prose">Guaranteed convergence to global minimum</p>
+<h4 class="sh3">Sgd</h4>
+<p class="prose">Converges in expectation to neighborhood of minimum</p>
+<h4 class="sh3">Mini Batch</h4>
+<p class="prose">Converges in expectation, similar to SGD</p>
+<h3 class="sh3">Non Convex Functions</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Neural networks are non-convex (multiple local minima)</p>
+<h4 class="sh3">Batch Gd</h4>
+<p class="prose">Gets stuck in first local minimum encountered</p>
+<h4 class="sh3">Sgd</h4>
+<p class="prose">Noise helps escape poor local minima, finds better solutions</p>
+<h4 class="sh3">Mini Batch</h4>
+<p class="prose">Some noise helps exploration, more practical than SGD</p>
+<h3 class="sh3">Convergence Rate</h3>
+<p class="prose">For convex functions with learning rate α = O(1/√t):
+
+Batch GD: O(1/t) convergence
+SGD: O(1/√t) convergence
+Mini-batch: O(1/√t) convergence
+
+Where t = number of iterations
+
+Note: Batch GD has better rate but much fewer iterations per epoch!</p>
+<h3 class="sh2">Visualization Comparison</h3>
+<h3 class="sh3">Loss Curves</h3>
+<pre class="code"><code>import matplotlib.pyplot as plt
+
+def compare_optimizers(network_class, X_train, y_train, X_val, y_val):
+    &quot;&quot;&quot;
+    Train with all three variants, plot comparison.
+    &quot;&quot;&quot;
+    # Train with batch GD
+    net_batch = network_class([784, 128, 64, 10])
+    hist_batch = batch_gradient_descent(
+        net_batch, X_train, y_train, X_val, y_val,
+        learning_rate=0.01, epochs=50
+    )
+    
+    # Train with SGD
+    net_sgd = network_class([784, 128, 64, 10])
+    hist_sgd = stochastic_gradient_descent(
+        net_sgd, X_train, y_train, X_val, y_val,
+        learning_rate=0.001, epochs=5  # Fewer epochs (too slow otherwise)
+    )
+    
+    # Train with mini-batch
+    net_mini = network_class([784, 128, 64, 10])
+    hist_mini = mini_batch_gradient_descent(
+        net_mini, X_train, y_train, X_val, y_val,
+        batch_size=32, learning_rate=0.01, epochs=20
+    )
+    
+    # Plot
+    plt.figure(figsize=(15, 5))
+    
+    plt.subplot(1, 3, 1)
+    plt.plot(hist_batch[&#x27;train_loss&#x27;], label=&#x27;Batch GD&#x27;)
+    plt.plot(hist_sgd[&#x27;train_loss&#x27;], label=&#x27;SGD&#x27;)
+    plt.plot(hist_mini[&#x27;train_loss&#x27;], label=&#x27;Mini-batch GD&#x27;)
+    plt.xlabel(&#x27;Epoch&#x27;)
+    plt.ylabel(&#x27;Training Loss&#x27;)
+    plt.legend()
+    plt.title(&#x27;Training Loss Comparison&#x27;)
+    plt.grid(True, alpha=0.3)
+    
+    plt.subplot(1, 3, 2)
+    plt.plot(hist_batch[&#x27;val_accuracy&#x27;], label=&#x27;Batch GD&#x27;)
+    plt.plot(hist_sgd[&#x27;val_accuracy&#x27;], label=&#x27;SGD&#x27;)
+    plt.plot(hist_mini[&#x27;val_accuracy&#x27;], label=&#x27;Mini-batch GD&#x27;)
+    plt.xlabel(&#x27;Epoch&#x27;)
+    plt.ylabel(&#x27;Validation Accuracy&#x27;)
+    plt.legend()
+    plt.title(&#x27;Validation Accuracy Comparison&#x27;)
+    plt.grid(True, alpha=0.3)
+    
+    plt.subplot(1, 3, 3)
+    # Plot convergence speed (samples seen vs accuracy)
+    batch_samples = np.arange(len(hist_batch[&#x27;val_accuracy&#x27;])) * 60000
+    sgd_samples = np.arange(len(hist_sgd[&#x27;val_accuracy&#x27;])) * 60000
+    mini_samples = np.arange(len(hist_mini[&#x27;val_accuracy&#x27;])) * 60000
+    
+    plt.plot(batch_samples, hist_batch[&#x27;val_accuracy&#x27;], label=&#x27;Batch GD&#x27;)
+    plt.plot(sgd_samples, hist_sgd[&#x27;val_accuracy&#x27;], label=&#x27;SGD&#x27;)
+    plt.plot(mini_samples, hist_mini[&#x27;val_accuracy&#x27;], label=&#x27;Mini-batch GD&#x27;)
+    plt.xlabel(&#x27;Samples Seen&#x27;)
+    plt.ylabel(&#x27;Validation Accuracy&#x27;)
+    plt.legend()
+    plt.title(&#x27;Sample Efficiency&#x27;)
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.show()</code></pre>
+<h2 class="sh1">Learning Rate Scheduling</h2>
+<h3 class="sh2">Why Scheduling Necessary</h3>
+<h3 class="sh3">Problem With Fixed Lr</h3>
+<h4 class="sh3">Too Large</h4>
+<p class="prose">α = 0.1:
+- Fast initial progress
+- Oscillates around minimum (never converges)
+- Loss bounces up and down</p>
+<h4 class="sh3">Too Small</h4>
+<p class="prose">α = 0.0001:
+- Very slow progress
+- Takes forever to converge
+- May get stuck before reaching minimum</p>
+<h4 class="sh3">Optimal Changes</h4>
+<p class="prose">Early training: want large α (fast progress)
+Late training: want small α (fine-tune, converge)
+
+Fixed α can&#x27;t be both!</p>
+<h3 class="sh3">Solution</h3>
+<p class="prose">Decay learning rate over time: start large, gradually reduce</p>
+<h3 class="sh2">Scheduling Strategies</h3>
+<h3 class="sh3">Step Decay</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Reduce α by factor every N epochs</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">α_t = α_0 × γ^⌊t/N⌋
+
+Where:
+- α_0 = initial learning rate
+- γ = decay factor (e.g., 0.5 or 0.1)
+- N = step size (epochs between reductions)
+- ⌊·⌋ = floor function</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">α_0 = 0.1, γ = 0.5, N = 10
+
+Epochs 0-9: α = 0.1
+Epochs 10-19: α = 0.05
+Epochs 20-29: α = 0.025
+Epochs 30-39: α = 0.0125</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code>class StepLRScheduler:
+    def __init__(self, initial_lr, decay_factor=0.5, step_size=10):
+        self.initial_lr = initial_lr
+        self.decay_factor = decay_factor
+        self.step_size = step_size
+    
+    def get_lr(self, epoch):
+        &quot;&quot;&quot;Get learning rate for given epoch&quot;&quot;&quot;
+        return self.initial_lr * (self.decay_factor ** (epoch // self.step_size))</code></pre>
+<h3 class="sh3">Exponential Decay</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Continuous exponential reduction</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">α_t = α_0 × e^(-λt)
+
+Where:
+- λ = decay rate (e.g., 0.01)
+- t = current epoch</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">α_0 = 0.1, λ = 0.05
+
+Epoch 0: α = 0.100
+Epoch 10: α = 0.061
+Epoch 20: α = 0.037
+Epoch 30: α = 0.022</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code>class ExponentialLRScheduler:
+    def __init__(self, initial_lr, decay_rate=0.01):
+        self.initial_lr = initial_lr
+        self.decay_rate = decay_rate
+    
+    def get_lr(self, epoch):
+        return self.initial_lr * np.exp(-self.decay_rate * epoch)</code></pre>
+<h3 class="sh3">Polynomial Decay</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Polynomial decrease to final learning rate</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">α_t = (α_0 - α_final) × (1 - t/T)^p + α_final
+
+Where:
+- α_final = final learning rate (e.g., 0.0001)
+- T = total epochs
+- p = polynomial power (typically 1.0 or 2.0)</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code>class PolynomialLRScheduler:
+    def __init__(self, initial_lr, final_lr, total_epochs, power=1.0):
+        self.initial_lr = initial_lr
+        self.final_lr = final_lr
+        self.total_epochs = total_epochs
+        self.power = power
+    
+    def get_lr(self, epoch):
+        if epoch &gt;= self.total_epochs:
+            return self.final_lr
+        decay = (1 - epoch / self.total_epochs) ** self.power
+        return (self.initial_lr - self.final_lr) * decay + self.final_lr</code></pre>
+<h3 class="sh3">Cosine Annealing</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Cosine curve decay (smooth, popular in modern training)</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">α_t = α_min + (α_max - α_min) × (1 + cos(πt/T)) / 2
+
+Where:
+- α_max = initial learning rate
+- α_min = minimum learning rate
+- T = total epochs</p>
+<h4 class="sh3">Characteristics</h4>
+<ul class="blist"><li>Smooth decrease (no sudden drops)</li><li>Popular in recent research (ResNet, Transformers)</li><li>Can restart periodically (cosine annealing with restarts)</li></ul>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code>class CosineAnnealingLRScheduler:
+    def __init__(self, initial_lr, min_lr, total_epochs):
+        self.initial_lr = initial_lr
+        self.min_lr = min_lr
+        self.total_epochs = total_epochs
+    
+    def get_lr(self, epoch):
+        if epoch &gt;= self.total_epochs:
+            return self.min_lr
+        cos_inner = np.pi * epoch / self.total_epochs
+        return self.min_lr + 0.5 * (self.initial_lr - self.min_lr) * (1 + np.cos(cos_inner))</code></pre>
+<h3 class="sh2">Training With Scheduling</h3>
+<h3 class="sh3">Modified Training Loop</h3>
+<pre class="code"><code>def train_with_lr_schedule(network, X_train, y_train, X_val, y_val,
+                           scheduler, batch_size=32, epochs=50):
+    &quot;&quot;&quot;
+    Train with learning rate scheduling.
+    
+    Parameters:
+    - scheduler: LR scheduler object with get_lr(epoch) method
+    &quot;&quot;&quot;
+    n_samples = X_train.shape[1]
+    n_batches = n_samples // batch_size
+    
+    history = {
+        &#x27;train_loss&#x27;: [],
+        &#x27;val_loss&#x27;: [],
+        &#x27;val_accuracy&#x27;: [],
+        &#x27;learning_rate&#x27;: []
+    }
+    
+    for epoch in range(epochs):
+        # Get learning rate for this epoch
+        current_lr = scheduler.get_lr(epoch)
+        history[&#x27;learning_rate&#x27;].append(current_lr)
+        
+        # Shuffle and train
+        indices = np.random.permutation(n_samples)
+        X_shuffled = X_train[:, indices]
+        y_shuffled = y_train[:, indices]
+        
+        epoch_losses = []
+        
+        for batch in range(n_batches):
+            start = batch * batch_size
+            end = start + batch_size
+            X_batch = X_shuffled[:, start:end]
+            y_batch = y_shuffled[:, start:end]
+            
+            loss, _ = network.forward(X_batch, y_batch)
+            epoch_losses.append(loss)
+            network.backward()
+            
+            # Update with current learning rate
+            network.update_parameters(current_lr)
+        
+        # Validation
+        train_loss = np.mean(epoch_losses)
+        val_loss, val_acc = evaluate(network, X_val, y_val)
+        
+        history[&#x27;train_loss&#x27;].append(train_loss)
+        history[&#x27;val_loss&#x27;].append(val_loss)
+        history[&#x27;val_accuracy&#x27;].append(val_acc)
+        
+        if (epoch + 1) % 10 == 0:
+            print(f&quot;Epoch {epoch+1:2d}/{epochs}: &quot;
+                  f&quot;lr={current_lr:.6f}, &quot;
+                  f&quot;train_loss={train_loss:.4f}, &quot;
+                  f&quot;val_acc={val_acc:.4f}&quot;)
+    
+    return history</code></pre>
+<h3 class="sh3">Example Usage</h3>
+<p class="prose"># Create scheduler
+scheduler = CosineAnnealingLRScheduler(
+    initial_lr=0.1,
+    min_lr=0.0001,
+    total_epochs=50
+)
+
+# Train with scheduling
+network = NeuralNetwork([784, 128, 64, 10])
+history = train_with_lr_schedule(
+    network, X_train, y_train, X_val, y_val,
+    scheduler=scheduler,
+    batch_size=32,
+    epochs=50
+)
+
+# Visualize learning rate schedule
+plt.figure(figsize=(10, 4))
+plt.plot(history[&#x27;learning_rate&#x27;])
+plt.xlabel(&#x27;Epoch&#x27;)
+plt.ylabel(&#x27;Learning Rate&#x27;)
+plt.title(&#x27;Learning Rate Schedule&#x27;)
+plt.grid(True)
+plt.show()</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Batch Size And Poisoning</h3>
+<h3 class="sh3">Large Batches Smooth Gradients</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Poisoned samples contribute malicious gradients.
+Large batches average out these gradients.</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">1% poisoning rate (1 malicious sample per 100)
+
+Batch size 32: 0-1 poisoned samples per batch
+→ Poisoned gradients occasionally dominate
+
+Batch size 256: 2-3 poisoned samples per batch
+→ Poisoned gradients diluted by 253 clean samples</p>
+<h4 class="sh3">Implication</h4>
+<p class="prose">Larger batches make poisoning attacks harder to detect (smoother loss)</p>
+<h3 class="sh3">Sgd Noise Detection</h3>
+<h4 class="sh3">Method</h4>
+<p class="prose">SGD&#x27;s high gradient variance can expose anomalies:
+- Clean samples: consistent gradient direction
+- Poisoned samples: gradient points toward backdoor</p>
+<h4 class="sh3">Detection</h4>
+<p class="prose">Monitor per-sample gradient directions, flag outliers</p>
+<h3 class="sh2">Learning Rate And Backdoors</h3>
+<h3 class="sh3">High Lr Erases Backdoors</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Backdoor learned early in training.
+High learning rate later can overwrite backdoor.</p>
+<h4 class="sh3">Defense</h4>
+<p class="prose">Restart with high LR to potentially erase backdoors</p>
+<h3 class="sh3">Low Lr Preserves Backdoors</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Once backdoor embedded, low LR updates don&#x27;t remove it.</p>
+<h4 class="sh3">Attack Strategy</h4>
+<p class="prose">Poison early, then backdoor persists through fine-tuning</p>
+<h3 class="sh2">Membership Inference</h3>
+<h3 class="sh3">Batch Size Impact</h3>
+<h4 class="sh3">Small Batch</h4>
+<p class="prose">High gradient variance per sample.
+Training samples have lower variance (model memorized).
+Easier to distinguish training vs test samples.</p>
+<h4 class="sh3">Large Batch</h4>
+<p class="prose">Low gradient variance (averaged).
+Harder to distinguish individual sample influence.
+More privacy-preserving.</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Three variants: Batch GD (all samples), SGD (1 sample), Mini-batch (B samples per update)</li><li>Mini-batch dominates: combines speed (N/B updates/epoch) and stability (B-sample averaging)</li><li>Batch size tradeoffs: small=more noise/updates, large=more stable/fewer updates</li><li>Optimal batch size: 32-256 typical, increase until GPU ~80% utilized</li><li>Learning rate must decay: start high (fast progress), end low (converge)</li><li>Gradient variance: Batch GD has 0 variance, SGD has high variance, mini-batch has variance/√B</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Use mini-batch GD with batch size 32-128 as default (works 90% of time)</li><li>Increase batch size until GPU memory ~80% full (maximize throughput)</li><li>Always use learning rate scheduling: cosine annealing or step decay</li><li>Start with α=0.01-0.1, decay to α=0.0001-0.001 by end</li><li>Monitor GPU utilization: &lt;50% means increase batch size</li><li>Compare convergence: plot loss vs epochs AND loss vs wall-clock time</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Large batches hide poisoning: malicious gradients diluted by clean samples</li><li>SGD noise helps backdoor detection: anomalous gradients more visible</li><li>Learning rate schedule affects backdoor persistence: high LR can erase, low LR preserves</li><li>Small batches leak more information: easier membership inference via gradient variance</li></ul>
+<h3 class="sh2">Practical Wisdom</h3>
+<ul class="blist"><li>Never use pure batch GD or pure SGD: mini-batch always better in practice</li><li>Batch size is hardware constraint: fit as many as memory allows</li><li>Learning rate more important than batch size: spend time tuning LR schedule</li><li>Rule of thumb: double batch size → multiply LR by √2 (linear scaling rule)</li><li>When in doubt: batch=64, α_initial=0.01, cosine decay to 0.0001 over training</li></ul>
+</article>

@@ -1,0 +1,785 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 14 · Section 8 · ~6 pages</div>
+<h1>Observability: Metrics, Logging, and Tracing</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">A detection system that cannot be observed cannot be operated, tuned, or trusted, so observability is a precondition rather than optional instrumentation: metrics give aggregate health, logging gives per-event detail, and tracing follows a request through the tiers, with the golden signals -- latency, traffic, errors, saturation -- as the compact core, all instrumented cheaply so measuring the hot path does not itself violate the latency budget.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Sections 14.02 through 14.07 built a gateway that is placed correctly, fast per request,
+scalable in aggregate, and resilient to failure. All of that behaviour is now happening --
+and none of it is visible. The circuit breakers are tripping and recovering, the latency
+budget is being met or missed, detectors are flagging and failing, load is being shed --
+but an operator looking at the running gateway has no way to see any of it. This is the
+observability concern from the 14.01 taxonomy, and its consequence is sharp: a detection
+system you cannot see is a detection system you cannot operate, tune, or trust. If the
+false-positive rate triples, no one knows until users route around the product; if a
+detector is silently failing open, no one knows until the attack it missed surfaces
+elsewhere. This section makes the system observable. It builds the three complementary
+pillars -- metrics for aggregate health, structured logging for per-event detail, and
+tracing to follow a single request through the tiers -- and defines the golden signals of
+latency, traffic, errors, and saturation as the compact metric core that a health picture
+and, later, alerting are built on. Crucially, it does all of this under the same latency
+discipline the rest of the chapter obeys: the instrumentation of the hot path must be cheap
+enough that observing the latency budget does not itself spend it. Observability is not a
+reporting afterthought; it is the precondition for running the system at all, and the
+precondition for the tuning that Chapter 17 will do.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 14.08 is the first of the two operability sections (14.08-14.09) and the response to
+the observability concern from the 14.01 taxonomy. It produces and instruments the signals;
+Section 14.09 then assembles those signals into an operable dashboard with alerting,
+runbooks, and service level objectives. This section is the instrumentation layer beneath
+the dashboard, and the observability it creates is the precondition for the tuning of
+Chapter 17.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names observability as a concern</li><li>Section 14.04: the latency budget that instrumentation of the hot path must not violate</li><li>Section 14.06: the fail-open/fail-closed policy whose outcomes are logged as detection events</li><li>Section 14.07: the circuit breaker states surfaced as observable signals</li><li>Chapter 13 Section 13.11: the behavioural monitoring dashboard views that the production signals will later integrate with</li><li>Working knowledge of metrics counters, structured logging, and distributed tracing concepts</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">You Cannot Operate What You Cannot See</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The gateway built over the last six sections does a great deal, and it does all of it
+invisibly. A circuit breaker opens when a detector fails and closes when it recovers, but
+nothing shows that it happened. The inline tier meets or misses its P99 budget on every
+request, but the number is not surfaced anywhere. Detectors flag, error, and time out;
+load is shed under stress; the fail-open and fail-closed policies fire -- and an operator
+watching the running system sees none of it. The gateway is a black box that happens to
+be working.
+
+A black box that works is fine until it stops working, and then it is a disaster, because
+there is no way to tell what changed. Consider the failure that this whole section exists
+to prevent: the false-positive rate quietly triples. Perhaps a model was updated, perhaps
+the traffic shifted, perhaps a threshold drifted. In an unobserved system nothing alerts,
+no number moves that anyone is watching, and the first sign is indirect and late -- users
+complaining, or worse, users silently routing around the product because it keeps
+blocking their legitimate requests. By the time the symptom is visible the damage is done
+and the cause is cold. The same is true of the opposite failure: a detector silently
+failing open provides no protection, and in a black box no one learns this until the
+attack it should have caught surfaces somewhere downstream.
+
+This is why observability is a precondition rather than an optional extra. A detection
+system that cannot be observed cannot be operated, because operation means noticing and
+responding to change, and you cannot respond to what you cannot see. It cannot be tuned,
+because tuning means adjusting against measured behaviour, and there is no measurement.
+And it cannot be trusted, because trust in a security control comes from being able to
+verify it is working, not from assuming it is. Observability is what turns the black box
+into a system an operator can run, and building it is not decoration on top of the
+gateway -- it is what makes the gateway operable at all.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Three Complementary Pillars</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Observability is not one thing but three, and the three are complementary rather than
+redundant: each answers a question the others cannot. Metrics answer how the system is
+doing in aggregate. Logging answers what happened in a specific event. Tracing answers
+where a single request went and how long each step took. A system needs all three,
+because operating it requires all three questions answered.
+
+Metrics are aggregate numbers over time -- rates, latencies, counts -- that give the
+health of the system at a glance. The per-detector flag rate, error rate, and average
+latency, the per-tier request rate: these are metrics, and they are what an operator
+watches to know whether the gateway is healthy right now and how that is trending. Metrics
+are cheap to keep and cheap to read, but they are aggregate by nature -- they tell you the
+error rate rose, not which requests errored or why.
+
+Logging fills that gap with per-event detail. A structured detection event -- one record
+per detection outcome, carrying the detector, the verdict, the score, the latency, the
+policy applied -- is what you reach for once a metric tells you something is wrong and you
+need to investigate the specific cases. Logs are the audit trail and the investigation
+surface. Tracing is the third pillar: it follows one request through the tiers, recording
+a span for each detector that touched it, all correlated under a single trace identifier.
+Where a metric says the P99 rose and a log shows which requests were slow, a trace shows
+where in the request the time went -- which detector on which tier was the slow step.
+The observability stack deliverable for this section feeds all three pillars from one
+update per detection outcome, so that every request is simultaneously counted in the
+metrics, recorded in a span, and written to the log, and the three views stay consistent
+because they come from the same source.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Golden Signals</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Metrics can proliferate endlessly -- there is always another number to count -- and a
+sprawl of hundreds of metrics is nearly as useless as none, because no operator can watch
+them all. The discipline that keeps metrics operable is to identify a small core that,
+together, summarise health. For a request-serving system that core is the four golden
+signals: latency, traffic, errors, and saturation. They are the compact health picture
+of the detection gateway.
+
+Each answers one essential question. Latency asks how long detection takes -- the
+per-detector percentiles and the end-to-end inline P99 against the budget -- and a rising
+latency signal warns the budget is at risk before it is breached. Traffic asks how much
+load is arriving -- calls per second per detector, requests per second per tier -- and it
+is both the denominator for every rate and the trigger for scaling. Errors asks how often
+detection fails -- the per-detector error and timeout rate, the fail-open and fail-closed
+counts -- and a rising error signal reveals a detector fault, often before the circuit
+breaker even trips. Saturation asks how full the system is -- in-flight calls against the
+bulkhead cap, queue depth, instance utilisation -- and saturation approaching the cap
+warns that shedding and backpressure are ahead.
+
+The reason to privilege these four is that they are few enough to watch and complete
+enough to matter. Together they answer whether the gateway is fast, how much work it is
+doing, whether it is failing, and whether it is running out of room -- which is most of
+what health means for a serving system. The golden-signals reference for this section
+defines them per detector and per tier, and they are what the alerting of Section 14.09
+is built on, precisely because a small, well-chosen signal set is what makes alerting
+possible without drowning the operator. The golden signals are the summary; the logs and
+traces are the detail you reach for once a signal points you somewhere.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Structured Logging and Correlated Tracing</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The value of logs and traces depends entirely on being able to query them, and that
+depends on structure. A log of free-text lines is a wall you can only grep; a log of
+structured events is a queryable record. The detection-event schema for this section
+makes every event a machine-parseable object with the same fields present on every one --
+timestamp, trace identifier, tier, detector, verdict, score, latency, policy applied,
+breaker state -- so the log can be filtered by any of them. Filter by detector to audit
+one detector, by verdict to find every timeout, by breaker state to see what happened
+while a breaker was open. Structure is what turns the detail from unsearchable text into
+an investigation surface.
+
+The single most important field for tying the pillars together is the trace identifier.
+Every event and every span from the same request carries the same trace identifier, so
+the aggregate metric, the per-event log, and the per-request trace can all be joined back
+to one request. This is what correlation across the request lifecycle means: a request
+that was flagged pre-processing, passed the model, and was withheld post-processing
+produces a series of events and spans that share an identifier and can be reassembled
+into the full story of that one request across the tiers.
+
+Tracing specifically follows the request through the tiers by emitting a span per
+detector under that shared identifier, ordered as the request moves through
+pre-processing, the model call, and post-processing. When a request is slow or produces a
+surprising verdict, the trace shows exactly which detector on which tier was responsible,
+which no aggregate metric can tell you. The tracing configuration for this section sets
+this up across all three tiers, propagating the trace identifier everywhere so that even
+the asynchronous near-real-time processing of a request can be correlated back to the
+synchronous request that spawned it.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Instrumenting the Hot Path Without Spending the Budget</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Observability has a cost, and on the inline tier that cost runs directly into the latency
+budget of Section 14.04. Every metric update, every log write, every span emitted takes
+some time, and if that time is spent synchronously on the hot path, then the act of
+measuring the latency budget consumes the very budget it is measuring. The instrumentation
+of the hot path must therefore be held to the same latency discipline as the detection on
+it: observing the inline tier must be cheap.
+
+Two techniques keep it cheap. The first is to make the on-path work minimal and defer the
+expensive part off-path. Recording a metric or a span on the hot path should be little
+more than an in-memory increment or an append to a buffer -- a few nanoseconds -- while
+the costly work of exporting those metrics and spans to the monitoring backend happens
+asynchronously, off the request path, where it does not add to request latency. The hot
+path records; a background exporter ships. The second technique is sampling. Not every
+request needs a full trace: propagating the trace identifier on every request is cheap
+and lets any request be correlated if needed, but fully sampling and exporting a trace
+for only a small fraction of inline requests captures the distribution while keeping the
+per-request cost negligible. Off the hot path, where a little more cost is affordable,
+the sample rate can be higher, and the batch tier, which is not latency-sensitive at all,
+can be traced fully.
+
+This is the same principle that ran through the latency and cost engineering of the
+chapter, now applied to the monitoring itself: measure the hot path cheaply, and push the
+expensive work to where there is room for it. The result is a gateway that is fully
+observable without its observability becoming a latency regression. An instrumentation
+design that ignored this would produce accurate metrics about a gateway that its own
+metrics had made too slow -- a self-defeating outcome the sampling and asynchronous export
+of this section are built to avoid.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Observability as the Precondition for Everything After</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">With the three pillars instrumented and the hot path measured cheaply, the gateway is
+observable: its aggregate health is in the golden signals, its per-event detail is in the
+structured logs, and any single request can be followed through the tiers by its trace.
+The black box has become a system whose behaviour can be seen. That visibility is the
+foundation for everything that operating the gateway involves, and it is worth being
+explicit about what it unlocks.
+
+Immediately, it unlocks the dashboard and alerting of Section 14.09. The golden signals
+this section defines are exactly what the dashboard visualises and what alerting fires
+on; the structured logs are what an on-call responder queries when an alert points them
+at a problem; the traces are what they use to localise it. Section 14.09 assembles these
+signals into the operational interface, but it can only do so because this section
+produced them. The dashboard is a view onto the observability built here, not a separate
+thing.
+
+Further out, observability is the precondition for tuning. A detection system is never
+finished at deployment -- its thresholds, its rules, its models all need adjustment as
+threats and traffic change -- and that adjustment is the subject of Chapter 17. But
+tuning is adjustment against measured behaviour: you cannot sensibly lower a threshold
+without seeing its false-positive rate, or retire a rule without seeing that it never
+fires. Every tuning decision rests on a measurement, and the measurements are what this
+section creates. So observability closes the operability question the taxonomy raised --
+can the system be seen, tuned, and trusted -- by providing the seeing that the tuning and
+the trusting both depend on. With the gateway now observable, Section 14.09 can build the
+operational interface that turns these raw signals into something the security and
+platform teams actually watch.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Three Observability Pillars</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Metrics, logging, and tracing compared by the question each answers, its granularity, and when an operator reaches for it. The three are complementary: aggregate health, per-event detail, and per-request path.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Pillar</li><li>Question it answers</li><li>Granularity</li><li>Reached for when</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Metrics</li><li>How is the system doing in aggregate?</li><li>Rates and percentiles over time</li><li>Watching health and spotting that something changed</li></ul>
+<ul class="blist"><li>Logging</li><li>What happened in this event?</li><li>One record per detection outcome</li><li>Investigating specific cases after a metric moves</li></ul>
+<ul class="blist"><li>Tracing</li><li>Where did this request go and what was slow?</li><li>One span per detector per request</li><li>Localising which detector or tier caused a slow or odd request</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Golden Signals for a Detection Gateway</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The four golden signals, the question each answers, and its per-detector and per-tier metric. Together they give a compact health picture that alerting is built on, small enough to watch and complete enough to matter.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Signal</li><li>Question</li><li>Per-detector metric</li><li>Per-tier metric</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Latency</li><li>How long does detection take?</li><li>P50/P95/P99 per detector</li><li>End-to-end inline P99 against the budget</li></ul>
+<ul class="blist"><li>Traffic</li><li>How much load is arriving?</li><li>Calls per second per detector</li><li>Requests per second per tier</li></ul>
+<ul class="blist"><li>Errors</li><li>How often does detection fail?</li><li>Error and timeout rate per detector</li><li>Fail-open and fail-closed counts per tier</li></ul>
+<ul class="blist"><li>Saturation</li><li>How full is the system?</li><li>In-flight versus bulkhead cap</li><li>Queue depth and instance utilisation</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Structured Detection-Event Log Schema</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The fields present on every structured detection event. Uniform fields make the log queryable by any of them, and the trace identifier ties each event back to its request trace for correlation across the pillars.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Field</li><li>Meaning</li><li>Example</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>ts</li><li>Event timestamp (UTC)</li><li>20260121T101500Z</li></ul>
+<ul class="blist"><li>trace_id</li><li>Ties the event to its request trace</li><li>a1b2c3d4</li></ul>
+<ul class="blist"><li>detector / tier</li><li>Which detector, on which tier</li><li>Injection classifier / inline</li></ul>
+<ul class="blist"><li>verdict</li><li>Outcome of the detection</li><li>clean, flagged, error, timeout</li></ul>
+<ul class="blist"><li>score / latency_ms</li><li>Detection score and how long it took</li><li>0.94 / 12.0</li></ul>
+<ul class="blist"><li>policy_applied</li><li>How a failure resolved, else null</li><li>fail_closed</li></ul>
+<ul class="blist"><li>breaker_state</li><li>Breaker state at the time of the call</li><li>closed, open, half_open</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Cheap Hot-Path Instrumentation Techniques</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">How the inline tier is observed without spending the latency budget: minimal on-path recording with asynchronous export, and sampling scaled by how latency-sensitive the tier is. The same latency discipline applied to detection, applied to its monitoring.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Technique</li><li>What it does</li><li>Effect on the hot path</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Asynchronous export</li><li>Record in memory on-path; export off-path</li><li>Hot path pays an increment, not a network write</li></ul>
+<ul class="blist"><li>Trace-id propagation</li><li>Carry the identifier on every request</li><li>Cheap: any request can be correlated if needed</li></ul>
+<ul class="blist"><li>Inline sampling (low rate)</li><li>Fully trace only a small fraction of inline requests</li><li>Captures the distribution at negligible per-request cost</li></ul>
+<ul class="blist"><li>Higher off-path sampling</li><li>Trace more on near-real-time, fully on batch</li><li>Affordable where latency is not at stake</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Observability Stack: Metrics, Logging, and Tracing</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">observability_stack.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Instruments the detection gateway across all three pillars from a single cheap update per detection outcome: per-detector metrics for aggregate health, a trace span correlated by one trace identifier per request, and a structured JSON log event. Shows one request made visible three ways -- metrics, trace, and logs -- all consistent because they share a source.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library json, time, and uuid only. The JSON log lines contain double quotes at runtime as required by the JSON format; the source uses single quotes throughout.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># observability_stack.py
+# Section 14.08: Metrics, Logging, and Tracing Instrumentation for the Detection Gateway
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import json
+import time
+import uuid
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+
+# --- Metrics: cheap aggregate counters and latency accumulators per detector ---
+@dataclass
+class DetectorMetrics:
+    name: str
+    calls: int = 0
+    flagged: int = 0
+    errors: int = 0
+    latency_ms_sum: float = 0.0
+    in_flight: int = 0
+    max_concurrent: int = 0
+
+    def record(self, latency_ms: float, flagged: bool, errored: bool) -&gt; None:
+        self.calls += 1
+        self.latency_ms_sum += latency_ms
+        if flagged:
+            self.flagged += 1
+        if errored:
+            self.errors += 1
+
+    def snapshot(self) -&gt; Dict[str, float]:
+        avg = self.latency_ms_sum / self.calls if self.calls else 0.0
+        return {
+            &#x27;traffic_calls&#x27;: self.calls,
+            &#x27;flag_rate&#x27;: round(self.flagged / self.calls, 4) if self.calls else 0.0,
+            &#x27;error_rate&#x27;: round(self.errors / self.calls, 4) if self.calls else 0.0,
+            &#x27;avg_latency_ms&#x27;: round(avg, 2),
+            &#x27;saturation_max_concurrent&#x27;: self.max_concurrent,
+        }
+
+
+# --- Tracing: a span per detector, correlated by one trace id per request ---
+@dataclass
+class Span:
+    trace_id: str
+    detector: str
+    tier: str
+    start_ms: float
+    duration_ms: float
+
+
+@dataclass
+class Tracer:
+    spans: List[Span] = field(default_factory=list)
+
+    def record_span(self, trace_id: str, detector: str, tier: str, start_ms: float, duration_ms: float) -&gt; None:
+        self.spans.append(Span(trace_id, detector, tier, start_ms, round(duration_ms, 2)))
+
+    def trace(self, trace_id: str) -&gt; List[Span]:
+        return [s for s in self.spans if s.trace_id == trace_id]
+
+
+# --- Structured logging: one JSON event per detection outcome ---
+def log_event(trace_id: str, detector: str, tier: str, verdict: str, latency_ms: float) -&gt; str:
+    event = {
+        &#x27;ts&#x27;: &#x27;20260121T000000Z&#x27;,
+        &#x27;trace_id&#x27;: trace_id,
+        &#x27;detector&#x27;: detector,
+        &#x27;tier&#x27;: tier,
+        &#x27;verdict&#x27;: verdict,
+        &#x27;latency_ms&#x27;: round(latency_ms, 2),
+    }
+    return json.dumps(event, sort_keys=True)
+
+
+@dataclass
+class ObservabilityStack:
+    metrics: Dict[str, DetectorMetrics] = field(default_factory=dict)
+    tracer: Tracer = field(default_factory=Tracer)
+    logs: List[str] = field(default_factory=list)
+
+    def observe(self, trace_id: str, detector: str, tier: str,
+                start_ms: float, latency_ms: float, flagged: bool, errored: bool) -&gt; None:
+        &#x27;&#x27;&#x27;Record a single detection outcome across all three pillars at once.
+
+        The three pillars are complementary: the metric updates the aggregate health,
+        the span records this call in the request trace, and the log captures the
+        per-event detail. All three are fed from one cheap in-memory update so the
+        hot path pays almost nothing to be observed.
+        &#x27;&#x27;&#x27;
+        m = self.metrics.setdefault(detector, DetectorMetrics(detector))
+        m.record(latency_ms, flagged, errored)
+        self.tracer.record_span(trace_id, detector, tier, start_ms, latency_ms)
+        verdict = &#x27;error&#x27; if errored else (&#x27;flagged&#x27; if flagged else &#x27;clean&#x27;)
+        self.logs.append(log_event(trace_id, detector, tier, verdict, latency_ms))
+
+
+def demo() -&gt; None:
+    stack = ObservabilityStack()
+    trace_id = uuid.uuid4().hex[:12]
+    # Simulate one request passing through three detectors on the inline tier.
+    calls = [
+        (&#x27;Injection classifier&#x27;, &#x27;inline&#x27;, 14.2, False, False),
+        (&#x27;Jailbreak classifier&#x27;, &#x27;inline&#x27;, 11.8, True, False),
+        (&#x27;Output PII scanner&#x27;, &#x27;inline&#x27;, 7.1, False, False),
+    ]
+    t = 0.0
+    for name, tier, lat, flagged, errored in calls:
+        stack.observe(trace_id, name, tier, t, lat, flagged, errored)
+        t += lat
+
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;OBSERVABILITY STACK: METRICS, TRACING, LOGGING&#x27;)
+    print(&#x27;One request observed across all three pillars from a single cheap update&#x27;)
+    print(&#x27;=&#x27; * 78)
+    print()
+    print(&#x27;METRICS (aggregate health per detector):&#x27;)
+    for name, m in stack.metrics.items():
+        print(f&#x27;  {name}: {m.snapshot()}&#x27;)
+    print()
+    print(f&#x27;TRACE (following request {trace_id} through the tiers):&#x27;)
+    for s in stack.tracer.trace(trace_id):
+        print(f&#x27;  [{s.tier}] {s.detector}: start +{s.start_ms:.1f}ms, took {s.duration_ms:.1f}ms&#x27;)
+    print()
+    print(&#x27;LOGS (structured per-event detail for audit and investigation):&#x27;)
+    for line in stack.logs:
+        print(f&#x27;  {line}&#x27;)
+    print()
+    print(&#x27;The same request is now visible three ways: metrics for aggregate health,&#x27;)
+    print(&#x27;a trace for its path through the tiers, and logs for per-event audit detail.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Golden-Signals Metric Reference</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">golden_signals_reference.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Defines the four golden signals -- latency, traffic, errors, saturation -- with the question each answers and its per-detector and per-tier metric, and explains why a small, well-chosen signal set is what an operator can actually watch and what the Section 14.09 alerting is built on.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the golden-signals reference and the rationale for privileging four signals.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># golden_signals_reference.py
+# Section 14.08: Golden-Signals Metric Reference for the Detection Gateway
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class GoldenSignal:
+    signal: str
+    question: str
+    detector_metric: str
+    tier_metric: str
+    why_it_matters: str
+
+
+SIGNALS: List[GoldenSignal] = [
+    GoldenSignal(
+        signal=&#x27;Latency&#x27;,
+        question=&#x27;How long does detection take?&#x27;,
+        detector_metric=&#x27;Per-detector P50/P95/P99 latency&#x27;,
+        tier_metric=&#x27;End-to-end inline-tier P99 against the budget&#x27;,
+        why_it_matters=&#x27;A rising P99 warns the latency budget is at risk before it is breached&#x27;,
+    ),
+    GoldenSignal(
+        signal=&#x27;Traffic&#x27;,
+        question=&#x27;How much load is arriving?&#x27;,
+        detector_metric=&#x27;Per-detector calls per second&#x27;,
+        tier_metric=&#x27;Requests per second per tier&#x27;,
+        why_it_matters=&#x27;Traffic is the denominator for every rate and the trigger for scaling&#x27;,
+    ),
+    GoldenSignal(
+        signal=&#x27;Errors&#x27;,
+        question=&#x27;How often does detection fail?&#x27;,
+        detector_metric=&#x27;Per-detector error and timeout rate&#x27;,
+        tier_metric=&#x27;Fail-open and fail-closed counts per tier&#x27;,
+        why_it_matters=&#x27;A rising error rate signals a detector fault before the breaker even trips&#x27;,
+    ),
+    GoldenSignal(
+        signal=&#x27;Saturation&#x27;,
+        question=&#x27;How full is the system?&#x27;,
+        detector_metric=&#x27;Per-detector in-flight versus bulkhead cap&#x27;,
+        tier_metric=&#x27;Queue depth and instance utilisation per tier&#x27;,
+        why_it_matters=&#x27;Saturation approaching the cap warns of shedding and backpressure ahead&#x27;,
+    ),
+]
+
+
+def print_reference(signals: List[GoldenSignal]) -&gt; None:
+    print(&#x27;=&#x27; * 88)
+    print(&#x27;GOLDEN-SIGNALS METRIC REFERENCE&#x27;)
+    print(&#x27;Four signals -- latency, traffic, errors, saturation -- give a compact health picture&#x27;)
+    print(&#x27;=&#x27; * 88)
+    for s in signals:
+        print()
+        print(f&#x27;SIGNAL: {s.signal}&#x27;)
+        print(f&#x27;  Answers        : {s.question}&#x27;)
+        print(f&#x27;  Per detector   : {s.detector_metric}&#x27;)
+        print(f&#x27;  Per tier       : {s.tier_metric}&#x27;)
+        print(f&#x27;  Why it matters : {s.why_it_matters}&#x27;)
+
+
+def coverage_note(signals: List[GoldenSignal]) -&gt; None:
+    print()
+    print(&#x27;=&#x27; * 88)
+    print(&#x27;WHY THESE FOUR&#x27;)
+    print(&#x27;=&#x27; * 88)
+    print(f&#x27;These {len(signals)} signals are deliberately few. They are the compact core that&#x27;)
+    print(&#x27;answers, together, whether the gateway is healthy: is it fast (latency), how much&#x27;)
+    print(&#x27;work is it doing (traffic), is it failing (errors), and is it running out of room&#x27;)
+    print(&#x27;(saturation). Alerting in Section 14.09 is built on these four rather than on a&#x27;)
+    print(&#x27;sprawl of metrics, because a small, well-chosen set is what an operator can actually&#x27;)
+    print(&#x27;watch. The golden signals are the health summary; the logs and traces are the detail&#x27;)
+    print(&#x27;you reach for once a signal tells you where to look.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_reference(SIGNALS)
+    coverage_note(SIGNALS)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Structured Detection-Event Logging Schema</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">detection_event_log_schema.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Defines a structured detection-event schema with uniform fields on every event -- timestamp, trace identifier, tier, detector, verdict, score, latency, policy applied, breaker state -- serialised as one JSON object per line, so the log is queryable by any field and joinable to a trace by the trace identifier.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library json and dataclasses only. Emitted log lines are JSON and therefore contain double quotes at runtime; the source uses single quotes throughout.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># detection_event_log_schema.py
+# Section 14.08: Structured Detection-Event Logging Schema
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import json
+from dataclasses import dataclass, asdict
+from typing import List, Optional
+
+
+@dataclass
+class DetectionEvent:
+    &#x27;&#x27;&#x27;One structured detection event -- machine-parseable for audit and investigation.
+
+    Every field is present on every event so the log is queryable by any of them.
+    The trace_id ties the event back to its request trace; the verdict and score
+    carry the detection outcome; the policy_applied records how a failure resolved.
+    &#x27;&#x27;&#x27;
+    ts: str
+    trace_id: str
+    tier: str
+    detector: str
+    verdict: str                    # &#x27;clean&#x27;, &#x27;flagged&#x27;, &#x27;error&#x27;, &#x27;timeout&#x27;
+    score: Optional[float]
+    latency_ms: float
+    policy_applied: Optional[str]   # e.g. &#x27;fail_closed&#x27; when the detector failed
+    breaker_state: str              # &#x27;closed&#x27;, &#x27;open&#x27;, &#x27;half_open&#x27;
+
+
+def to_log_line(event: DetectionEvent) -&gt; str:
+    # Compact single-line JSON: one event per line, sorted keys for stable diffs.
+    return json.dumps(asdict(event), sort_keys=True)
+
+
+def sample_events() -&gt; List[DetectionEvent]:
+    return [
+        DetectionEvent(&#x27;20260121T101500Z&#x27;, &#x27;a1b2c3d4&#x27;, &#x27;inline&#x27;, &#x27;Injection classifier&#x27;,
+                       &#x27;clean&#x27;, 0.03, 14.1, None, &#x27;closed&#x27;),
+        DetectionEvent(&#x27;20260121T101500Z&#x27;, &#x27;a1b2c3d4&#x27;, &#x27;inline&#x27;, &#x27;Jailbreak classifier&#x27;,
+                       &#x27;flagged&#x27;, 0.94, 12.0, None, &#x27;closed&#x27;),
+        DetectionEvent(&#x27;20260121T101501Z&#x27;, &#x27;e5f6a7b8&#x27;, &#x27;inline&#x27;, &#x27;Output PII scanner&#x27;,
+                       &#x27;timeout&#x27;, None, 15.0, &#x27;fail_closed&#x27;, &#x27;closed&#x27;),
+        DetectionEvent(&#x27;20260121T101502Z&#x27;, &#x27;c9d0e1f2&#x27;, &#x27;inline&#x27;, &#x27;Injection classifier&#x27;,
+                       &#x27;error&#x27;, None, 2.3, &#x27;fail_closed&#x27;, &#x27;open&#x27;),
+    ]
+
+
+def print_schema_and_events() -&gt; None:
+    print(&#x27;=&#x27; * 88)
+    print(&#x27;STRUCTURED DETECTION-EVENT LOGGING SCHEMA&#x27;)
+    print(&#x27;One machine-parseable JSON event per detection outcome&#x27;)
+    print(&#x27;=&#x27; * 88)
+    print()
+    print(&#x27;SCHEMA FIELDS:&#x27;)
+    fields = [
+        (&#x27;ts&#x27;, &#x27;event timestamp (UTC)&#x27;),
+        (&#x27;trace_id&#x27;, &#x27;ties the event to its request trace&#x27;),
+        (&#x27;tier&#x27;, &#x27;inline, near_real_time, or batch&#x27;),
+        (&#x27;detector&#x27;, &#x27;which detector produced the event&#x27;),
+        (&#x27;verdict&#x27;, &#x27;clean, flagged, error, or timeout&#x27;),
+        (&#x27;score&#x27;, &#x27;detection score when available, else null&#x27;),
+        (&#x27;latency_ms&#x27;, &#x27;how long the detector took&#x27;),
+        (&#x27;policy_applied&#x27;, &#x27;fail_open or fail_closed when the detector failed, else null&#x27;),
+        (&#x27;breaker_state&#x27;, &#x27;closed, open, or half_open at the time of the call&#x27;),
+    ]
+    for name, desc in fields:
+        print(f&#x27;  {name:&lt;16}{desc}&#x27;)
+    print()
+    print(&#x27;SAMPLE EVENTS (one JSON object per line):&#x27;)
+    for e in sample_events():
+        print(f&#x27;  {to_log_line(e)}&#x27;)
+    print()
+    print(&#x27;Because every event is structured and carries the trace_id, the log is queryable:&#x27;)
+    print(&#x27;filter by detector to audit one detector, by verdict to find every timeout, or by&#x27;)
+    print(&#x27;trace_id to reconstruct one request. Structured logging is what makes the detail&#x27;)
+    print(&#x27;searchable rather than a wall of free text.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_schema_and_events()</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Request-Tracing Configuration Across the Tiers</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">request_tracing_config.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Configures request tracing across the three tiers -- propagating the trace identifier everywhere with tier-scaled sampling and asynchronous export -- and builds one request trace as spans sharing a single identifier ordered through pre-processing, the model call, and post-processing, showing how instrumentation stays cheap on the hot path.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the per-tier tracing configuration and a single correlated request trace.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># request_tracing_config.py
+# Section 14.08: Request-Tracing Configuration Across the Detection Tiers
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class TraceConfig:
+    tier: str
+    propagate_trace_id: bool
+    sample_rate: float          # fraction of requests fully traced
+    async_export: bool          # spans exported off the hot path
+    note: str
+
+
+TRACE_CONFIGS: List[TraceConfig] = [
+    TraceConfig(&#x27;inline&#x27;, True, 0.05, True,
+                &#x27;Trace id propagated on every request; only 5% fully sampled to keep the hot path cheap&#x27;),
+    TraceConfig(&#x27;near_real_time&#x27;, True, 0.20, True,
+                &#x27;Higher sample rate off the hot path where a little more tracing cost is affordable&#x27;),
+    TraceConfig(&#x27;batch&#x27;, True, 1.00, True,
+                &#x27;Fully traced: batch jobs are not latency-sensitive, so trace everything&#x27;),
+]
+
+
+@dataclass
+class Span:
+    detector: str
+    tier: str
+    parent: Optional[str]
+    order: int
+
+
+def build_request_trace() -&gt; List[Span]:
+    # A single request produces a span per detector, all sharing one trace id,
+    # ordered as the request passes pre-processing, the model call, post-processing.
+    return [
+        Span(&#x27;gateway_entry&#x27;, &#x27;inline&#x27;, None, 0),
+        Span(&#x27;Injection classifier&#x27;, &#x27;inline&#x27;, &#x27;gateway_entry&#x27;, 1),
+        Span(&#x27;Jailbreak classifier&#x27;, &#x27;inline&#x27;, &#x27;gateway_entry&#x27;, 2),
+        Span(&#x27;model_call&#x27;, &#x27;inline&#x27;, &#x27;gateway_entry&#x27;, 3),
+        Span(&#x27;Output PII scanner&#x27;, &#x27;inline&#x27;, &#x27;gateway_entry&#x27;, 4),
+        Span(&#x27;Session scorer (async)&#x27;, &#x27;near_real_time&#x27;, &#x27;gateway_entry&#x27;, 5),
+    ]
+
+
+def print_config(configs: List[TraceConfig]) -&gt; None:
+    print(&#x27;=&#x27; * 90)
+    print(&#x27;REQUEST-TRACING CONFIGURATION ACROSS THE TIERS&#x27;)
+    print(&#x27;Trace id propagated everywhere; sampling keeps the hot path cheap&#x27;)
+    print(&#x27;=&#x27; * 90)
+    header = &#x27;Tier&#x27;.ljust(18) + &#x27;Propagate id&#x27;.ljust(14) + &#x27;Sample rate&#x27;.ljust(14) + &#x27;Async export&#x27;
+    print(header)
+    print(&#x27;-&#x27; * 90)
+    for c in configs:
+        print(c.tier.ljust(18) + str(c.propagate_trace_id).ljust(14)
+              + f&#x27;{c.sample_rate:.0%}&#x27;.ljust(14) + str(c.async_export))
+    print(&#x27;-&#x27; * 90)
+    for c in configs:
+        print(f&#x27;  {c.tier}: {c.note}&#x27;)
+
+
+def print_trace() -&gt; None:
+    print()
+    print(&#x27;=&#x27; * 90)
+    print(&#x27;ONE REQUEST TRACE (spans share a single trace id, correlated across tiers)&#x27;)
+    print(&#x27;=&#x27; * 90)
+    for s in build_request_trace():
+        indent = &#x27;    &#x27; if s.parent else &#x27;  &#x27;
+        print(f&#x27;{indent}[{s.order}] {s.detector} ({s.tier})&#x27;)
+    print()
+    print(&#x27;The trace correlates every detector that touched the request under one id, so a&#x27;)
+    print(&#x27;single slow or failing request can be followed through pre-processing, the model&#x27;)
+    print(&#x27;call, and post-processing across tiers. Sampling and async export keep the inline&#x27;)
+    print(&#x27;instrumentation cheap: the hot path records a span but exports it off-path, so the&#x27;)
+    print(&#x27;observability of the latency budget does not itself spend the latency budget.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_config(TRACE_CONFIGS)
+    print_trace()</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating observability as optional instrumentation to add later rather than a precondition for operating the system</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The gateway appears to work without it -- detection happens, requests are served -- so
+instrumentation feels like a reporting nicety that can wait until after the real
+functionality is done.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The system runs as a black box, and when the false-positive rate triples or a detector silently fails open, nothing alerts and no metric moves, so the first sign is users routing around the product or an attack surfacing downstream -- late and with a cold cause.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Build observability as a precondition for running the system: a detection system that cannot be seen cannot be operated, tuned, or trusted, so instrument it before it goes to production, not after the first invisible incident.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Relying on one pillar -- usually metrics -- and treating logging and tracing as redundant</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Metrics give a satisfying dashboard and answer the health question at a glance, so it is
+tempting to conclude that aggregate numbers are enough and per-event logs and per-request
+traces are duplicative.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">When a metric reveals a problem there is no way to investigate it: no per-event detail to find which cases errored and no trace to localise which detector or tier was slow, so the operator sees that something is wrong but cannot find out what or where.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Instrument all three complementary pillars, because they answer different questions: metrics for aggregate health, logging for per-event audit and investigation, and tracing to follow a single request through the tiers.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Instrumenting the inline hot path synchronously so the observability itself adds latency</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The simplest way to emit a metric or a span is to write it out where it happens, and in
+development the write is fast enough that its cost on the hot path is never noticed.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">In production the synchronous metric updates, log writes, and span exports add real time to every inline request, so the act of measuring the latency budget consumes the budget it measures and the observability causes the latency regression it was meant to detect.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Hold instrumentation to the same latency discipline as detection: record cheaply in memory on the hot path and export asynchronously off-path, and sample inline traces at a low rate so the per-request cost stays negligible.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Emitting unstructured free-text logs instead of structured, queryable events</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Free-text log lines are the quickest to write and read like a human narrative, so they
+feel informative until the log grows to a volume no one can grep meaningfully.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The log becomes an unsearchable wall of text that cannot be filtered by detector, verdict, or request, so investigating an incident means manually scanning lines rather than querying, and the per-event detail that logging exists to provide is effectively lost.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Emit structured detection events with uniform fields -- detector, verdict, latency, policy, trace identifier -- as one JSON object per line, so the log is queryable by any field and each event joins back to its request trace.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Not correlating signals across the pillars with a shared trace identifier</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Each pillar works on its own -- metrics tick, logs write, spans record -- so it is easy
+to instrument all three without giving them a common key, since each looks complete in
+isolation.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A metric, a log event, and a trace about the same request cannot be joined, so an operator who sees a latency spike in the metrics cannot pull the specific logs and trace for the slow requests, and the investigation stalls at the boundary between the pillars.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Propagate one trace identifier across every metric context, log event, and trace span for a request, so the three pillars correlate and a single request can be reassembled across aggregate health, per-event detail, and per-request path.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">A detection system that cannot be observed cannot be operated, tuned, or trusted, so
+observability is a precondition for running the system, not optional instrumentation: an
+unobserved gateway fails silently, and a tripled false-positive rate or a detector failing
+open is not noticed until users route around the product or a missed attack surfaces. The
+three pillars are complementary -- metrics give aggregate health as rates and percentiles
+over time, logging gives per-event detail for audit and investigation, and tracing follows
+a single request through the tiers -- and a single cheap update per detection outcome feeds
+all three so they stay consistent. The golden signals -- latency, traffic, errors, and
+saturation -- are the compact metric core, small enough to watch and complete enough to
+summarise health, and they are what the Section 14.09 alerting is built on. Structured
+logging with uniform fields makes the log queryable by detector, verdict, or trace, and a
+shared trace identifier correlates every event and span from one request across the
+pillars. All of this is instrumented under the same latency discipline as detection: the
+hot path records in memory and exports asynchronously off-path, and inline traces are
+sampled at a low rate, so observing the latency budget does not itself spend it.
+Observability is the precondition for the dashboard and alerting of 14.09 and for the
+tuning of Chapter 17, both of which rest on the measurements this section creates.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>A detection system that cannot be observed cannot be operated, tuned, or trusted, so observability is a precondition, not optional instrumentation -- an unobserved system fails silently</li><li>The three pillars are complementary: metrics give aggregate health, logging gives per-event audit detail, and tracing follows one request through the tiers</li><li>The golden signals -- latency, traffic, errors, saturation -- are the compact core metrics, small enough to watch and complete enough to summarise gateway health</li><li>Structured logging with uniform fields makes the log queryable, and a shared trace identifier correlates every metric, log, and span from one request across the pillars</li><li>Hot-path instrumentation must obey the same latency discipline as detection -- record cheaply in memory, export asynchronously off-path, and sample inline traces -- so observing the budget does not spend it</li><li>Observability is the precondition for the dashboard and alerting of Section 14.09 and for the tuning of Chapter 17, both of which rest on the measurements produced here</li></ul>
+<h2 class="sh1">Preview Section 14 09</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">The Production Monitoring Dashboard</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 14.08 produced the raw observability signals; Section 14.09 assembles them into an
+operable interface. It builds the dashboard views -- gateway health, detection rates,
+latency, cost -- integrates the behavioural monitoring views of Section 13.11 (entity risk,
+drift, coordinated networks) with the production signals, turns metrics into actionable
+alerts without alert fatigue, defines on-call runbooks and service level objectives with
+error budgets, and makes the dashboard the operational interface for the security and
+platform teams. It is the second operability section, turning the signals of this section
+into something teams actually watch and act on.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names observability as a concern</li><li>Section 14.04: the latency budget that hot-path instrumentation must not violate</li><li>Section 14.06: the fail-open/fail-closed policy whose outcomes are logged as detection events</li><li>Section 14.07: the circuit breaker states surfaced as observable signals</li><li>Chapter 13 Section 13.11: the behavioural monitoring dashboard views the production signals will integrate with in 14.09</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 14.09: the monitoring dashboard that assembles these signals into an operable interface with alerting and runbooks</li><li>Section 14.10: cost optimisation -- the cost signals surfaced through the same observability</li><li>Section 14.11: the production gateway capstone -- the instrumented gateway assembled into the running service</li><li>Chapter 17: tuning -- adjusting detection against the behaviour this observability measures</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>observability</li><li>metrics</li><li>logging</li><li>tracing</li><li>golden-signals</li><li>latency-traffic-errors-saturation</li><li>structured-logging</li><li>trace-correlation</li><li>cheap-instrumentation</li><li>hot-path-sampling</li><li>precondition-for-tuning</li><li>operability</li><li>production-deployment</li><li>part-3-chapter-4</li></ul>
+</article>

@@ -1,0 +1,578 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 20 · ~6 pages</div>
+<h1>K-Means Clustering</h1>
+<div class="tags"><span class="tag">k-means</span><span class="tag">clustering</span><span class="tag">unsupervised-learning</span><span class="tag">anomaly-detection</span><span class="tag">centroids</span><span class="tag">elbow-method</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">K-Means is the first unsupervised learning algorithm we&#x27;ll study. Unlike classification 
+where we have labels, clustering discovers hidden structure in unlabeled data. K-Means 
+partitions data into k clusters by grouping similar samples together, iteratively 
+refining cluster assignments until convergence.
+
+The algorithm is beautifully simple: Start with k random cluster centers (centroids), 
+assign each sample to its nearest centroid, recompute centroids as the mean of assigned 
+samples, repeat until convergence. Despite its simplicity, K-Means is powerful and 
+widely used across domains.
+
+This section covers:
+- Unsupervised learning paradigm (no labels!)
+- K-Means algorithm mechanics
+- Choosing k (elbow method, silhouette score)
+- Initialization strategies (K-Means++)
+- Convergence and optimization objective
+- Limitations and when not to use K-Means
+
+For security, K-Means excels at:
+1. Anomaly detection (find samples far from all clusters)
+2. Attack grouping (cluster similar attacks for analysis)
+3. Baseline profiling (learn normal behavior clusters)
+4. Data exploration (understand structure before labeling)</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security applications:
+- Network anomaly detection: Cluster normal traffic, flag outliers
+- Malware family discovery: Group similar malware without prior labels
+- User behavior profiling: Identify typical usage patterns
+- Log analysis: Group similar log events automatically
+
+Real deployments:
+- SIEM systems use clustering for log correlation
+- Network IDS cluster traffic patterns
+- SOC analysts use clustering to triage alerts
+- Threat hunters group indicators for campaigns
+
+Why learn K-Means:
+- Foundation for unsupervised learning
+- Most common clustering algorithm
+- Basis for anomaly detection techniques
+- Simple but effective baseline
+- Scales to large datasets (linear in n)</p>
+<h2 class="sh1">Unsupervised Learning</h2>
+<h3 class="sh2">Supervised Vs Unsupervised</h3>
+<p class="prose">Supervised Learning:
+- Input: Features + Labels
+- Goal: Learn mapping X → Y
+- Example: Spam detection (labeled emails)
+
+Unsupervised Learning:
+- Input: Features only (no labels!)
+- Goal: Discover structure/patterns
+- Example: Group similar emails without knowing spam/ham</p>
+<h3 class="sh2">Why Unsupervised</h3>
+<p class="prose">Labels are expensive:
+- Security expert must manually label samples
+- Time-consuming (thousands of samples)
+- Requires domain expertise
+
+Unsupervised helps:
+- Explore data before labeling
+- Find patterns humans might miss
+- Scale to unlabeled data (abundant!)
+- Detect novelty (never-seen-before patterns)</p>
+<h3 class="sh2">Clustering Task</h3>
+<p class="prose">Clustering: Partition data into groups (clusters)
+
+Goal: Samples in same cluster are similar
+      Samples in different clusters are dissimilar
+
+Applications:
+- Customer segmentation
+- Document organization
+- Image compression
+- Anomaly detection</p>
+<h2 class="sh1">Kmeans Algorithm</h2>
+<h3 class="sh2">Intuition</h3>
+<p class="prose">Goal: Divide n samples into k clusters
+
+Each cluster represented by centroid (center point)
+Assign each sample to nearest centroid
+
+Iteratively refine:
+1. Assign samples to nearest centroid
+2. Recompute centroids as mean of assigned samples
+3. Repeat until convergence</p>
+<h3 class="sh2">Algorithm Steps</h3>
+<p class="prose">Input: Data X, number of clusters k
+
+1. Initialize: Randomly select k samples as initial centroids
+
+2. Assignment Step:
+   For each sample xᵢ:
+     Find nearest centroid
+     Assign xᵢ to that cluster
+
+3. Update Step:
+   For each cluster j:
+     Compute new centroid = mean of samples in cluster j
+
+4. Repeat steps 2-3 until:
+   - Centroids don&#x27;t change (converged)
+   - Or max iterations reached
+
+Output: Cluster assignments, final centroids</p>
+<h3 class="sh2">Example Iteration</h3>
+<p class="prose">Initial (random centroids):
+Centroid 1: [1, 1]
+Centroid 2: [8, 8]
+
+Data: [2,2], [3,3], [7,7], [8,9], [9,8]
+
+Iteration 1 - Assignment:
+[2,2] → closest to C1
+[3,3] → closest to C1
+[7,7] → closest to C2
+[8,9] → closest to C2
+[9,8] → closest to C2
+
+Iteration 1 - Update:
+C1 = mean([2,2], [3,3]) = [2.5, 2.5]
+C2 = mean([7,7], [8,9], [9,8]) = [8, 8]
+
+Iteration 2 - Assignment:
+(assignments might change or stay same)
+
+Continue until centroids stabilize...</p>
+<h3 class="sh2">Distance Metric</h3>
+<p class="prose">Typically use Euclidean distance:
+d(x, c) = √(Σᵢ (xᵢ - cᵢ)²)
+
+Can also use:
+- Manhattan distance
+- Cosine similarity
+- Custom metrics</p>
+<h3 class="sh2">Convergence</h3>
+<p class="prose">K-Means guaranteed to converge:
+- Each iteration reduces objective function
+- Finite number of possible assignments
+
+May converge to local optimum (not global)
+Solution: Run multiple times with different initializations</p>
+<h2 class="sh1">Optimization Objective</h2>
+<h3 class="sh2">Objective Function</h3>
+<p class="prose">K-Means minimizes within-cluster sum of squares (inertia):
+
+J = Σⱼ Σᵢ∈Cⱼ ||xᵢ - μⱼ||²
+
+Where:
+- Cⱼ: Samples in cluster j
+- μⱼ: Centroid of cluster j
+- ||xᵢ - μⱼ||²: Squared distance from sample to centroid
+
+Goal: Minimize total squared distance of samples to their centroids</p>
+<h3 class="sh2">Intuition</h3>
+<p class="prose">Want clusters to be:
+- Tight (samples close to their centroid)
+- Compact (low within-cluster variance)
+
+Lower J = better clustering (samples close to centroids)</p>
+<h3 class="sh2">Why Squared Distance</h3>
+<p class="prose">1. Penalizes distant samples more (squared term)
+2. Differentiable (useful for extensions)
+3. Relates to variance (statistical interpretation)
+4. Computationally convenient</p>
+<h3 class="sh2">Algorithm Reduces Objective</h3>
+<p class="prose">Assignment step: Decreases J
+- Moving sample to closer centroid reduces distance
+
+Update step: Decreases J
+- Mean minimizes sum of squared distances
+
+Each iteration: J decreases (or stays same)
+Guaranteed convergence!</p>
+<h2 class="sh1">Choosing K</h2>
+<h3 class="sh2">The K Problem</h3>
+<p class="prose">K-Means requires choosing k beforehand
+But we don&#x27;t know &quot;true&quot; number of clusters!
+
+Too small k: Underclustering (miss structure)
+Too large k: Overclustering (too granular)</p>
+<h3 class="sh2">Elbow Method</h3>
+<h3 class="sh3">Procedure</h3>
+<p class="prose">1. Train K-Means for k = 1, 2, 3, ..., K_max
+2. For each k, compute inertia (objective J)
+3. Plot k vs inertia
+4. Look for &quot;elbow&quot; (bend in curve)
+5. Choose k at elbow point</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Inertia always decreases with more clusters
+(more clusters = samples closer to centroids)
+
+But diminishing returns after optimal k
+
+Elbow = point where adding clusters doesn&#x27;t help much</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">k=1: Inertia = 1000 (all samples in one cluster)
+k=2: Inertia = 400  (big drop!)
+k=3: Inertia = 200  (big drop!)
+k=4: Inertia = 150  (smaller drop)
+k=5: Inertia = 130  (smaller drop)
+k=6: Inertia = 120  (small drop)
+
+Elbow at k=3 or k=4 (diminishing returns after)</p>
+<h3 class="sh3">Limitation</h3>
+<p class="prose">Elbow not always clear (subjective)</p>
+<h3 class="sh2">Silhouette Score</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">For each sample i:
+a(i) = average distance to samples in same cluster
+b(i) = average distance to samples in nearest other cluster
+
+Silhouette(i) = (b(i) - a(i)) / max(a(i), b(i))
+
+Range: [-1, +1]
++1: Sample far from other clusters (good)
+0: Sample on cluster boundary
+-1: Sample closer to other cluster (misassigned)</p>
+<h3 class="sh3">Average Silhouette</h3>
+<p class="prose">Silhouette score = average over all samples
+
+Higher score = better defined clusters</p>
+<h3 class="sh3">Choosing K</h3>
+<p class="prose">Compute silhouette score for different k
+Pick k with highest average silhouette score</p>
+<h3 class="sh3">Advantage</h3>
+<p class="prose">More objective than elbow method</p>
+<h3 class="sh2">Domain Knowledge</h3>
+<p class="prose">Sometimes k known from domain:
+- Network traffic: k = number of protocols
+- Malware: k = number of known families
+- Users: k = number of user roles
+
+Use domain knowledge when available!</p>
+<h2 class="sh1">Initialization</h2>
+<h3 class="sh2">Random Initialization</h3>
+<p class="prose">Simple: Randomly pick k samples as initial centroids
+
+Problem: Results depend heavily on initialization
+Bad initialization → poor local optimum</p>
+<h3 class="sh2">Multiple Runs</h3>
+<p class="prose">Solution: Run K-Means multiple times (10-50 runs)
+Pick result with lowest inertia
+
+Computational cost increases, but more reliable</p>
+<h3 class="sh2">Kmeans Plus Plus</h3>
+<h3 class="sh3">Idea</h3>
+<p class="prose">Choose initial centroids spread out (not clustered)</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">1. Pick first centroid uniformly at random
+
+2. For each remaining centroid:
+   - Compute distance of each sample to nearest existing centroid
+   - Pick new centroid with probability proportional to distance²
+   - (Samples far from centroids more likely to be chosen)
+
+3. After k centroids chosen, run standard K-Means</p>
+<h3 class="sh3">Benefit</h3>
+<p class="prose">- Better initialization (spread out centroids)
+- Faster convergence
+- Better final clustering (fewer bad local optima)
+- Standard in modern implementations</p>
+<h3 class="sh3">Computational Cost</h3>
+<p class="prose">O(nk) for initialization (still fast)</p>
+<h2 class="sh1">Complete Implementation</h2>
+<pre class="code"><code>import numpy as np
+
+class KMeans:
+    &quot;&quot;&quot;K-Means clustering from scratch&quot;&quot;&quot;
+    
+    def __init__(self, n_clusters=3, max_iters=100, init=&#x27;kmeans++&#x27;, n_init=10):
+        &quot;&quot;&quot;
+        Args:
+            n_clusters: Number of clusters (k)
+            max_iters: Maximum iterations
+            init: &#x27;random&#x27; or &#x27;kmeans++&#x27; initialization
+            n_init: Number of times to run with different initializations
+        &quot;&quot;&quot;
+        self.n_clusters = n_clusters
+        self.max_iters = max_iters
+        self.init = init
+        self.n_init = n_init
+        self.centroids = None
+        self.labels = None
+        self.inertia = None
+    
+    def fit(self, X):
+        &quot;&quot;&quot;Fit K-Means on data X&quot;&quot;&quot;
+        best_inertia = float(&#x27;inf&#x27;)
+        best_centroids = None
+        best_labels = None
+        
+        # Run multiple times with different initializations
+        for _ in range(self.n_init):
+            centroids, labels, inertia = self._fit_single(X)
+            
+            if inertia &lt; best_inertia:
+                best_inertia = inertia
+                best_centroids = centroids
+                best_labels = labels
+        
+        self.centroids = best_centroids
+        self.labels = best_labels
+        self.inertia = best_inertia
+        
+        return self
+    
+    def _fit_single(self, X):
+        &quot;&quot;&quot;Single K-Means run&quot;&quot;&quot;
+        n_samples, n_features = X.shape
+        
+        # Initialize centroids
+        if self.init == &#x27;kmeans++&#x27;:
+            centroids = self._kmeans_plus_plus(X)
+        else:
+            # Random initialization
+            indices = np.random.choice(n_samples, self.n_clusters, replace=False)
+            centroids = X[indices]
+        
+        # Iterative refinement
+        for iteration in range(self.max_iters):
+            # Assignment step
+            labels = self._assign_clusters(X, centroids)
+            
+            # Update step
+            new_centroids = self._update_centroids(X, labels)
+            
+            # Check convergence
+            if np.allclose(centroids, new_centroids):
+                break
+            
+            centroids = new_centroids
+        
+        # Compute final inertia
+        inertia = self._compute_inertia(X, labels, centroids)
+        
+        return centroids, labels, inertia
+    
+    def _kmeans_plus_plus(self, X):
+        &quot;&quot;&quot;K-Means++ initialization&quot;&quot;&quot;
+        n_samples = X.shape[0]
+        centroids = []
+        
+        # First centroid: random
+        first_idx = np.random.randint(n_samples)
+        centroids.append(X[first_idx])
+        
+        # Remaining centroids
+        for _ in range(1, self.n_clusters):
+            # Distance to nearest centroid
+            distances = np.array([
+                min(np.linalg.norm(x - c) ** 2 for c in centroids)
+                for x in X
+            ])
+            
+            # Probability proportional to distance²
+            probabilities = distances / distances.sum()
+            
+            # Sample new centroid
+            new_idx = np.random.choice(n_samples, p=probabilities)
+            centroids.append(X[new_idx])
+        
+        return np.array(centroids)
+    
+    def _assign_clusters(self, X, centroids):
+        &quot;&quot;&quot;Assign each sample to nearest centroid&quot;&quot;&quot;
+        distances = np.array([
+            np.linalg.norm(X - centroid, axis=1)
+            for centroid in centroids
+        ])
+        return np.argmin(distances, axis=0)
+    
+    def _update_centroids(self, X, labels):
+        &quot;&quot;&quot;Compute new centroids as mean of assigned samples&quot;&quot;&quot;
+        centroids = np.array([
+            X[labels == k].mean(axis=0)
+            for k in range(self.n_clusters)
+        ])
+        return centroids
+    
+    def _compute_inertia(self, X, labels, centroids):
+        &quot;&quot;&quot;Compute within-cluster sum of squares&quot;&quot;&quot;
+        inertia = 0
+        for k in range(self.n_clusters):
+            cluster_samples = X[labels == k]
+            if len(cluster_samples) &gt; 0:
+                inertia += np.sum((cluster_samples - centroids[k]) ** 2)
+        return inertia
+    
+    def predict(self, X):
+        &quot;&quot;&quot;Assign samples to nearest centroid&quot;&quot;&quot;
+        return self._assign_clusters(X, self.centroids)
+    
+    def fit_predict(self, X):
+        &quot;&quot;&quot;Fit and return cluster labels&quot;&quot;&quot;
+        self.fit(X)
+        return self.labels
+
+# ========================================================================
+# USAGE EXAMPLE: NETWORK TRAFFIC CLUSTERING
+# ========================================================================
+
+# Generate synthetic network traffic data
+np.random.seed(42)
+
+# Cluster 1: HTTP traffic (low packet size, high frequency)
+http = np.random.randn(100, 2) * [20, 5] + [50, 100]
+
+# Cluster 2: SSH traffic (medium packet size, low frequency)
+ssh = np.random.randn(100, 2) * [30, 10] + [200, 30]
+
+# Cluster 3: Video streaming (high packet size, high frequency)
+video = np.random.randn(100, 2) * [50, 20] + [500, 150]
+
+# Combine
+X = np.vstack([http, ssh, video])
+
+# Shuffle
+indices = np.random.permutation(len(X))
+X = X[indices]
+
+# Fit K-Means
+kmeans = KMeans(n_clusters=3, init=&#x27;kmeans++&#x27;, n_init=10)
+labels = kmeans.fit_predict(X)
+
+print(&quot;K-Means Clustering&quot;)
+print(f&quot;Number of clusters: {kmeans.n_clusters}&quot;)
+print(f&quot;Inertia: {kmeans.inertia:.2f}&quot;)
+print(f&quot;Cluster sizes: {np.bincount(labels)}&quot;)
+
+print(&quot;\nCluster centroids:&quot;)
+for i, centroid in enumerate(kmeans.centroids):
+    print(f&quot;  Cluster {i}: {centroid}&quot;)
+
+# Elbow method to choose k
+print(&quot;\nElbow method:&quot;)
+inertias = []
+k_range = range(1, 10)
+for k in k_range:
+    km = KMeans(n_clusters=k, n_init=5)
+    km.fit(X)
+    inertias.append(km.inertia)
+    print(f&quot;k={k}: inertia={km.inertia:.2f}&quot;)
+
+# Anomaly detection: Find samples far from all centroids
+distances_to_centroids = np.array([
+    np.linalg.norm(X - centroid, axis=1)
+    for centroid in kmeans.centroids
+])
+min_distances = np.min(distances_to_centroids, axis=0)
+
+threshold = np.percentile(min_distances, 95)  # Top 5% as anomalies
+anomalies = min_distances &gt; threshold
+
+print(f&quot;\nAnomalies detected: {anomalies.sum()} samples&quot;)</code></pre>
+<h2 class="sh1">Security Applications</h2>
+<h3 class="sh2">Anomaly Detection</h3>
+<h3 class="sh3">Approach</h3>
+<p class="prose">1. Cluster normal traffic/behavior
+2. For new sample, compute distance to nearest centroid
+3. If distance &gt; threshold → anomaly</p>
+<h3 class="sh3">Threshold Setting</h3>
+<p class="prose">- Train on normal data only
+- Set threshold at 95th percentile of distances
+- Samples beyond threshold flagged as anomalies</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Network traffic:
+- Cluster normal HTTP, SSH, DNS traffic
+- New connection: distance to all centroids &gt; threshold
+- Flag as suspicious (unknown traffic pattern)</p>
+<h3 class="sh3">Advantage</h3>
+<p class="prose">No labeled anomalies needed (unsupervised)</p>
+<h3 class="sh2">Attack Grouping</h3>
+<h3 class="sh3">Scenario</h3>
+<p class="prose">SOC receives 10,000 alerts
+Many duplicates or related
+Need to group for triage</p>
+<h3 class="sh3">Approach</h3>
+<p class="prose">Extract features from alerts (IPs, ports, signatures)
+Cluster into k groups
+Analyst reviews one alert per cluster</p>
+<h3 class="sh3">Benefit</h3>
+<p class="prose">10,000 alerts → 50 clusters
+Review 50 instead of 10,000 (200x speedup!)</p>
+<h3 class="sh2">Baseline Profiling</h3>
+<h3 class="sh3">User Behavior</h3>
+<p class="prose">Cluster typical user activities:
+- Cluster 1: Morning email check
+- Cluster 2: Daytime work (docs, code)
+- Cluster 3: Evening personal browsing
+
+New activity: Far from all clusters → investigate</p>
+<h3 class="sh3">Network Traffic</h3>
+<p class="prose">Profile normal traffic patterns per subnet
+Detect deviations from baseline
+
+Cluster centroids = expected traffic profile</p>
+<h3 class="sh2">Malware Family Discovery</h3>
+<h3 class="sh3">Scenario</h3>
+<p class="prose">10,000 malware samples, unknown families
+Want to group similar malware</p>
+<h3 class="sh3">Approach</h3>
+<p class="prose">Extract features (API calls, byte n-grams)
+Cluster into families
+Security analyst labels families</p>
+<h3 class="sh3">Result</h3>
+<p class="prose">Discovered 20 distinct malware families
+Can now classify new samples by similarity</p>
+<h2 class="sh1">Advantages Limitations</h2>
+<h3 class="sh2">Advantages</h3>
+<h3 class="sh3">Simplicity</h3>
+<ul class="blist"><li>Easy to understand and implement</li><li>Few hyperparameters (just k)</li></ul>
+<h3 class="sh3">Scalability</h3>
+<ul class="blist"><li>Linear in n: O(nkd × iterations)</li><li>Works for large datasets</li><li>Can use mini-batch for huge data</li></ul>
+<h3 class="sh3">Speed</h3>
+<ul class="blist"><li>Fast convergence (typically &lt;10 iterations)</li><li>Efficient assignment step</li></ul>
+<h3 class="sh3">Interpretability</h3>
+<ul class="blist"><li>Cluster centroids interpretable</li><li>Can visualize clusters (2D/3D)</li><li>Explain assignment (nearest centroid)</li></ul>
+<h3 class="sh2">Limitations</h3>
+<h3 class="sh3">Requires K</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Must specify k beforehand</p>
+<h4 class="sh3">Mitigation</h4>
+<p class="prose">- Elbow method
+- Silhouette score
+- Domain knowledge</p>
+<h3 class="sh3">Spherical Clusters</h3>
+<h4 class="sh3">Assumption</h4>
+<p class="prose">Assumes spherical clusters (equal variance)</p>
+<h4 class="sh3">Fails On</h4>
+<p class="prose">- Elongated clusters
+- Different sized clusters
+- Non-convex clusters</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Concentric circles: K-Means fails
+(No linear boundary can separate)</p>
+<h4 class="sh3">Alternative</h4>
+<p class="prose">Gaussian Mixture Models, DBSCAN, Hierarchical</p>
+<h3 class="sh3">Sensitive To Outliers</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Mean sensitive to outliers</p>
+<h4 class="sh3">Impact</h4>
+<p class="prose">Single outlier can shift centroid significantly</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">- Remove outliers first
+- Use K-Medoids (median instead of mean)</p>
+<h3 class="sh3">Local Optima</h3>
+<h4 class="sh3">Issue</h4>
+<p class="prose">Converges to local optimum (not global)</p>
+<h4 class="sh3">Mitigation</h4>
+<p class="prose">- Multiple runs (n_init=10)
+- K-Means++ initialization</p>
+<h3 class="sh3">Equal Sized Clusters</h3>
+<h4 class="sh3">Bias</h4>
+<p class="prose">Tends toward equal-sized clusters</p>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Real data may have very different cluster sizes</p>
+<h4 class="sh3">Alternative</h4>
+<p class="prose">Hierarchical clustering, DBSCAN</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>K-Means: Partition data into k clusters (unsupervised)</li><li>Algorithm: Assign → Update → Repeat until convergence</li><li>Optimizes: Within-cluster sum of squares (inertia)</li><li>Guaranteed convergence (to local optimum)</li><li>Choosing k: Elbow method or silhouette score</li><li>K-Means++: Better initialization (spread centroids)</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement K-Means from scratch</li><li>Use elbow method to choose k</li><li>Apply K-Means++ initialization</li><li>Detect anomalies (distance to nearest centroid)</li><li>Interpret cluster centroids</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Unsupervised: No labels needed (explore unknown threats)</li><li>Anomaly detection: Flag samples far from clusters</li><li>Attack grouping: Cluster similar alerts for triage</li><li>Baseline profiling: Learn normal behavior patterns</li><li>Scalable: Handle large security datasets</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>K-Means = iterative refinement of cluster centers</li><li>Requires choosing k (use elbow or silhouette)</li><li>K-Means++ initialization (standard practice)</li><li>Anomaly = far from all cluster centroids</li><li>Assumes spherical clusters (limitation)</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Dimensionality Reduction (PCA)</li><li>You now understand clustering (unsupervised learning)</li><li>Foundation for advanced clustering methods (GMM, DBSCAN)</li></ul>
+</article>

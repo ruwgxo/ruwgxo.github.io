@@ -1,0 +1,851 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 5 · ~8 pages</div>
+<h1>Backpropagation Theory</h1>
+<div class="tags"><span class="tag">backpropagation</span><span class="tag">chain-rule</span><span class="tag">computational-graph</span><span class="tag">gradient-flow</span><span class="tag">ai-security-critical</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Backpropagation is THE algorithm that makes deep learning work. It&#x27;s how
+neural networks compute gradients efficiently, enabling training via
+gradient descent. Without backprop, deep learning wouldn&#x27;t exist.
+
+More importantly for security: backpropagation is the foundation of EVERY
+adversarial attack. Model extraction, adversarial examples, backdoor
+detection - all exploit gradient computation. Understanding backprop deeply
+means understanding the attack surface.
+
+This section builds backprop from scratch: chain rule foundation,
+computational graphs that track operations, forward pass caching,
+backward pass mechanics, and complete mathematical proof. You&#x27;ll derive
+backprop equations on paper, implement gradient tracking, and verify with
+numerical gradients.
+
+This is the most important section in Chapter 2 for security engineers.
+Master this, and you understand how every gradient-based attack works.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand chain rule as backprop foundation</li><li>Grasp how computational graphs enable gradient flow</li><li>Know why forward pass must cache intermediate values</li><li>Understand gradient accumulation and broadcasting</li><li>Recognize local vs global gradients</li><li>Connect backprop to every gradient-based attack</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Derive backprop equations on paper (no library)</li><li>Build computational graph with gradient tracking</li><li>Implement gradient checking (numerical verification)</li><li>Visualize gradient flow through network</li><li>Debug vanishing/exploding gradients</li><li>Compute gradients for arbitrary architectures</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Every adversarial attack uses backprop</li><li>Model extraction queries gradients</li><li>Backdoor detection analyzes gradient patterns</li><li>Understanding gradients = understanding attack surface</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Sections 0201-0204 completed</li><li>Calculus: chain rule, partial derivatives</li><li>Linear algebra: matrix multiplication, transposes</li><li>Computational graphs concept (from 0203)</li></ul>
+<h2 class="sh1">Critical Importance</h2>
+<h3 class="sh2">For Security Engineers</h3>
+<p class="prose">This section is NON-NEGOTIABLE for AI security work.
+
+Why backpropagation matters for security:
+1. Adversarial examples: ∇_x L used to craft perturbations
+2. Model extraction: query ∇_x f to steal parameters
+3. Backdoor detection: analyze ∇_θ L for anomalies
+4. Robustness: gradient magnitude indicates fragility
+5. Privacy: gradients leak training data information
+
+Without understanding backprop, you cannot:
+- Understand how attacks work at fundamental level
+- Design effective defenses
+- Analyze model vulnerabilities
+- Audit gradient information leakage
+
+Take your time on this section. Work through every derivation.
+This knowledge will be used in EVERY subsequent security topic.</p>
+<h2 class="sh1">Chain Rule Foundation</h2>
+<h3 class="sh2">Single Variable Chain Rule</h3>
+<h3 class="sh3">Basic Form</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">If y = f(u) and u = g(x), then dy/dx = dy/du × du/dx</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">y = u²
+u = 3x + 1
+
+Find dy/dx:
+
+dy/du = 2u
+du/dx = 3
+
+dy/dx = dy/du × du/dx = 2u × 3 = 6u = 6(3x + 1)</p>
+<h3 class="sh3">Intuition</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Rate of change propagates through composition:
+- u changes 3x as fast as x (du/dx = 3)
+- y changes 2u as fast as u (dy/du = 2u)
+- Therefore y changes 6u as fast as x</p>
+<h4 class="sh3">Visual</h4>
+<p class="prose">x → [×3] → u → [×2u] → y
+
+Small change in x:
+Δx → Δu = 3Δx → Δy = 2u(3Δx) = 6u·Δx</p>
+<h3 class="sh2">Multivariable Chain Rule</h3>
+<h3 class="sh3">Partial Derivatives</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">When function depends on multiple variables</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">z = f(x, y)
+x = g(t)
+y = h(t)
+
+Find dz/dt:
+
+dz/dt = ∂z/∂x · dx/dt + ∂z/∂y · dy/dt</p>
+<h4 class="sh3">Intuition</h4>
+<p class="prose">Changes from both paths (through x and through y) add up</p>
+<h3 class="sh3">Neural Network Context</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Loss depends on all parameters, must sum contributions</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">L = f(z)
+z = w₁x₁ + w₂x₂ + b
+
+Find ∂L/∂w₁:
+
+∂L/∂w₁ = ∂L/∂z · ∂z/∂w₁
+        = ∂L/∂z · x₁</p>
+<h3 class="sh2">Composition Of Many Functions</h3>
+<h3 class="sh3">Deep Chain</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Multiple function compositions</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">y = f₄(f₃(f₂(f₁(x))))
+
+Let:
+u₁ = f₁(x)
+u₂ = f₂(u₁)
+u₃ = f₃(u₂)
+y = f₄(u₃)
+
+Then:
+dy/dx = dy/du₃ · du₃/du₂ · du₂/du₁ · du₁/dx</p>
+<h4 class="sh3">Pattern</h4>
+<p class="prose">Multiply all intermediate derivatives</p>
+<h3 class="sh3">Neural Network Connection</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Each layer is a function composition</p>
+<h4 class="sh3">Network</h4>
+<p class="prose">x → Layer1 → a₁ → Layer2 → a₂ → Layer3 → a₃ → Loss
+
+∂L/∂x = ∂L/∂a₃ · ∂a₃/∂a₂ · ∂a₂/∂a₁ · ∂a₁/∂x</p>
+<h4 class="sh3">Backprop</h4>
+<p class="prose">Compute these derivatives right-to-left (backward)</p>
+<h3 class="sh2">Why Backward Not Forward</h3>
+<h3 class="sh3">Forward Mode</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Compute ∂output/∂input for each input</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Network with n inputs, 1 output:
+Forward mode: n passes (one per input)
+
+Example: 1000 inputs → 1000 passes!</p>
+<h3 class="sh3">Backward Mode</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Compute ∂output/∂param for all params in one pass</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Network with n params, 1 output:
+Backward mode: 1 pass (backprop)
+
+Example: 1M params → still just 1 pass!</p>
+<h4 class="sh3">Why Backprop Wins</h4>
+<p class="prose">Machine learning: 1 loss (output), millions of parameters
+Backward mode: 1 pass regardless of parameter count
+Forward mode: would need millions of passes</p>
+<h2 class="sh1">Computational Graph Gradients</h2>
+<h3 class="sh2">Local Vs Global Gradients</h3>
+<h3 class="sh3">Local Gradient</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Derivative of operation output wrt its direct input</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Operation: z = x + y
+Local gradients: ∂z/∂x = 1, ∂z/∂y = 1</p>
+<h3 class="sh3">Global Gradient</h3>
+<h4 class="sh3">Definition</h4>
+<p class="prose">Derivative of final output wrt any intermediate variable</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Graph: x → z → L
+Global gradient: ∂L/∂x (what we ultimately want)</p>
+<h3 class="sh3">Relationship</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">Global gradient = Local gradient × Upstream gradient</p>
+<h4 class="sh3">Detail</h4>
+<p class="prose">∂L/∂x = ∂L/∂z × ∂z/∂x
+         ↑         ↑
+     upstream   local</p>
+<h3 class="sh2">Gradient Flow Example</h3>
+<h3 class="sh3">Simple Computation</h3>
+<h4 class="sh3">Graph</h4>
+<p class="prose">x = 2, y = 3
+↓        ↓
+z = x + y = 5
+↓
+L = z² = 25</p>
+<h4 class="sh3">Forward Pass</h4>
+<p class="prose">Compute values left-to-right</p>
+<h4 class="sh3">Backward Pass</h4>
+<p class="prose">Compute gradients right-to-left</p>
+<h3 class="sh3">Forward Computation</h3>
+<h4 class="sh3">Step 1</h4>
+<p class="prose">x = 2, y = 3</p>
+<h4 class="sh3">Step 2</h4>
+<p class="prose">z = x + y = 2 + 3 = 5</p>
+<h4 class="sh3">Step 3</h4>
+<p class="prose">L = z² = 5² = 25</p>
+<h3 class="sh3">Backward Computation</h3>
+<h4 class="sh3">Step 1 Dl Dl</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Start at output</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">∂L/∂L = 1 (by definition)</p>
+<h4 class="sh3">Step 2 Dl Dz</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Move to z</p>
+<h4 class="sh3">Local Gradient</h4>
+<p class="prose">∂L/∂z = 2z = 2(5) = 10</p>
+<h4 class="sh3">Global Gradient</h4>
+<p class="prose">∂L/∂z = ∂L/∂L × ∂L/∂z = 1 × 10 = 10</p>
+<h4 class="sh3">Step 3 Dl Dx</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Move to x</p>
+<h4 class="sh3">Local Gradient</h4>
+<p class="prose">∂z/∂x = 1</p>
+<h4 class="sh3">Upstream Gradient</h4>
+<p class="prose">∂L/∂z = 10</p>
+<h4 class="sh3">Global Gradient</h4>
+<p class="prose">∂L/∂x = ∂L/∂z × ∂z/∂x = 10 × 1 = 10</p>
+<h4 class="sh3">Step 4 Dl Dy</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Move to y</p>
+<h4 class="sh3">Local Gradient</h4>
+<p class="prose">∂z/∂y = 1</p>
+<h4 class="sh3">Upstream Gradient</h4>
+<p class="prose">∂L/∂z = 10</p>
+<h4 class="sh3">Global Gradient</h4>
+<p class="prose">∂L/∂y = ∂L/∂z × ∂z/∂y = 10 × 1 = 10</p>
+<h3 class="sh3">Verification</h3>
+<h4 class="sh3">Numerical Check</h4>
+<p class="prose">∂L/∂x ≈ (L(x+ε) - L(x)) / ε
+
+L(x=2) = (2+3)² = 25
+L(x=2.001) = (2.001+3)² = 25.010005
+
+∂L/∂x ≈ (25.010005 - 25) / 0.001 = 10.005 ≈ 10 ✓</p>
+<h3 class="sh2">Operations And Local Gradients</h3>
+<h3 class="sh3">Addition</h3>
+<h4 class="sh3">Operation</h4>
+<p class="prose">z = x + y</p>
+<h4 class="sh3">Forward</h4>
+<p class="prose">z = x + y</p>
+<h4 class="sh3">Backward</h4>
+<p class="prose">∂z/∂x = 1, ∂z/∂y = 1</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Gradient flows equally to both inputs</p>
+<h3 class="sh3">Multiplication</h3>
+<h4 class="sh3">Operation</h4>
+<p class="prose">z = x × y</p>
+<h4 class="sh3">Forward</h4>
+<p class="prose">z = x × y</p>
+<h4 class="sh3">Backward</h4>
+<p class="prose">∂z/∂x = y, ∂z/∂y = x</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Gradient scaled by other input</p>
+<h3 class="sh3">Power</h3>
+<h4 class="sh3">Operation</h4>
+<p class="prose">z = x^n</p>
+<h4 class="sh3">Forward</h4>
+<p class="prose">z = x^n</p>
+<h4 class="sh3">Backward</h4>
+<p class="prose">∂z/∂x = n × x^(n-1)</p>
+<h3 class="sh3">Exponential</h3>
+<h4 class="sh3">Operation</h4>
+<p class="prose">z = e^x</p>
+<h4 class="sh3">Forward</h4>
+<p class="prose">z = e^x</p>
+<h4 class="sh3">Backward</h4>
+<p class="prose">∂z/∂x = e^x = z</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">Output equals gradient (special property)</p>
+<h3 class="sh3">Logarithm</h3>
+<h4 class="sh3">Operation</h4>
+<p class="prose">z = log(x)</p>
+<h4 class="sh3">Forward</h4>
+<p class="prose">z = log(x)</p>
+<h4 class="sh3">Backward</h4>
+<p class="prose">∂z/∂x = 1/x</p>
+<h3 class="sh3">Max</h3>
+<h4 class="sh3">Operation</h4>
+<p class="prose">z = max(x, y)</p>
+<h4 class="sh3">Forward</h4>
+<p class="prose">z = max(x, y)</p>
+<h4 class="sh3">Backward</h4>
+<p class="prose">∂z/∂x = 1 if x &gt; y, else 0
+∂z/∂y = 1 if y &gt; x, else 0</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Gradient flows only to larger input</p>
+<h2 class="sh1">Backprop In Networks</h2>
+<h3 class="sh2">Single Layer Network</h3>
+<h3 class="sh3">Architecture</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Input x, weights W, bias b, activation f, loss L</p>
+<h4 class="sh3">Forward Pass</h4>
+<p class="prose">z = Wx + b     (linear transformation)
+a = f(z)       (activation)
+L = loss(a, y) (loss computation)</p>
+<h3 class="sh3">Backward Pass Goal</h3>
+<h4 class="sh3">Objective</h4>
+<p class="prose">Compute ∂L/∂W and ∂L/∂b</p>
+<h3 class="sh3">Step By Step Derivation</h3>
+<h4 class="sh3">Step 1 Dl Da</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Gradient of loss wrt output</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">∂L/∂a = depends on loss function</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">MSE: ∂L/∂a = 2(a - y)</p>
+<h4 class="sh3">Step 2 Da Dz</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Gradient through activation</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">∂a/∂z = f&#x27;(z)</p>
+<h4 class="sh3">Examples</h4>
+<h4 class="sh3">Sigmoid</h4>
+<p class="prose">f&#x27;(z) = f(z)(1 - f(z))</p>
+<h4 class="sh3">Relu</h4>
+<p class="prose">f&#x27;(z) = 1 if z &gt; 0, else 0</p>
+<h4 class="sh3">Tanh</h4>
+<p class="prose">f&#x27;(z) = 1 - f(z)²</p>
+<h4 class="sh3">Step 3 Dl Dz</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Combine via chain rule</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">∂L/∂z = ∂L/∂a × ∂a/∂z</p>
+<h4 class="sh3">Interpretation</h4>
+<p class="prose">Error signal at linear layer output</p>
+<h4 class="sh3">Step 4 Dz Dw</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Gradient wrt weights</p>
+<h4 class="sh3">Derivation</h4>
+<p class="prose">z = Wx + b
+∂z/∂W = x^T (for each row of W)
+
+For W_ij (element in row i):
+∂z_i/∂W_ij = x_j</p>
+<h4 class="sh3">Matrix Form</h4>
+<p class="prose">∂L/∂W = ∂L/∂z × x^T</p>
+<h4 class="sh3">Step 5 Dz Db</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Gradient wrt bias</p>
+<h4 class="sh3">Derivation</h4>
+<p class="prose">z = Wx + b
+∂z/∂b = 1</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">∂L/∂b = ∂L/∂z</p>
+<h3 class="sh3">Summary</h3>
+<h4 class="sh3">Gradients</h4>
+<p class="prose">∂L/∂W = ∂L/∂z × x^T
+∂L/∂b = ∂L/∂z
+
+Where: ∂L/∂z = ∂L/∂a × f&#x27;(z)</p>
+<h3 class="sh2">Two Layer Network</h3>
+<h3 class="sh3">Architecture</h3>
+<p class="prose">x → [W1,b1] → z1 → f → a1 → [W2,b2] → z2 → g → a2 → L</p>
+<h3 class="sh3">Forward Pass</h3>
+<h4 class="sh3">Layer 1</h4>
+<p class="prose">z1 = W1 @ x + b1
+a1 = f(z1)</p>
+<h4 class="sh3">Layer 2</h4>
+<p class="prose">z2 = W2 @ a1 + b2
+a2 = g(z2)</p>
+<h4 class="sh3">Loss</h4>
+<p class="prose">L = loss(a2, y)</p>
+<h3 class="sh3">Backward Pass</h3>
+<h4 class="sh3">Start At Output</h4>
+<h4 class="sh3">Computation</h4>
+<p class="prose">∂L/∂a2 = gradient from loss</p>
+<h4 class="sh3">Layer 2 Gradients</h4>
+<h4 class="sh3">Dl Dz2</h4>
+<p class="prose">∂L/∂z2 = ∂L/∂a2 × g&#x27;(z2)</p>
+<h4 class="sh3">Dl Dw2</h4>
+<p class="prose">∂L/∂W2 = ∂L/∂z2 × a1^T</p>
+<h4 class="sh3">Dl Db2</h4>
+<p class="prose">∂L/∂b2 = ∂L/∂z2</p>
+<h4 class="sh3">Dl Da1</h4>
+<p class="prose">∂L/∂a1 = W2^T × ∂L/∂z2</p>
+<h4 class="sh3">Layer 1 Gradients</h4>
+<h4 class="sh3">Dl Dz1</h4>
+<p class="prose">∂L/∂z1 = ∂L/∂a1 × f&#x27;(z1)</p>
+<h4 class="sh3">Dl Dw1</h4>
+<p class="prose">∂L/∂W1 = ∂L/∂z1 × x^T</p>
+<h4 class="sh3">Dl Db1</h4>
+<p class="prose">∂L/∂b1 = ∂L/∂z1</p>
+<h3 class="sh3">Key Insight</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Gradient flows backward through weights:
+∂L/∂a1 = W2^T × ∂L/∂z2
+
+Weight matrix transpose &quot;routes&quot; gradient backward!</p>
+<h3 class="sh2">General Deep Network</h3>
+<h3 class="sh3">Forward Pass Notation</h3>
+<p class="prose">For layer l:
+z[l] = W[l] @ a[l-1] + b[l]
+a[l] = f[l](z[l])
+
+Where a[0] = x (input)</p>
+<h3 class="sh3">Backward Pass Algorithm</h3>
+<h4 class="sh3">Initialization</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Start at output layer L</p>
+<h4 class="sh3">Computation</h4>
+<p class="prose">∂L/∂a[L] = gradient from loss</p>
+<h4 class="sh3">Recursive Formula</h4>
+<h4 class="sh3">For Each Layer L</h4>
+<p class="prose"># Gradient through activation
+∂L/∂z[l] = ∂L/∂a[l] × f&#x27;[l](z[l])
+
+# Gradient wrt parameters
+∂L/∂W[l] = ∂L/∂z[l] × a[l-1]^T
+∂L/∂b[l] = ∂L/∂z[l]
+
+# Gradient to previous layer
+∂L/∂a[l-1] = W[l]^T × ∂L/∂z[l]</p>
+<h4 class="sh3">Termination</h4>
+<p class="prose">Loop until reach input layer (l = 1)</p>
+<h3 class="sh3">Pseudocode</h3>
+<pre class="code"><code>def backpropagation(network, x, y):
+    # Forward pass (store all z, a)
+    a = [x]
+    z = []
+    for l in range(1, L+1):
+        z_l = W[l] @ a[l-1] + b[l]
+        a_l = f[l](z_l)
+        z.append(z_l)
+        a.append(a_l)
+    
+    # Compute loss
+    loss = compute_loss(a[L], y)
+    
+    # Backward pass
+    dL_da = gradient_of_loss(a[L], y)
+    
+    gradients = {}
+    for l in range(L, 0, -1):
+        # Gradient through activation
+        dL_dz = dL_da * derivative_f[l](z[l-1])
+        
+        # Parameter gradients
+        gradients[f&#x27;W{l}&#x27;] = dL_dz @ a[l-1].T
+        gradients[f&#x27;b{l}&#x27;] = dL_dz
+        
+        # Gradient to previous layer
+        if l &gt; 1:
+            dL_da = W[l].T @ dL_dz
+    
+    return gradients</code></pre>
+<h2 class="sh1">Mathematical Proof</h2>
+<h3 class="sh2">Theorem Statement</h3>
+<h3 class="sh3">Claim</h3>
+<p class="prose">For a neural network with loss L and parameters θ,
+backpropagation correctly computes ∂L/∂θ.</p>
+<h3 class="sh3">What To Prove</h3>
+<p class="prose">The recursive formulas:
+
+∂L/∂W[l] = ∂L/∂z[l] × a[l-1]^T
+∂L/∂b[l] = ∂L/∂z[l]
+∂L/∂a[l-1] = W[l]^T × ∂L/∂z[l]
+
+produce the correct gradients ∂L/∂W[l], ∂L/∂b[l].</p>
+<h3 class="sh2">Proof For Single Layer</h3>
+<h3 class="sh3">Setup</h3>
+<p class="prose">Consider single layer:
+z = Wx + b
+a = f(z)
+L = loss(a, y)
+
+Want: ∂L/∂W, ∂L/∂b</p>
+<h3 class="sh3">Step 1 Chain Rule</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Apply chain rule</p>
+<h4 class="sh3">For W</h4>
+<p class="prose">∂L/∂W_ij = ∂L/∂z_i × ∂z_i/∂W_ij</p>
+<h4 class="sh3">For B</h4>
+<p class="prose">∂L/∂b_i = ∂L/∂z_i × ∂z_i/∂b_i</p>
+<h3 class="sh3">Step 2 Compute Partial Z Partial W</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Compute ∂z_i/∂W_ij</p>
+<h4 class="sh3">Derivation</h4>
+<p class="prose">z_i = Σ_k W_ik x_k + b_i
+
+∂z_i/∂W_ij = x_j</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">∂z_i/∂W_ij = x_j</p>
+<h3 class="sh3">Step 3 Compute Partial Z Partial B</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Compute ∂z_i/∂b_i</p>
+<h4 class="sh3">Derivation</h4>
+<p class="prose">z_i = Σ_k W_ik x_k + b_i
+
+∂z_i/∂b_i = 1</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">∂z_i/∂b_i = 1</p>
+<h3 class="sh3">Step 4 Substitute</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Substitute back into chain rule</p>
+<h4 class="sh3">For W</h4>
+<p class="prose">∂L/∂W_ij = ∂L/∂z_i × x_j</p>
+<h4 class="sh3">For B</h4>
+<p class="prose">∂L/∂b_i = ∂L/∂z_i × 1 = ∂L/∂z_i</p>
+<h3 class="sh3">Step 5 Matrix Form</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Write in matrix notation</p>
+<h4 class="sh3">For W</h4>
+<p class="prose">[∂L/∂W]_ij = [∂L/∂z]_i × [x]_j
+
+In matrix form:
+∂L/∂W = ∂L/∂z × x^T</p>
+<h4 class="sh3">For B</h4>
+<p class="prose">∂L/∂b = ∂L/∂z</p>
+<h3 class="sh3">Conclusion</h3>
+<h4 class="sh3">Result</h4>
+<p class="prose">Backprop formulas are correct by chain rule! QED</p>
+<h3 class="sh2">Proof For Multi Layer</h3>
+<h3 class="sh3">Induction Setup</h3>
+<p class="prose">Assume backprop correct for layers l+1, l+2, ..., L
+Prove correct for layer l</p>
+<h3 class="sh3">Base Case</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Output layer (layer L)</p>
+<h4 class="sh3">Proof</h4>
+<p class="prose">∂L/∂a[L] given by loss, then apply single-layer proof</p>
+<h3 class="sh3">Inductive Step</h3>
+<h4 class="sh3">Assumption</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Assume we correctly computed ∂L/∂a[l]</p>
+<h4 class="sh3">To Prove</h4>
+<h4 class="sh3">Description</h4>
+<p class="prose">Show we correctly compute ∂L/∂W[l], ∂L/∂b[l], ∂L/∂a[l-1]</p>
+<h4 class="sh3">Proof</h4>
+<p class="prose">Layer l: z[l] = W[l] @ a[l-1] + b[l]
+         a[l] = f[l](z[l])
+
+By chain rule:
+∂L/∂z[l] = ∂L/∂a[l] × ∂a[l]/∂z[l]
+          = ∂L/∂a[l] × f&#x27;[l](z[l])  ✓
+
+Then by single-layer proof:
+∂L/∂W[l] = ∂L/∂z[l] × a[l-1]^T  ✓
+∂L/∂b[l] = ∂L/∂z[l]             ✓
+
+For previous layer:
+∂L/∂a[l-1] = ∂L/∂z[l] × ∂z[l]/∂a[l-1]
+
+z[l] = W[l] @ a[l-1] + b[l]
+∂z[l]/∂a[l-1] = W[l]^T
+
+Therefore:
+∂L/∂a[l-1] = W[l]^T × ∂L/∂z[l]  ✓</p>
+<h3 class="sh3">Conclusion</h3>
+<p class="prose">By induction, backprop correct for all layers! QED</p>
+<h2 class="sh1">Forward Pass Caching</h2>
+<h3 class="sh2">Why Caching Necessary</h3>
+<h3 class="sh3">Gradient Computation Needs Forward Values</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Backprop formulas require forward pass values:
+
+∂L/∂W[l] = ∂L/∂z[l] × a[l-1]^T
+                        ↑
+                Need a[l-1] from forward pass!
+
+∂L/∂z[l] = ∂L/∂a[l] × f&#x27;[l](z[l])
+                             ↑
+                    Need z[l] from forward pass!</p>
+<h3 class="sh3">Recomputation Wasteful</h3>
+<h4 class="sh3">Without Caching</h4>
+<p class="prose">1. Forward pass: compute z, a
+2. Throw away z, a
+3. Backward pass: recompute z, a
+
+Result: 2x computation!</p>
+<h4 class="sh3">With Caching</h4>
+<p class="prose">1. Forward pass: compute z, a, STORE THEM
+2. Backward pass: use stored z, a
+
+Result: Efficient!</p>
+<h3 class="sh2">What To Cache</h3>
+<h3 class="sh3">Essential</h3>
+<ul class="blist"><li>Intermediate activations: a[l] for all layers</li><li>Linear outputs: z[l] for all layers (needed for activation derivatives)</li><li>Inputs: x (for first layer gradient)</li></ul>
+<h3 class="sh3">Optional</h3>
+<ul class="blist"><li>Activation derivatives: f&#x27;[l](z[l]) (can recompute from z[l])</li><li>Gradients: ∂L/∂z[l] (for debugging)</li></ul>
+<h3 class="sh3">Memory Tradeoff</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Caching uses memory proportional to network depth</p>
+<h4 class="sh3">Calculation</h4>
+<p class="prose">10-layer network, hidden size 1024, batch 256:
+
+Each layer stores:
+z[l]: 1024 × 256 × 4 bytes = 1 MB
+a[l]: 1024 × 256 × 4 bytes = 1 MB
+
+Total: 10 layers × 2 MB = 20 MB
+
+Manageable for most networks!</p>
+<h3 class="sh2">Implementation Pattern</h3>
+<h3 class="sh3">Cache Dictionary</h3>
+<pre class="code"><code>class Network:
+    def __init__(self):
+        self.cache = {}
+    
+    def forward(self, x):
+        self.cache[&#x27;a0&#x27;] = x
+        
+        a = x
+        for l in range(1, self.num_layers + 1):
+            z = self.W[l] @ a + self.b[l]
+            a = self.activation(z)
+            
+            # Cache for backward pass
+            self.cache[f&#x27;z{l}&#x27;] = z
+            self.cache[f&#x27;a{l}&#x27;] = a
+        
+        return a
+    
+    def backward(self, dL_da_output):
+        gradients = {}
+        dL_da = dL_da_output
+        
+        for l in range(self.num_layers, 0, -1):
+            # Retrieve cached values
+            z = self.cache[f&#x27;z{l}&#x27;]
+            a_prev = self.cache[f&#x27;a{l-1}&#x27;]
+            
+            # Compute gradients using cached values
+            dL_dz = dL_da * self.activation_derivative(z)
+            gradients[f&#x27;W{l}&#x27;] = dL_dz @ a_prev.T
+            gradients[f&#x27;b{l}&#x27;] = dL_dz
+            
+            if l &gt; 1:
+                dL_da = self.W[l].T @ dL_dz
+        
+        return gradients</code></pre>
+<h2 class="sh1">Gradient Checking</h2>
+<h3 class="sh2">Why Gradient Checking</h3>
+<h3 class="sh3">Bugs Are Common</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Backprop implementation easy to get wrong</p>
+<h4 class="sh3">Common Errors</h4>
+<ul class="blist"><li>Wrong matrix dimensions</li><li>Transpose in wrong place</li><li>Forgot to multiply by activation derivative</li><li>Sign error</li></ul>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Model trains but converges poorly (silent failure)</p>
+<h3 class="sh3">Gradient Checking Catches Bugs</h3>
+<h4 class="sh3">Method</h4>
+<p class="prose">Compare analytical gradients (backprop) to numerical gradients</p>
+<h4 class="sh3">If Match</h4>
+<p class="prose">Implementation correct ✓</p>
+<h4 class="sh3">If Dont Match</h4>
+<p class="prose">Bug in backprop code ✗</p>
+<h3 class="sh2">Numerical Gradient</h3>
+<h3 class="sh3">Definition</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">∂f/∂x ≈ (f(x + ε) - f(x - ε)) / (2ε)</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Two-sided finite difference (more accurate than one-sided)</p>
+<h3 class="sh3">Why It Works</h3>
+<h4 class="sh3">Taylor Expansion</h4>
+<p class="prose">f(x + ε) = f(x) + ε·f&#x27;(x) + ε²·f&#x27;&#x27;(x)/2 + O(ε³)
+f(x - ε) = f(x) - ε·f&#x27;(x) + ε²·f&#x27;&#x27;(x)/2 + O(ε³)
+
+Subtract:
+f(x + ε) - f(x - ε) = 2ε·f&#x27;(x) + O(ε³)
+
+Divide by 2ε:
+[f(x + ε) - f(x - ε)] / (2ε) = f&#x27;(x) + O(ε²)</p>
+<h4 class="sh3">Error</h4>
+<p class="prose">Error is O(ε²) - very accurate for small ε</p>
+<h3 class="sh3">Choosing Epsilon</h3>
+<h4 class="sh3">Too Large</h4>
+<p class="prose">ε = 0.1: Poor approximation</p>
+<h4 class="sh3">Too Small</h4>
+<p class="prose">ε = 1e-10: Numerical precision issues</p>
+<h4 class="sh3">Good Choice</h4>
+<p class="prose">ε = 1e-7 or 1e-5: Balance accuracy and precision</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">For Single Parameter</h3>
+<pre class="code"><code>def numerical_gradient(f, x, epsilon=1e-7):
+    &quot;&quot;&quot;
+    Compute numerical gradient of f at x
+    
+    f: function that takes x, returns scalar
+    x: point to compute gradient
+    &quot;&quot;&quot;
+    grad = np.zeros_like(x)
+    
+    for i in range(x.size):
+        # Perturb x[i] by +epsilon
+        x_plus = x.copy()
+        x_plus.flat[i] += epsilon
+        
+        # Perturb x[i] by -epsilon
+        x_minus = x.copy()
+        x_minus.flat[i] -= epsilon
+        
+        # Compute numerical gradient
+        grad.flat[i] = (f(x_plus) - f(x_minus)) / (2 * epsilon)
+    
+    return grad</code></pre>
+<h3 class="sh3">For Network Parameters</h3>
+<pre class="code"><code>def check_gradients(network, x, y, epsilon=1e-7):
+    &quot;&quot;&quot;
+    Verify backprop gradients against numerical gradients
+    &quot;&quot;&quot;
+    # Compute analytical gradients via backprop
+    network.forward(x)
+    analytical_grads = network.backward(y)
+    
+    # Compute numerical gradients
+    numerical_grads = {}
+    
+    for param_name in [&#x27;W1&#x27;, &#x27;b1&#x27;, &#x27;W2&#x27;, &#x27;b2&#x27;]:
+        param = network.params[param_name]
+        
+        # Function that computes loss for given param value
+        def loss_fn(p):
+            original = network.params[param_name].copy()
+            network.params[param_name] = p
+            network.forward(x)
+            loss = network.compute_loss(y)
+            network.params[param_name] = original
+            return loss
+        
+        # Numerical gradient
+        numerical_grads[param_name] = numerical_gradient(loss_fn, param, epsilon)
+    
+    # Compare
+    for param_name in analytical_grads:
+        analytical = analytical_grads[param_name]
+        numerical = numerical_grads[param_name]
+        
+        diff = np.linalg.norm(analytical - numerical)
+        norm = np.linalg.norm(analytical) + np.linalg.norm(numerical)
+        relative_error = diff / (norm + 1e-10)
+        
+        print(f&quot;{param_name}: relative error = {relative_error:.2e}&quot;)
+        
+        if relative_error &lt; 1e-7:
+            print(f&quot;  ✓ PASS&quot;)
+        elif relative_error &lt; 1e-5:
+            print(f&quot;  ~ ACCEPTABLE&quot;)
+        else:
+            print(f&quot;  ✗ FAIL - CHECK IMPLEMENTATION&quot;)</code></pre>
+<h3 class="sh2">Interpreting Results</h3>
+<h3 class="sh3">Excellent</h3>
+<p class="prose">Relative error &lt; 1e-7: Perfect match</p>
+<h3 class="sh3">Good</h3>
+<p class="prose">Relative error &lt; 1e-5: Acceptable (floating point precision)</p>
+<h3 class="sh3">Suspicious</h3>
+<p class="prose">Relative error &lt; 1e-3: Possible bug, investigate</p>
+<h3 class="sh3">Bug</h3>
+<p class="prose">Relative error &gt; 1e-3: Definitely a bug!</p>
+<h3 class="sh3">Common Causes Of Mismatch</h3>
+<ul class="blist"><li>Forgot to divide gradient by batch size</li><li>Matrix transpose in wrong place</li><li>Used W instead of W.T (or vice versa)</li><li>Activation derivative computed incorrectly</li><li>Lost factor of 2 somewhere</li></ul>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Every Attack Uses Backprop</h3>
+<h3 class="sh3">Adversarial Examples</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Craft input perturbation using gradients</p>
+<h4 class="sh3">Formulation</h4>
+<p class="prose">Find δ that maximizes loss:
+δ* = argmax_δ L(f(x + δ), y_wrong)
+
+subject to: ||δ|| &lt; ε</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Use gradient ascent on L wrt x</p>
+<h4 class="sh3">Attack Code</h4>
+<pre class="code"><code># FGSM attack
+gradient_x = compute_gradient_wrt_input(model, x, y)
+perturbation = epsilon * sign(gradient_x)
+adversarial = x + perturbation</code></pre>
+<h3 class="sh3">Model Extraction</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Query model gradients to steal parameters</p>
+<h4 class="sh3">If Gradients Accessible</h4>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Query ∂f/∂x for many inputs
+2. Solve system of equations to recover W</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">For linear layer f(x) = Wx:
+∂f/∂x = W
+
+One gradient query reveals all weights!</p>
+<h4 class="sh3">If Only Outputs Accessible</h4>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Query f(x) for many inputs
+2. Approximate gradients numerically
+3. Reconstruct model</p>
+<h3 class="sh3">Backdoor Detection</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Analyze gradient patterns to find triggers</p>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Compute ∂L/∂x for all training samples
+2. Cluster gradients
+3. Backdoor samples have anomalous gradients</p>
+<h4 class="sh3">Intuition</h4>
+<p class="prose">Backdoor trigger causes large gradient change
+(model sensitive to trigger pattern)</p>
+<h3 class="sh3">Membership Inference</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Determine if sample was in training set</p>
+<h4 class="sh3">Method</h4>
+<p class="prose">1. Compute gradient ∂L/∂θ for query sample
+2. Training samples have smaller gradients (model memorized them)
+3. Test samples have larger gradients (model uncertain)</p>
+<h4 class="sh3">Gradient As Signal</h4>
+<p class="prose">||∇L|| reveals memorization</p>
+<h3 class="sh2">Gradient Information Leakage</h3>
+<h3 class="sh3">What Gradients Reveal</h3>
+<h4 class="sh3">Model Architecture</h4>
+<p class="prose">Gradient dimensions reveal layer sizes</p>
+<h4 class="sh3">Parameter Values</h4>
+<p class="prose">Gradient magnitudes correlate with parameter magnitudes</p>
+<h4 class="sh3">Training Data</h4>
+<p class="prose">Gradients leak information about training distribution</p>
+<h4 class="sh3">Confidence</h4>
+<p class="prose">Gradient norm indicates model uncertainty</p>
+<h3 class="sh3">Example Architecture Leakage</h3>
+<h4 class="sh3">Scenario</h4>
+<p class="prose">Attacker queries model, measures gradient computation time</p>
+<h4 class="sh3">Inference</h4>
+<p class="prose">Longer time → more layers or larger layers
+
+Can binary search:
+- Try different input sizes, measure time
+- Infer hidden layer dimensions</p>
+<h3 class="sh3">Defense</h3>
+<h4 class="sh3">Gradient Masking</h4>
+<p class="prose">Reduce gradient information (but limited effectiveness)</p>
+<h4 class="sh3">Differential Privacy</h4>
+<p class="prose">Add noise to gradients</p>
+<h4 class="sh3">Query Limiting</h4>
+<p class="prose">Rate limit gradient queries</p>
+<h3 class="sh2">Gradient Masking False Security</h3>
+<h3 class="sh3">What Is Gradient Masking</h3>
+<h4 class="sh3">Description</h4>
+<p class="prose">Making gradients less informative (e.g., using non-smooth activations)</p>
+<h4 class="sh3">Techniques</h4>
+<ul class="blist"><li>Quantized activations (discrete outputs)</li><li>Defensive distillation</li><li>Gradient obfuscation</li></ul>
+<h3 class="sh3">Why It Fails</h3>
+<h4 class="sh3">Observation</h4>
+<p class="prose">Attackers can:
+1. Use numerical gradients instead of analytical
+2. Transfer attacks from undefended model
+3. Find alternative attack vectors</p>
+<h4 class="sh3">Conclusion</h4>
+<p class="prose">Gradient masking provides false sense of security</p>
+<h3 class="sh3">Proper Defense</h3>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Adversarial training, certified defenses, not obfuscation</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Backpropagation = efficient gradient computation via chain rule applied recursively backward</li><li>Forward pass must cache z and a values: backward pass needs them for gradient computation</li><li>Local gradients multiply: ∂L/∂x = (∂L/∂z) × (∂z/∂y) × (∂y/∂x) - each layer contributes</li><li>Weight transpose routes gradients backward: ∂L/∂a[l-1] = W[l]^T × ∂L/∂z[l]</li><li>Gradient checking is NON-NEGOTIABLE: compare analytical vs numerical gradients, relative error should be &lt; 1e-5</li><li>EVERY adversarial attack uses backprop: adversarial examples, model extraction, backdoor detection all query gradients</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Always implement gradient checking first: catch bugs before they cause silent failures</li><li>Cache forward pass values: don&#x27;t recompute z and a during backward pass (wasteful)</li><li>Verify dimensions at each step: wrong transpose or dimension mismatch breaks backprop</li><li>Use numerical gradients for debugging: if analytical gradient wrong, numerical shows correct value</li><li>Monitor gradient magnitudes during training: detect vanishing/exploding gradients early</li><li>Understand gradient flow visually: draw computational graph, trace gradients backward</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Gradients are attack surface: every gradient query leaks model information</li><li>Gradient-based attacks are fundamental: adversarial examples, model extraction, all use ∂L/∂x</li><li>Gradient masking is false security: attackers use numerical gradients or transfer attacks</li><li>Proper defenses use gradients: adversarial training needs backprop, certified defenses need gradients</li><li>Monitor gradient access: limit queries, add differential privacy noise, detect anomalous patterns</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Section 0206: Backpropagation Implementation (coding what we derived)</li><li>Section 0207-0208: Optimization algorithms (using gradients to update parameters)</li><li>Chapter 10: Adversarial ML (exploiting gradients for attacks)</li></ul>
+</article>

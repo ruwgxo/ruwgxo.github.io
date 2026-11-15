@@ -1,0 +1,996 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 12 · ~7 pages</div>
+<h1>Transformer Encoder: Building the First Half</h1>
+<div class="tags"><span class="tag">transformer-encoder</span><span class="tag">encoder-layer</span><span class="tag">self-attention</span><span class="tag">bidirectional-context</span><span class="tag">stacked-layers</span><span class="tag">encoder-architecture</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Transformer Encoder: Building the First Half</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.12</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">The transformer encoder is the first half of the transformer architecture. It takes 
+input sequences (text, code, etc.) and produces rich contextual representations where 
+each token&#x27;s encoding contains information from the entire sequence. The encoder uses 
+bidirectional self-attention - every token can attend to every other token, enabling 
+full context understanding.
+
+An encoder layer consists of multi-head self-attention followed by feed-forward network, 
+each with residual connections and layer normalization. Multiple encoder layers (6-12 
+typical) are stacked to build increasingly abstract representations. This architecture 
+powers models like BERT, RoBERTa, and many other NLU systems.
+
+For security engineers: Encoders create dense contextual representations that can leak 
+information beyond what&#x27;s explicitly in input text. Attention patterns reveal what the 
+model considers related, potentially exposing private associations. Understanding encoder 
+architecture enables representation-based attacks and defenses.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand encoder layer: self-attention → FFN, each with LayerNorm + residuals</li><li>Grasp self-attention: Q, K, V all from same sequence (bidirectional)</li><li>Learn encoder stack: 6-12 layers building hierarchical representations</li><li>See complete encoder: embeddings + positional encoding + layer stack</li><li>Understand bidirectional context (vs decoder&#x27;s causal/unidirectional)</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement single encoder layer from scratch (NumPy)</li><li>Stack multiple encoder layers</li><li>Build complete encoder with input embeddings</li><li>Visualize encoder attention patterns</li><li>Process sequences through full encoder</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Extract sensitive information from encoder representations</li><li>Analyze encoder attention for private associations</li><li>Understand representation-based attacks (model inversion)</li><li>Identify information leakage in contextualized embeddings</li><li>Audit encoder outputs for unexpected content</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.11: Layer normalization and residual connections</li><li>Section 3.10: Feed-forward networks</li><li>Section 3.8: Multi-head attention</li><li>Section 3.9: Positional encoding</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>All previous NumPy implementations</li><li>Understanding of deep network architectures</li><li>Composing multiple layers</li><li>Managing parameter counts and memory</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 11</h3>
+<p class="prose">Section 3.11 covered layer normalization and residual connections - the glue 
+that stabilizes training. Now we assemble all components into complete encoder 
+layers and stack them to build the transformer encoder.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.13 will cover the transformer decoder - the autoregressive generation 
+component that uses masked self-attention and encoder-decoder cross-attention 
+to generate output sequences.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Encoder Layer Architecture</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">A single encoder layer has two sublayers: (1) multi-head self-attention, and 
+(2) position-wise feed-forward network. Each sublayer has a residual connection 
+and layer normalization. The encoder processes all positions in parallel, with 
+bidirectional self-attention allowing each token to attend to all other tokens.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Encoder Layer Components</h3>
+<h4 class="sh3">Sublayer 1 Self Attention</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Mix information across positions (contextual processing)</p>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Multi-head self-attention:
+- Q, K, V all from same input (self-attention)
+- Each position attends to ALL positions (bidirectional)
+- Output: contextualized representation</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">attention_out = MultiHeadAttention(x, x, x)</p>
+<h4 class="sh3">With Residual And Norm</h4>
+<p class="prose">Pre-norm: x + Attention(LayerNorm(x))
+Post-norm: LayerNorm(x + Attention(x))</p>
+<h4 class="sh3">Sublayer 2 Feed Forward</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Position-wise transformation (knowledge application)</p>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Two-layer FFN:
+- Expand to 4×d_model
+- Apply GELU activation
+- Compress back to d_model</p>
+<h4 class="sh3">Formula</h4>
+<p class="prose">ffn_out = FFN(x)</p>
+<h4 class="sh3">With Residual And Norm</h4>
+<p class="prose">Pre-norm: x + FFN(LayerNorm(x))
+Post-norm: LayerNorm(x + FFN(x))</p>
+<h3 class="sh3">Complete Encoder Layer Prenorm</h3>
+<h4 class="sh3">Pseudocode</h4>
+<p class="prose"># Sublayer 1: Multi-head self-attention
+x1 = x + MultiHeadAttention(LayerNorm(x))
+
+# Sublayer 2: Feed-forward network
+x2 = x1 + FFN(LayerNorm(x1))
+
+return x2</p>
+<h4 class="sh3">Data Flow</h4>
+<h4 class="sh3">Input</h4>
+<p class="prose">x: (batch, seq_len, d_model)</p>
+<h4 class="sh3">After Attention</h4>
+<p class="prose">x1: (batch, seq_len, d_model) - contextualized</p>
+<h4 class="sh3">After Ffn</h4>
+<p class="prose">x2: (batch, seq_len, d_model) - final layer output</p>
+<h4 class="sh3">Key Properties</h4>
+<h4 class="sh3">Bidirectional</h4>
+<p class="prose">Every token can see every other token</p>
+<h4 class="sh3">Parallel</h4>
+<p class="prose">All positions processed simultaneously</p>
+<h4 class="sh3">Shape Preserving</h4>
+<p class="prose">Output has same shape as input</p>
+<h3 class="sh3">Self Attention Explained</h3>
+<h4 class="sh3">What Is Self Attention</h4>
+<p class="prose">Self-attention: Q, K, V all come from the SAME sequence
+
+Contrast with encoder-decoder attention:
+- Self-attention: Attend to same sequence
+- Cross-attention: Attend to different sequence</p>
+<h4 class="sh3">Bidirectional Context</h4>
+<p class="prose">Encoder self-attention is bidirectional:
+- Position i can attend to positions 0, 1, ..., n-1
+- No masking (unlike decoder)
+- Full context available
+
+Example: &quot;The cat sat on the mat&quot;
+- &quot;cat&quot; attends to: [The, cat, sat, on, the, mat]
+- Gets context from BOTH left and right</p>
+<h4 class="sh3">Why Bidirectional Good For Understanding</h4>
+<p class="prose">Bidirectional context enables:
+- Better word sense disambiguation
+- Capturing long-range dependencies
+- Understanding from full context
+
+Example: &quot;The bank by the river&quot;
+- Needs &quot;river&quot; (right context) to know &quot;bank&quot; means riverbank
+- Bidirectional attention captures this</p>
+<h3 class="sh3">Parameter Count Per Layer</h3>
+<h4 class="sh3">Multi Head Attention</h4>
+<h4 class="sh3">Q K V Projections</h4>
+<p class="prose">3 × d_model × d_model</p>
+<h4 class="sh3">Output Projection</h4>
+<p class="prose">d_model × d_model</p>
+<h4 class="sh3">Total Attention</h4>
+<p class="prose">4 × d_model²</p>
+<h4 class="sh3">Feed Forward</h4>
+<h4 class="sh3">Layer 1</h4>
+<p class="prose">d_model × d_ff (typically d_ff = 4×d_model)</p>
+<h4 class="sh3">Layer 2</h4>
+<p class="prose">d_ff × d_model</p>
+<h4 class="sh3">Total Ffn</h4>
+<p class="prose">2 × d_model × d_ff = 8 × d_model²</p>
+<h4 class="sh3">Layer Normalizations</h4>
+<h4 class="sh3">Two Layernorms</h4>
+<p class="prose">2 × 2 × d_model = 4 × d_model</p>
+<h4 class="sh3">Total Per Encoder Layer</h4>
+<p class="prose">4×d_model² (attention) + 8×d_model² (FFN) + 4×d_model (norms)
+≈ 12×d_model² parameters
+
+Example (BERT-base, d_model=768):
+12 × 768² ≈ 7.1M parameters per layer</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Encoder Layer</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class TransformerEncoderLayer:
+    &quot;&quot;&quot;
+    Single transformer encoder layer (pre-norm).
+    
+    Architecture:
+    1. x1 = x + MultiHeadAttention(LayerNorm(x))
+    2. x2 = x1 + FFN(LayerNorm(x1))
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, 
+                dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.d_model = d_model
+        self.num_heads = num_heads
+        self.d_ff = d_ff
+        self.dropout = dropout
+        
+        # Import previous implementations (simplified for example)
+        from section_3_08_multi_head_attention import MultiHeadAttention
+        from section_3_10_feed_forward_networks import PositionWiseFeedForwardGELU
+        from section_3_11_layer_norm_residuals import LayerNormalization
+        
+        # Sublayer 1: Multi-head self-attention
+        self.self_attention = MultiHeadAttention(d_model, num_heads)
+        self.attention_norm = LayerNormalization(d_model)
+        
+        # Sublayer 2: Feed-forward network
+        self.ffn = PositionWiseFeedForwardGELU(d_model, d_ff)
+        self.ffn_norm = LayerNormalization(d_model)
+    
+    def forward(self, x: np.ndarray, mask: np.ndarray = None,
+               training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;
+        Forward pass through encoder layer.
+        
+        Args:
+            x: Input (batch, seq_len, d_model)
+            mask: Optional attention mask
+            training: Whether in training mode
+        
+        Returns:
+            output: (batch, seq_len, d_model)
+            attention_weights: (batch, num_heads, seq_len, seq_len)
+        &quot;&quot;&quot;
+        # Sublayer 1: Multi-head self-attention with pre-norm
+        normalized = self.attention_norm(x)
+        
+        # Self-attention: Q, K, V all from same input
+        attn_output, attn_weights = self.self_attention(
+            normalized, normalized, normalized, mask
+        )
+        
+        # Dropout + residual
+        if training and self.dropout &gt; 0:
+            attn_output = self._dropout(attn_output, self.dropout)
+        x1 = x + attn_output
+        
+        # Sublayer 2: Feed-forward network with pre-norm
+        normalized = self.ffn_norm(x1)
+        ffn_output = self.ffn(normalized)
+        
+        # Dropout + residual
+        if training and self.dropout &gt; 0:
+            ffn_output = self._dropout(ffn_output, self.dropout)
+        x2 = x1 + ffn_output
+        
+        return x2, attn_weights
+    
+    def _dropout(self, x: np.ndarray, rate: float) -&gt; np.ndarray:
+        &quot;&quot;&quot;Apply dropout.&quot;&quot;&quot;
+        mask = np.random.binomial(1, 1 - rate, x.shape) / (1 - rate)
+        return x * mask
+    
+    def __call__(self, x: np.ndarray, mask: np.ndarray = None,
+                training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x, mask, training)
+
+
+# Example usage
+print(&quot;=== Transformer Encoder Layer ===\n&quot;)
+
+d_model = 512
+num_heads = 8
+d_ff = 2048
+batch_size = 2
+seq_len = 10
+
+encoder_layer = TransformerEncoderLayer(d_model, num_heads, d_ff)
+
+# Input
+x = np.random.randn(batch_size, seq_len, d_model)
+
+# Forward pass
+output, attn_weights = encoder_layer(x, training=False)
+
+print(f&quot;Configuration:&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Attention heads: {num_heads}&quot;)
+print(f&quot;  FFN dimension: {d_ff}&quot;)
+print()
+print(f&quot;Input shape: {x.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print(f&quot;Attention weights shape: {attn_weights.shape}&quot;)
+print()
+print(&quot;Layer structure:&quot;)
+print(&quot;  1. Multi-head self-attention (bidirectional)&quot;)
+print(&quot;  2. Feed-forward network (position-wise)&quot;)
+print(&quot;  Each with: LayerNorm + residual connection&quot;)</code></pre>
+<h3 class="sh3">Visualize Self Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_encoder_self_attention():
+    &quot;&quot;&quot;Visualize bidirectional self-attention in encoder.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Encoder Self-Attention Pattern ===\n&quot;)
+    
+    # Sample sentence
+    tokens = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;the&quot;, &quot;mat&quot;]
+    n = len(tokens)
+    
+    # Simulate attention weights (simplified)
+    # In encoder: Every token can attend to ALL tokens
+    np.random.seed(42)
+    attention = np.random.rand(n, n)
+    
+    # Normalize rows (softmax approximation)
+    attention = attention / attention.sum(axis=1, keepdims=True)
+    
+    print(&quot;Bidirectional self-attention:&quot;)
+    print(&quot;Each token attends to ALL tokens (no masking)\n&quot;)
+    print(&quot;Query →     &quot;, &quot;  &quot;.join(f&quot;{t:5s}&quot; for t in tokens))
+    print(&quot;-&quot; * (6 + 7 * len(tokens)))
+    
+    for i, query_token in enumerate(tokens):
+        weights_str = &quot;  &quot;.join(f&quot;{attention[i, j]:5.2f}&quot; for j in range(n))
+        print(f&quot;{query_token:5s}:  {weights_str}&quot;)
+    
+    print()
+    print(&quot;Key observations:&quot;)
+    print(&quot;  - Every position can attend to every position&quot;)
+    print(&quot;  - No causal masking (unlike decoder)&quot;)
+    print(&quot;  - Bidirectional context for understanding&quot;)
+    print()
+    
+    # Show example: &#x27;cat&#x27; attention
+    cat_idx = 1
+    print(f&quot;Example: &#x27;{tokens[cat_idx]}&#x27; attention distribution:&quot;)
+    for j, key_token in enumerate(tokens):
+        bar = &quot;█&quot; * int(attention[cat_idx, j] * 50)
+        print(f&quot;  → {key_token:5s}: {bar} {attention[cat_idx, j]:.2f}&quot;)
+
+visualize_encoder_self_attention()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Bidirectional Leakage</h3>
+<p class="prose">Bidirectional attention sees full context:
+- &quot;The password is [MASK]&quot; → encoder sees both sides
+- Can infer masked content from context
+- Harder to hide sensitive information
+- Defense: Careful masking strategies, sanitize inputs</p>
+<h3 class="sh3">Attention Pattern Analysis</h3>
+<p class="prose">Attention patterns reveal associations:
+- What the model considers related
+- Can expose private relationships (person-location, entity-attribute)
+- Adversary extracts attention to infer connections
+- Defense: Monitor attention patterns, detect leakage</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Stacking Encoder Layers: Building Deep Representations</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Transformer encoders stack multiple encoder layers (typically 6-12) to build 
+increasingly abstract representations. Each layer refines the representation, 
+capturing progressively higher-level features. Early layers focus on local syntax, 
+middle layers on semantics, late layers on task-specific abstractions.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Encoder Stack Architecture</h3>
+<h4 class="sh3">Stacking Pattern</h4>
+<p class="prose">Input → Encoder Layer 1 → Encoder Layer 2 → ... → Encoder Layer N
+
+Each layer:
+- Takes previous layer&#x27;s output as input
+- Applies self-attention + FFN
+- Outputs refined representation</p>
+<h4 class="sh3">Typical Depths</h4>
+<h4 class="sh3">Bert Base</h4>
+<p class="prose">12 encoder layers</p>
+<h4 class="sh3">Bert Large</h4>
+<p class="prose">24 encoder layers</p>
+<h4 class="sh3">Roberta</h4>
+<p class="prose">12 or 24 layers</p>
+<h4 class="sh3">Albert</h4>
+<p class="prose">12 layers (parameter sharing)</p>
+<h4 class="sh3">T5 Large</h4>
+<p class="prose">24 encoder layers</p>
+<h4 class="sh3">Why Stack Layers</h4>
+<h4 class="sh3">Hierarchical Features</h4>
+<p class="prose">Layer 1: Surface features (POS, syntax)
+Layer 6: Semantic features (entities, relations)
+Layer 12: Abstract features (task-specific)</p>
+<h4 class="sh3">Non Linearity</h4>
+<p class="prose">Each FFN adds non-linearity
+→ More layers = more expressive transformations</p>
+<h4 class="sh3">Refinement</h4>
+<p class="prose">Each layer refines previous layer&#x27;s representation
+→ Iterative improvement</p>
+<h3 class="sh3">Layer Specialization</h3>
+<h4 class="sh3">Early Layers 1 4</h4>
+<h4 class="sh3">Focus</h4>
+<p class="prose">Local syntax, morphology</p>
+<h4 class="sh3">Attention Patterns</h4>
+<p class="prose">Short-range (adjacent tokens)</p>
+<h4 class="sh3">Learned Features</h4>
+<p class="prose">POS tags, basic parsing</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">&quot;running&quot; → recognized as verb, -ing suffix</p>
+<h4 class="sh3">Middle Layers 5 8</h4>
+<h4 class="sh3">Focus</h4>
+<p class="prose">Semantic relationships</p>
+<h4 class="sh3">Attention Patterns</h4>
+<p class="prose">Medium-range (clause-level)</p>
+<h4 class="sh3">Learned Features</h4>
+<p class="prose">Named entities, semantic roles</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">&quot;Paris&quot; → recognized as location (capital of France)</p>
+<h4 class="sh3">Late Layers 9 12</h4>
+<h4 class="sh3">Focus</h4>
+<p class="prose">Task-specific abstractions</p>
+<h4 class="sh3">Attention Patterns</h4>
+<p class="prose">Long-range, task-dependent</p>
+<h4 class="sh3">Learned Features</h4>
+<p class="prose">Task objectives, high-level reasoning</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Sentiment analysis: &quot;good&quot; → positive signal</p>
+<h3 class="sh3">Gradient Flow In Deep Encoders</h3>
+<h4 class="sh3">Without Residuals</h4>
+<p class="prose">12 layers: Gradient ∝ ∂F₁₂/∂x × ... × ∂F₁/∂x
+→ Product of 12 terms → vanishing!</p>
+<h4 class="sh3">With Residuals</h4>
+<p class="prose">Each layer: y = x + F(x)
+→ Shortest gradient path = 1
+→ Can train 100+ layers!</p>
+<h4 class="sh3">Empirical Limits</h4>
+<h4 class="sh3">Post Norm</h4>
+<p class="prose">~24 layers (gradient instability beyond)</p>
+<h4 class="sh3">Pre Norm</h4>
+<p class="prose">100+ layers (more stable)</p>
+<h3 class="sh3">Parameter Scaling</h3>
+<h4 class="sh3">Per Layer</h4>
+<p class="prose">~12 × d_model² parameters</p>
+<h4 class="sh3">Total Parameters</h4>
+<h4 class="sh3">Bert Base 12 Layers</h4>
+<p class="prose">d_model = 768
+12 layers × 12 × 768² ≈ 85M parameters (just encoder layers)</p>
+<h4 class="sh3">Bert Large 24 Layers</h4>
+<p class="prose">d_model = 1024
+24 layers × 12 × 1024² ≈ 302M parameters</p>
+<h4 class="sh3">Memory Considerations</h4>
+<p class="prose">Activations: n × d_model per layer
+Attention: h × n² per layer
+
+With 12 layers, both scale linearly with depth</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Transformer Encoder Stack</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class TransformerEncoder:
+    &quot;&quot;&quot;
+    Multi-layer transformer encoder.
+    
+    Stacks N encoder layers with residual connections.
+    &quot;&quot;&quot;
+    
+    def __init__(self, num_layers: int, d_model: int, num_heads: int,
+                d_ff: int, dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            num_layers: Number of encoder layers to stack
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.num_layers = num_layers
+        self.d_model = d_model
+        
+        # Create encoder layers
+        self.layers = []
+        for _ in range(num_layers):
+            layer = TransformerEncoderLayer(d_model, num_heads, d_ff, dropout)
+            self.layers.append(layer)
+    
+    def forward(self, x: np.ndarray, mask: np.ndarray = None,
+               training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;
+        Forward pass through encoder stack.
+        
+        Args:
+            x: Input (batch, seq_len, d_model)
+            mask: Optional attention mask
+            training: Whether in training mode
+        
+        Returns:
+            output: Final encoder output (batch, seq_len, d_model)
+            all_attention_weights: List of attention weights per layer
+        &quot;&quot;&quot;
+        all_attention_weights = []
+        
+        # Pass through each encoder layer sequentially
+        for i, layer in enumerate(self.layers):
+            x, attn_weights = layer(x, mask, training)
+            all_attention_weights.append(attn_weights)
+        
+        return x, all_attention_weights
+    
+    def __call__(self, x: np.ndarray, mask: np.ndarray = None,
+                training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x, mask, training)
+
+
+# Example usage
+print(&quot;\n=== Transformer Encoder Stack ===\n&quot;)
+
+num_layers = 6
+d_model = 512
+num_heads = 8
+d_ff = 2048
+batch_size = 2
+seq_len = 10
+
+encoder = TransformerEncoder(num_layers, d_model, num_heads, d_ff)
+
+# Input
+x = np.random.randn(batch_size, seq_len, d_model)
+
+# Forward pass
+output, all_attn_weights = encoder(x, training=False)
+
+print(f&quot;Encoder configuration:&quot;)
+print(f&quot;  Number of layers: {num_layers}&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Attention heads: {num_heads}&quot;)
+print(f&quot;  FFN dimension: {d_ff}&quot;)
+print()
+print(f&quot;Input shape: {x.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print(f&quot;Attention weights per layer: {len(all_attn_weights)}&quot;)
+print()
+print(&quot;Processing flow:&quot;)
+for i in range(num_layers):
+    print(f&quot;  Layer {i+1}: Self-attention → FFN → refined representation&quot;)</code></pre>
+<h3 class="sh3">Analyze Layer Outputs</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def analyze_encoder_layers():
+    &quot;&quot;&quot;Analyze how representations change across encoder layers.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Encoder Layer Progression ===\n&quot;)
+    
+    num_layers = 6
+    d_model = 128
+    
+    # Simulate layer outputs (simplified)
+    np.random.seed(42)
+    
+    # Initial embedding
+    x = np.random.randn(1, 10, d_model)
+    
+    print(&quot;Representation evolution across layers:\n&quot;)
+    print(f&quot;Layer | Mean  | Std   | Max   | Min&quot;)
+    print(&quot;------|-------|-------|-------|-------&quot;)
+    
+    # Input embedding
+    print(f&quot;Input | {x.mean():5.2f} | {x.std():5.2f} | &quot;
+          f&quot;{x.max():5.2f} | {x.min():5.2f}&quot;)
+    
+    # Simulate layer progression
+    for layer_idx in range(num_layers):
+        # Simulate transformation (simplified)
+        x = x + np.random.randn(*x.shape) * 0.1
+        
+        print(f&quot;L{layer_idx+1:2d}   | {x.mean():5.2f} | {x.std():5.2f} | &quot;
+              f&quot;{x.max():5.2f} | {x.min():5.2f}&quot;)
+    
+    print()
+    print(&quot;Observations:&quot;)
+    print(&quot;  - Statistics remain stable (LayerNorm effect)&quot;)
+    print(&quot;  - Each layer refines representation&quot;)
+    print(&quot;  - Residual connections preserve information flow&quot;)
+
+analyze_encoder_layers()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Layer Specific Attacks</h3>
+<p class="prose">Different layers encode different information:
+- Early layers: Syntax (less sensitive)
+- Middle layers: Semantics (entities, relations - more sensitive)
+- Late layers: Task-specific (potentially most sensitive)
+- Adversary can target specific layers for extraction
+- Defense: Layer-wise access control, monitoring</p>
+<h3 class="sh3">Representation Drift Across Layers</h3>
+<p class="prose">Representations change dramatically across layers:
+- Input: Surface features
+- Output: Abstract features
+- Adversary can extract different info from different layers
+- Defense: Monitor all layers, not just final output</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Complete Encoder: Input Processing and Final Architecture</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The complete transformer encoder adds input embeddings and positional encoding to 
+the encoder stack. Input tokens are converted to embeddings, positional information 
+is added, then the sequence flows through the encoder stack. The final output is 
+contextualized representations ready for downstream tasks.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Complete Encoder Architecture</h3>
+<h4 class="sh3">Components In Order</h4>
+<h4 class="sh3">Step 1 Tokenization</h4>
+<p class="prose">Input: Raw text (&quot;The cat sat&quot;)
+Output: Token IDs [42, 157, 89]</p>
+<h4 class="sh3">Step 2 Embedding</h4>
+<p class="prose">Token IDs → Embeddings
+[42, 157, 89] → [(d_model,), (d_model,), (d_model,)]</p>
+<h4 class="sh3">Step 3 Positional Encoding</h4>
+<p class="prose">Add positional encoding
+embedding + positional_encoding</p>
+<h4 class="sh3">Step 4 Encoder Stack</h4>
+<p class="prose">Pass through N encoder layers
+Layer 1 → Layer 2 → ... → Layer N</p>
+<h4 class="sh3">Step 5 Output</h4>
+<p class="prose">Final output: Contextualized representations
+Each token encoding contains information from entire sequence</p>
+<h4 class="sh3">Mathematical Formulation</h4>
+<p class="prose"># Input processing
+E = TokenEmbedding(input_ids)           # (seq_len, d_model)
+PE = PositionalEncoding(seq_len)        # (seq_len, d_model)
+x₀ = E + PE                             # (seq_len, d_model)
+
+# Encoder stack
+x₁ = EncoderLayer₁(x₀)
+x₂ = EncoderLayer₂(x₁)
+...
+xₙ = EncoderLayerₙ(xₙ₋₁)
+
+# Output
+output = xₙ                             # (seq_len, d_model)</p>
+<h3 class="sh3">Input Embeddings</h3>
+<h4 class="sh3">Token Embeddings</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Convert token IDs to dense vectors</p>
+<h4 class="sh3">Dimension</h4>
+<p class="prose">d_model (512, 768, 1024, etc.)</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code>Embedding matrix: (vocab_size, d_model)
+
+For token ID t:
+embedding = embedding_matrix[t]</code></pre>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">vocab_size × d_model</p>
+<h4 class="sh3">Example Bert</h4>
+<p class="prose">Vocabulary: 30,000 tokens
+d_model: 768
+Parameters: 30,000 × 768 = 23M</p>
+<h4 class="sh3">Positional Encoding</h4>
+<h4 class="sh3">Methods</h4>
+<h4 class="sh3">Sinusoidal</h4>
+<p class="prose">Fixed (Vaswani et al., 2017)</p>
+<h4 class="sh3">Learned</h4>
+<p class="prose">Learned embeddings (BERT, GPT-2)</p>
+<h4 class="sh3">Rope</h4>
+<p class="prose">Rotary embeddings (modern LLMs)</p>
+<h4 class="sh3">Addition Vs Concatenation</h4>
+<p class="prose">Addition: embedding + positional (preserves dimension)
+Concatenation: [embedding, positional] (doubles dimension)
+
+Transformers use addition</p>
+<h3 class="sh3">Output Representations</h3>
+<h4 class="sh3">Contextualized Embeddings</h4>
+<p class="prose">Each token&#x27;s final representation contains:
+- Token&#x27;s own semantic meaning
+- Information from surrounding context
+- Long-range dependencies
+
+Unlike word2vec (static): BERT embeddings are contextual</p>
+<h4 class="sh3">Downstream Task Usage</h4>
+<h4 class="sh3">Classification</h4>
+<p class="prose">Use [CLS] token representation (first position)
+→ Feed to classifier</p>
+<h4 class="sh3">Token Level Tasks</h4>
+<p class="prose">Use each token&#x27;s representation
+→ Named entity recognition, POS tagging</p>
+<h4 class="sh3">Sequence To Sequence</h4>
+<p class="prose">Use all representations as encoder output
+→ Feed to decoder for translation, summarization</p>
+<h3 class="sh3">Complete Parameter Count</h3>
+<h4 class="sh3">Embeddings</h4>
+<p class="prose">vocab_size × d_model</p>
+<h4 class="sh3">Positional Encoding</h4>
+<p class="prose">0 (sinusoidal) or max_len × d_model (learned)</p>
+<h4 class="sh3">Encoder Layers</h4>
+<p class="prose">num_layers × 12 × d_model²</p>
+<h4 class="sh3">Bert Base Total</h4>
+<p class="prose">Embeddings: 30K × 768 ≈ 23M
+Positional: 512 × 768 ≈ 0.4M
+12 encoder layers: 12 × 12 × 768² ≈ 85M
+Total: ~110M parameters</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Complete Transformer Encoder</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class CompleteTransformerEncoder:
+    &quot;&quot;&quot;
+    Complete transformer encoder with embeddings.
+    
+    Components:
+    1. Token embeddings
+    2. Positional encoding
+    3. Encoder stack
+    &quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, max_len: int, num_layers: int,
+                d_model: int, num_heads: int, d_ff: int, 
+                dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Vocabulary size
+            max_len: Maximum sequence length
+            num_layers: Number of encoder layers
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.max_len = max_len
+        self.d_model = d_model
+        
+        # Token embeddings
+        self.token_embeddings = np.random.randn(vocab_size, d_model) * 0.01
+        
+        # Positional encoding (sinusoidal)
+        from section_3_09_positional_encoding import SinusoidalPositionalEncoding
+        self.positional_encoding = SinusoidalPositionalEncoding(d_model, max_len)
+        
+        # Encoder stack
+        self.encoder = TransformerEncoder(num_layers, d_model, num_heads, 
+                                          d_ff, dropout)
+        
+        self.dropout = dropout
+    
+    def embed(self, input_ids: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Convert token IDs to embeddings with positional encoding.
+        
+        Args:
+            input_ids: Token IDs (batch, seq_len)
+        
+        Returns:
+            embeddings: (batch, seq_len, d_model)
+        &quot;&quot;&quot;
+        # Token embeddings
+        token_emb = self.token_embeddings[input_ids]  # (batch, seq_len, d_model)
+        
+        # Positional encoding
+        seq_len = input_ids.shape[1]
+        pos_enc = self.positional_encoding(seq_len)  # (seq_len, d_model)
+        
+        # Add positional encoding (broadcast over batch)
+        embeddings = token_emb + pos_enc
+        
+        return embeddings
+    
+    def forward(self, input_ids: np.ndarray, mask: np.ndarray = None,
+               training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;
+        Complete encoder forward pass.
+        
+        Args:
+            input_ids: Token IDs (batch, seq_len)
+            mask: Optional attention mask
+            training: Whether in training mode
+        
+        Returns:
+            output: Encoder output (batch, seq_len, d_model)
+            all_attention_weights: List of attention weights per layer
+        &quot;&quot;&quot;
+        # Embed input
+        x = self.embed(input_ids)
+        
+        # Dropout on embeddings (if training)
+        if training and self.dropout &gt; 0:
+            mask_drop = np.random.binomial(1, 1 - self.dropout, 
+                                           x.shape) / (1 - self.dropout)
+            x = x * mask_drop
+        
+        # Pass through encoder stack
+        output, all_attn_weights = self.encoder(x, mask, training)
+        
+        return output, all_attn_weights
+    
+    def __call__(self, input_ids: np.ndarray, mask: np.ndarray = None,
+                training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(input_ids, mask, training)
+
+
+# Example usage
+print(&quot;\n=== Complete Transformer Encoder ===\n&quot;)
+
+vocab_size = 30000
+max_len = 512
+num_layers = 6
+d_model = 512
+num_heads = 8
+d_ff = 2048
+
+complete_encoder = CompleteTransformerEncoder(
+    vocab_size, max_len, num_layers, d_model, num_heads, d_ff
+)
+
+# Sample input (token IDs)
+batch_size = 2
+seq_len = 10
+input_ids = np.random.randint(0, vocab_size, (batch_size, seq_len))
+
+# Forward pass
+encoder_output, attn_weights = complete_encoder(input_ids, training=False)
+
+print(f&quot;Encoder configuration:&quot;)
+print(f&quot;  Vocabulary size: {vocab_size:,}&quot;)
+print(f&quot;  Max sequence length: {max_len}&quot;)
+print(f&quot;  Number of layers: {num_layers}&quot;)
+print(f&quot;  Model dimension: {d_model}&quot;)
+print(f&quot;  Attention heads: {num_heads}&quot;)
+print()
+print(f&quot;Input IDs shape: {input_ids.shape}&quot;)
+print(f&quot;Encoder output shape: {encoder_output.shape}&quot;)
+print()
+print(&quot;Complete processing pipeline:&quot;)
+print(&quot;  1. Token IDs → Token embeddings&quot;)
+print(&quot;  2. Add positional encoding&quot;)
+print(&quot;  3. Pass through encoder stack (6 layers)&quot;)
+print(&quot;  4. Output: Contextualized representations&quot;)</code></pre>
+<h3 class="sh3">Parameter Count Analysis</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def analyze_encoder_parameters():
+    &quot;&quot;&quot;Analyze parameter distribution in transformer encoder.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Encoder Parameter Analysis ===\n&quot;)
+    
+    configs = [
+        (&quot;BERT-base&quot;, 30000, 512, 12, 768, 8, 3072),
+        (&quot;BERT-large&quot;, 30000, 512, 24, 1024, 16, 4096),
+    ]
+    
+    for name, vocab, max_len, n_layers, d_model, n_heads, d_ff in configs:
+        # Embeddings
+        token_emb = vocab * d_model
+        pos_emb = max_len * d_model  # If learned
+        
+        # Per encoder layer
+        attn_params = 4 * d_model * d_model
+        ffn_params = 2 * d_model * d_ff
+        norm_params = 4 * d_model  # 2 LayerNorms
+        layer_params = attn_params + ffn_params + norm_params
+        
+        # Total
+        total_encoder = n_layers * layer_params
+        total_params = token_emb + pos_emb + total_encoder
+        
+        print(f&quot;{name}:&quot;)
+        print(f&quot;  Token embeddings:    {token_emb/1e6:6.1f}M&quot;)
+        print(f&quot;  Positional (learned): {pos_emb/1e6:6.1f}M&quot;)
+        print(f&quot;  Encoder layers ({n_layers}):  {total_encoder/1e6:6.1f}M&quot;)
+        print(f&quot;  Total:               {total_params/1e6:6.1f}M&quot;)
+        print()
+
+analyze_encoder_parameters()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Embedding Inversion</h3>
+<p class="prose">Token embeddings can be inverted:
+- Given encoder output, adversary can approximate input tokens
+- Embedding matrix is relatively small (vocab_size × d_model)
+- Nearest neighbor search reveals likely tokens
+- Defense: Differential privacy on embeddings, output sanitization</p>
+<h3 class="sh3">Contextualized Leakage</h3>
+<p class="prose">Contextualized representations leak more than input:
+- Contain information from entire sequence
+- Can reveal relationships not explicit in input
+- Example: &quot;He&quot; representation contains &quot;John&quot; info (from coreference)
+- Defense: Sanitize context, limit attention scope</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Encoder layer: self-attention → FFN, each with LayerNorm + residuals</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Core building block of transformer encoder</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Self-attention is bidirectional: every token attends to all tokens</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Enables full context understanding for NLU tasks</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Stack 6-12 encoder layers for hierarchical representations</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Early layers: syntax, middle: semantics, late: task-specific</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Complete encoder: embeddings + positional + encoder stack</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Token IDs → contextualized representations</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Pre-norm configuration enables stable deep training</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Can stack 100+ layers with pre-norm, only 24 with post-norm</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement single encoder layer from scratch</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Self-attention + FFN with pre-norm and residuals</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Stack multiple encoder layers</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Sequential processing, each layer refines representation</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Build complete encoder with embeddings</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Token IDs → embeddings + positional → encoder stack</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Visualize bidirectional self-attention patterns</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Show every token attending to all tokens</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Analyze layer specialization</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Early: syntax, middle: semantics, late: task-specific</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Bidirectional attention sees full context (harder to hide info)</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Masking strategies less effective, sanitize carefully</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Attention patterns reveal what model considers related</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Can expose private associations, monitor attention</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Different layers encode different information types</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Layer-specific attacks, monitor all layers</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Contextualized embeddings leak beyond input text</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Contain inferred information, sanitize outputs</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Embedding inversion can recover approximate inputs</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Protect encoder outputs, use differential privacy</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using decoder&#x27;s causal masking in encoder</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Encoder uses NO masking (bidirectional), decoder uses causal mask</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting positional encoding</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always add positional encoding to embeddings</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Self-attention with different Q, K, V sources</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Self-attention: Q, K, V all from SAME input</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not preserving shape through encoder layers</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Each layer: (batch, seq_len, d_model) → (batch, seq_len, d_model)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Assuming encoder output is task-ready</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Need task-specific head (classifier, etc.) on top</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 11</h3>
+<ul class="blist"><li>Layer normalization and residual connections (used in each layer)</li><li>Pre-norm configuration for stability</li></ul>
+<h3 class="sh3">From Sections 3 8 3 10</h3>
+<ul class="blist"><li>Multi-head attention (sublayer 1)</li><li>Feed-forward network (sublayer 2)</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.13: Transformer decoder (autoregressive generation)</li><li>Masked self-attention (causal)</li><li>Encoder-decoder cross-attention</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Transformer decoder architecture</li><li>Masked (causal) self-attention</li><li>Encoder-decoder cross-attention</li><li>Autoregressive generation</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement transformer decoder</li><li>Build encoder-decoder transformer</li><li>Implement sequence generation</li><li>Train complete transformer model</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">The transformer encoder is a powerful architecture for understanding sequences. It takes 
+token IDs, converts them to embeddings with positional encoding, then passes them through 
+a stack of encoder layers. Each layer applies bidirectional self-attention (every token 
+sees every token) followed by feed-forward network, both with residual connections and 
+layer normalization for training stability.
+
+Stacking 6-12 layers builds hierarchical representations: early layers capture syntax 
+and local patterns, middle layers extract semantic features and entities, late layers 
+develop task-specific abstractions. The bidirectional self-attention is key - unlike 
+the decoder&#x27;s causal attention, encoders see full context in both directions, enabling 
+comprehensive understanding.
+
+The complete encoder (embeddings + positional + stack) transforms discrete token IDs 
+into rich contextualized representations. Each output embedding contains information 
+from the entire input sequence, capturing long-range dependencies and complex 
+relationships. This powers BERT, RoBERTa, and countless other NLU systems.
+
+From a security perspective: bidirectional attention makes hiding information harder - 
+the encoder sees full context and can infer masked content. Attention patterns reveal 
+associations the model learns, potentially exposing private relationships. Different 
+layers encode different information (syntax vs semantics vs task), creating layer-specific 
+attack vectors. Contextualized representations leak beyond input text, containing inferred 
+information. Understanding encoder architecture enables both attacks (model inversion, 
+representation extraction) and defenses (sanitization, monitoring, access control).
+
+Next: Section 3.13 covers the transformer decoder - the autoregressive generation 
+component that uses masked self-attention and encoder-decoder cross-attention to 
+generate output sequences one token at a time.</p>
+</article>

@@ -1,0 +1,678 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 11 · ~6 pages</div>
+<h1>Evaluation Metrics and Confusion Matrix</h1>
+<div class="tags"><span class="tag">evaluation-metrics</span><span class="tag">confusion-matrix</span><span class="tag">precision-recall</span><span class="tag">f1-score</span><span class="tag">roc-auc</span><span class="tag">accuracy</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">You&#x27;ve trained a model, loss decreased, everything looks good. But can you actually 
+deploy it? How well does it detect attacks? How many false alarms will it generate? 
+If you block based on this model, what percentage of legitimate traffic gets blocked?
+
+Evaluation metrics answer these questions. They quantify model performance in ways 
+that matter for your use case. Accuracy says &quot;90% correct&quot;, but is that 90% of 
+attacks detected or 90% of benign traffic? Precision says &quot;90% of alerts are real&quot;, 
+recall says &quot;90% of attacks are caught&quot;. These are very different claims.
+
+The confusion matrix is the foundation - a 2x2 table showing all prediction outcomes. 
+From it, we derive every classification metric: accuracy, precision, recall, F1, 
+specificity, and more. Understanding these metrics is critical because:
+1. Different metrics matter for different security use cases
+2. Accuracy is often misleading (especially with imbalanced data)
+3. You need to communicate model performance to stakeholders
+4. Metrics guide threshold tuning and model selection
+
+This section covers the confusion matrix, all major classification metrics, when to 
+use each, and how to choose optimal operating points for security systems.</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security context:
+- Accuracy misleading: 99% accuracy detecting 1% attacks = useless (predicts all benign)
+- Precision = false alarm rate (low precision = analyst burnout)
+- Recall = detection rate (low recall = missed attacks)
+- F1 balances both (harmonic mean of precision and recall)
+- ROC-AUC evaluates across all thresholds
+
+Real operational decisions:
+- SOC analyst capacity: 1000 alerts/day max → need high precision
+- Critical system protection: Miss no attacks → need high recall
+- Compliance requirements: 95% detection rate minimum → recall target
+- Cost constraints: $10/alert investigation → precision directly impacts cost
+
+Different security systems optimize different metrics based on constraints.</p>
+<h2 class="sh1">Confusion Matrix</h2>
+<h3 class="sh2">What Is Confusion Matrix</h3>
+<p class="prose">2x2 table showing all possible prediction outcomes for binary classification
+
+Rows: Actual labels (what truly happened)
+Columns: Predicted labels (what model said)</p>
+<h3 class="sh2">Matrix Structure</h3>
+<p class="prose">Predicted Negative | Positive Actual    ------------------------- Negative  |   TN     |    FP      | Positive  |   FN     |    TP      | ------------------------- Where: - TN (True Negative): Correct</p>
+<h3 class="sh2">Security Interpretation</h3>
+<p class="prose">For attack detection:
+
+TN (True Negative): Correctly identified benign traffic
+FP (False Positive): Benign traffic flagged as attack (false alarm)
+FN (False Negative): Attack missed (undetected attack)
+TP (True Positive): Attack correctly detected
+
+Security priorities:
+- Minimize FN (missed attacks = breaches)
+- Minimize FP (false alarms = analyst fatigue)
+- Trade-off: Can&#x27;t optimize both simultaneously</p>
+<h3 class="sh2">Example Spam Detection</h3>
+<p class="prose">Test set: 1000 emails (100 spam, 900 legitimate)
+Model predictions:
+
+                    Predicted
+              Not Spam | Spam
+Actual    ---------------------
+Not Spam  |   850    |   50   |  = 900 legitimate emails
+Spam      |    15    |   85   |  = 100 spam emails
+          ---------------------
+             865 pred   135 pred
+             not spam    spam
+
+Interpretation:
+- TN = 850: Correctly identified 850 legitimate emails
+- FP = 50: Falsely flagged 50 legitimate as spam
+- FN = 15: Missed 15 spam emails
+- TP = 85: Correctly detected 85 spam emails</p>
+<h3 class="sh2">Numpy Implementation</h3>
+<pre class="code"><code>import numpy as np
+
+def confusion_matrix(y_true, y_pred):
+    &quot;&quot;&quot;
+    Compute confusion matrix
+    
+    Args:
+        y_true: True labels (0 or 1)
+        y_pred: Predicted labels (0 or 1)
+    
+    Returns:
+        2x2 numpy array: [[TN, FP], [FN, TP]]
+    &quot;&quot;&quot;
+    # True negatives
+    tn = np.sum((y_true == 0) &amp; (y_pred == 0))
+    
+    # False positives
+    fp = np.sum((y_true == 0) &amp; (y_pred == 1))
+    
+    # False negatives
+    fn = np.sum((y_true == 1) &amp; (y_pred == 0))
+    
+    # True positives
+    tp = np.sum((y_true == 1) &amp; (y_pred == 1))
+    
+    return np.array([[tn, fp], [fn, tp]])
+
+# Example
+y_true = np.array([0, 0, 1, 1, 0, 1, 0, 1, 1, 0])
+y_pred = np.array([0, 0, 1, 0, 0, 1, 1, 1, 1, 0])
+
+cm = confusion_matrix(y_true, y_pred)
+print(&quot;Confusion Matrix:&quot;)
+print(cm)
+# [[4 1]
+#  [1 4]]
+
+tn, fp, fn, tp = cm[0,0], cm[0,1], cm[1,0], cm[1,1]
+print(f&quot;TN={tn}, FP={fp}, FN={fn}, TP={tp}&quot;)</code></pre>
+<h2 class="sh1">Basic Metrics</h2>
+<h3 class="sh2">Accuracy</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">Accuracy = (TP + TN) / (TP + TN + FP + FN)</p>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">Fraction of all predictions that were correct</p>
+<h3 class="sh3">Range</h3>
+<p class="prose">[0, 1] where 1 = perfect</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Confusion matrix: TN=850, FP=50, FN=15, TP=85
+Accuracy = (850 + 85) / (850 + 50 + 15 + 85)
+         = 935 / 1000
+         = 0.935 (93.5%)</p>
+<h3 class="sh3">Pros</h3>
+<ul class="blist"><li>Simple, intuitive</li><li>Good for balanced datasets</li></ul>
+<h3 class="sh3">Cons</h3>
+<ul class="blist"><li>Misleading for imbalanced data</li><li>Doesn&#x27;t distinguish types of errors</li></ul>
+<h3 class="sh3">Imbalanced Data Problem</h3>
+<p class="prose">Dataset: 99% benign, 1% attacks
+Naive classifier: Always predict &quot;benign&quot;
+
+Confusion matrix:
+TN=990, FP=0, FN=10, TP=0
+
+Accuracy = (990 + 0) / 1000 = 99%
+
+Looks great! But detected ZERO attacks.
+This is why accuracy alone is dangerous for security.</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose">def accuracy(y_true, y_pred):
+    &quot;&quot;&quot;Compute accuracy&quot;&quot;&quot;
+    return np.mean(y_true == y_pred)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Balanced datasets only, never as sole metric for security</p>
+<h3 class="sh2">Precision</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">Precision = TP / (TP + FP)</p>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">Of all positive predictions, what fraction were actually positive?</p>
+<h3 class="sh3">Alternative Names</h3>
+<ul class="blist"><li>Positive Predictive Value (PPV)</li></ul>
+<h3 class="sh3">Security Interpretation</h3>
+<p class="prose">&quot;Of all alerts generated, how many were real attacks?&quot;
+
+High precision = Low false alarm rate
+Low precision = Many false alarms = analyst fatigue</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">TP=85, FP=50
+Precision = 85 / (85 + 50) = 85 / 135 = 0.630 (63%)
+
+Meaning: 63% of flagged emails were actually spam
+Or: 37% false alarm rate</p>
+<h3 class="sh3">When To Prioritize</h3>
+<p class="prose">- Limited analyst capacity (can&#x27;t investigate many alerts)
+- High cost per false positive ($100/investigation)
+- User-facing systems (false positives annoy users)
+- Example: Email spam folder (false positives hide real emails)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def precision(y_true, y_pred):
+    &quot;&quot;&quot;Compute precision&quot;&quot;&quot;
+    tp = np.sum((y_true == 1) &amp; (y_pred == 1))
+    fp = np.sum((y_true == 0) &amp; (y_pred == 1))
+    
+    if tp + fp == 0:
+        return 0.0  # No positive predictions
+    
+    return tp / (tp + fp)</code></pre>
+<h3 class="sh2">Recall</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">Recall = TP / (TP + FN)</p>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">Of all actual positives, what fraction did we detect?</p>
+<h3 class="sh3">Alternative Names</h3>
+<ul class="blist"><li>Sensitivity</li><li>True Positive Rate (TPR)</li><li>Hit Rate</li></ul>
+<h3 class="sh3">Security Interpretation</h3>
+<p class="prose">&quot;Of all attacks that occurred, how many did we detect?&quot;
+
+High recall = Low miss rate = Few attacks slip through
+Low recall = Many missed attacks = security gaps</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">TP=85, FN=15
+Recall = 85 / (85 + 15) = 85 / 100 = 0.85 (85%)
+
+Meaning: Detected 85% of spam emails
+Or: Missed 15% of spam</p>
+<h3 class="sh3">When To Prioritize</h3>
+<p class="prose">- Critical systems (can&#x27;t miss attacks)
+- High cost of false negatives (breach = $1M)
+- Compliance requirements (must detect 95% of incidents)
+- Example: Malware detection on critical infrastructure</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def recall(y_true, y_pred):
+    &quot;&quot;&quot;Compute recall (sensitivity, TPR)&quot;&quot;&quot;
+    tp = np.sum((y_true == 1) &amp; (y_pred == 1))
+    fn = np.sum((y_true == 1) &amp; (y_pred == 0))
+    
+    if tp + fn == 0:
+        return 0.0  # No actual positives
+    
+    return tp / (tp + fn)</code></pre>
+<h3 class="sh2">F1 Score</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">F1 = 2 × (Precision × Recall) / (Precision + Recall)</p>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">Harmonic mean of precision and recall</p>
+<h3 class="sh3">Why Harmonic Mean</h3>
+<p class="prose">Harmonic mean penalizes extreme values
+
+Arithmetic mean: (0.9 + 0.1) / 2 = 0.5
+Harmonic mean: 2 × 0.9 × 0.1 / (0.9 + 0.1) = 0.18
+
+F1 only high if BOTH precision and recall are high</p>
+<h3 class="sh3">Range</h3>
+<p class="prose">[0, 1] where 1 = perfect</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Precision = 0.63, Recall = 0.85
+F1 = 2 × (0.63 × 0.85) / (0.63 + 0.85)
+   = 2 × 0.536 / 1.48
+   = 0.724 (72.4%)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">- Need to balance precision and recall
+- Single metric for model comparison
+- Imbalanced datasets (better than accuracy)
+- Both FP and FN are costly</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def f1_score(y_true, y_pred):
+    &quot;&quot;&quot;Compute F1 score&quot;&quot;&quot;
+    prec = precision(y_true, y_pred)
+    rec = recall(y_true, y_pred)
+    
+    if prec + rec == 0:
+        return 0.0
+    
+    return 2 * (prec * rec) / (prec + rec)</code></pre>
+<h3 class="sh3">Variations</h3>
+<p class="prose">F-beta score: Weighted harmonic mean
+
+F_β = (1 + β²) × (Precision × Recall) / (β² × Precision + Recall)
+
+β &lt; 1: Favor precision
+β = 1: Equal weight (F1)
+β &gt; 1: Favor recall
+
+F2 (β=2): Recall weighted 2x more than precision
+F0.5 (β=0.5): Precision weighted 2x more than recall</p>
+<h3 class="sh2">Specificity</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">Specificity = TN / (TN + FP)</p>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">Of all actual negatives, what fraction did we correctly identify?</p>
+<h3 class="sh3">Alternative Names</h3>
+<ul class="blist"><li>True Negative Rate (TNR)</li><li>Selectivity</li></ul>
+<h3 class="sh3">Complement</h3>
+<p class="prose">False Positive Rate = 1 - Specificity = FP / (TN + FP)</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">TN=850, FP=50
+Specificity = 850 / (850 + 50) = 850 / 900 = 0.944 (94.4%)
+FPR = 1 - 0.944 = 0.056 (5.6%)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Medical screening (avoid false positives in healthy population)
+Less common in security (we care more about detecting attacks)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def specificity(y_true, y_pred):
+    &quot;&quot;&quot;Compute specificity (TNR)&quot;&quot;&quot;
+    tn = np.sum((y_true == 0) &amp; (y_pred == 0))
+    fp = np.sum((y_true == 0) &amp; (y_pred == 1))
+    
+    if tn + fp == 0:
+        return 0.0
+    
+    return tn / (tn + fp)</code></pre>
+<h2 class="sh1">Advanced Metrics</h2>
+<h3 class="sh2">Roc Curve And Auc</h3>
+<h3 class="sh3">What Is Roc</h3>
+<p class="prose">ROC (Receiver Operating Characteristic) curve:
+Plots True Positive Rate (Recall) vs False Positive Rate
+across all possible classification thresholds
+
+X-axis: False Positive Rate = FP / (FP + TN)
+Y-axis: True Positive Rate = TP / (TP + FN) = Recall</p>
+<h3 class="sh3">Why Threshold Sweep</h3>
+<p class="prose">Binary classifier: P(positive) → threshold → class label
+
+Threshold = 0.5 is arbitrary
+Different thresholds → different precision/recall trade-offs
+
+ROC curve shows model performance at ALL thresholds</p>
+<h3 class="sh3">Interpreting Roc</h3>
+<p class="prose">Perfect classifier: Goes to top-left corner (TPR=1, FPR=0)
+Random classifier: Diagonal line (TPR=FPR)
+Better classifier: Curve closer to top-left</p>
+<h3 class="sh3">Auc Score</h3>
+<p class="prose">AUC (Area Under Curve): Single number summarizing ROC
+
+Range: [0, 1]
+- AUC = 1.0: Perfect classifier
+- AUC = 0.9: Excellent
+- AUC = 0.8: Good
+- AUC = 0.7: Fair
+- AUC = 0.5: Random (no discriminative power)
+- AUC &lt; 0.5: Worse than random (predictions inverted)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def compute_roc_curve(y_true, y_pred_proba):
+    &quot;&quot;&quot;
+    Compute ROC curve points
+    
+    Args:
+        y_true: True binary labels
+        y_pred_proba: Predicted probabilities
+    
+    Returns:
+        fpr: False positive rates
+        tpr: True positive rates
+        thresholds: Threshold values
+    &quot;&quot;&quot;
+    # Sort by predicted probability (descending)
+    desc_score_indices = np.argsort(y_pred_proba)[::-1]
+    y_true_sorted = y_true[desc_score_indices]
+    y_pred_sorted = y_pred_proba[desc_score_indices]
+    
+    # Compute TPR and FPR at each unique threshold
+    thresholds = np.unique(y_pred_sorted)
+    thresholds = np.concatenate([[1.0], thresholds, [0.0]])
+    
+    tpr_list = []
+    fpr_list = []
+    
+    for thresh in thresholds:
+        y_pred = (y_pred_sorted &gt;= thresh).astype(int)
+        
+        tp = np.sum((y_true_sorted == 1) &amp; (y_pred == 1))
+        fn = np.sum((y_true_sorted == 1) &amp; (y_pred == 0))
+        fp = np.sum((y_true_sorted == 0) &amp; (y_pred == 1))
+        tn = np.sum((y_true_sorted == 0) &amp; (y_pred == 0))
+        
+        tpr = tp / (tp + fn) if (tp + fn) &gt; 0 else 0
+        fpr = fp / (fp + tn) if (fp + tn) &gt; 0 else 0
+        
+        tpr_list.append(tpr)
+        fpr_list.append(fpr)
+    
+    return np.array(fpr_list), np.array(tpr_list), thresholds
+
+def compute_auc(fpr, tpr):
+    &quot;&quot;&quot;Compute AUC using trapezoidal rule&quot;&quot;&quot;
+    return np.trapz(tpr, fpr)</code></pre>
+<h3 class="sh3">Security Use Case</h3>
+<p class="prose">ROC/AUC useful for:
+- Comparing multiple detection models
+- Evaluating detector independent of threshold
+- Choosing optimal operating point (threshold)
+
+Example: IDS with adjustable sensitivity
+- High sensitivity (low threshold): High recall, high FPR
+- Low sensitivity (high threshold): Low recall, low FPR
+- ROC curve shows all possible operating points</p>
+<h3 class="sh2">Precision Recall Curve</h3>
+<h3 class="sh3">What Is Pr Curve</h3>
+<p class="prose">Plots Precision vs Recall across all thresholds
+
+Alternative to ROC when:
+- Extreme class imbalance (1% positive)
+- Care more about positive class performance</p>
+<h3 class="sh3">Why Better Than Roc For Imbalance</h3>
+<p class="prose">ROC uses FPR = FP / (FP + TN)
+With 99% negatives, large TN dominates denominator
+→ FPR stays low even with many FPs
+→ ROC looks optimistic
+
+PR uses Precision = TP / (TP + FP)
+FPs directly impact precision
+→ Shows true performance on rare class</p>
+<h3 class="sh3">Average Precision</h3>
+<p class="prose">AP (Average Precision): Area under PR curve
+
+Range: [0, 1]
+Higher = better
+
+More informative than AUC for imbalanced data</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def compute_pr_curve(y_true, y_pred_proba):
+    &quot;&quot;&quot;Compute Precision-Recall curve&quot;&quot;&quot;
+    thresholds = np.unique(y_pred_proba)
+    thresholds = np.sort(thresholds)[::-1]
+    
+    precisions = []
+    recalls = []
+    
+    for thresh in thresholds:
+        y_pred = (y_pred_proba &gt;= thresh).astype(int)
+        
+        prec = precision(y_true, y_pred)
+        rec = recall(y_true, y_pred)
+        
+        precisions.append(prec)
+        recalls.append(rec)
+    
+    return np.array(recalls), np.array(precisions), thresholds</code></pre>
+<h3 class="sh3">Security Recommendation</h3>
+<p class="prose">For security (imbalanced data):
+- Use PR curve + Average Precision
+- ROC/AUC can be misleading
+
+Example: 1% attack rate
+PR curve clearly shows detection vs false alarm trade-off
+ROC curve looks good even with poor precision</p>
+<h2 class="sh1">Complete Metrics Suite</h2>
+<pre class="code"><code>import numpy as np
+
+class ClassificationMetrics:
+    &quot;&quot;&quot;Complete suite of classification metrics&quot;&quot;&quot;
+    
+    def __init__(self, y_true, y_pred, y_pred_proba=None):
+        &quot;&quot;&quot;
+        Initialize with predictions
+        
+        Args:
+            y_true: True labels (0/1)
+            y_pred: Predicted labels (0/1)
+            y_pred_proba: Predicted probabilities (optional, for ROC/PR)
+        &quot;&quot;&quot;
+        self.y_true = np.array(y_true)
+        self.y_pred = np.array(y_pred)
+        self.y_pred_proba = np.array(y_pred_proba) if y_pred_proba is not None else None
+        
+        # Compute confusion matrix
+        self.tn = np.sum((y_true == 0) &amp; (y_pred == 0))
+        self.fp = np.sum((y_true == 0) &amp; (y_pred == 1))
+        self.fn = np.sum((y_true == 1) &amp; (y_pred == 0))
+        self.tp = np.sum((y_true == 1) &amp; (y_pred == 1))
+    
+    def confusion_matrix(self):
+        &quot;&quot;&quot;Return confusion matrix&quot;&quot;&quot;
+        return np.array([[self.tn, self.fp],
+                        [self.fn, self.tp]])
+    
+    def accuracy(self):
+        &quot;&quot;&quot;Compute accuracy&quot;&quot;&quot;
+        return (self.tp + self.tn) / (self.tp + self.tn + self.fp + self.fn)
+    
+    def precision(self):
+        &quot;&quot;&quot;Compute precision&quot;&quot;&quot;
+        if self.tp + self.fp == 0:
+            return 0.0
+        return self.tp / (self.tp + self.fp)
+    
+    def recall(self):
+        &quot;&quot;&quot;Compute recall (sensitivity, TPR)&quot;&quot;&quot;
+        if self.tp + self.fn == 0:
+            return 0.0
+        return self.tp / (self.tp + self.fn)
+    
+    def specificity(self):
+        &quot;&quot;&quot;Compute specificity (TNR)&quot;&quot;&quot;
+        if self.tn + self.fp == 0:
+            return 0.0
+        return self.tn / (self.tn + self.fp)
+    
+    def f1_score(self):
+        &quot;&quot;&quot;Compute F1 score&quot;&quot;&quot;
+        prec = self.precision()
+        rec = self.recall()
+        
+        if prec + rec == 0:
+            return 0.0
+        
+        return 2 * (prec * rec) / (prec + rec)
+    
+    def false_positive_rate(self):
+        &quot;&quot;&quot;Compute FPR&quot;&quot;&quot;
+        return 1 - self.specificity()
+    
+    def false_negative_rate(self):
+        &quot;&quot;&quot;Compute FNR (miss rate)&quot;&quot;&quot;
+        return 1 - self.recall()
+    
+    def summary(self):
+        &quot;&quot;&quot;Print complete metrics summary&quot;&quot;&quot;
+        print(&quot;Classification Metrics Summary&quot;)
+        print(&quot;=&quot; * 50)
+        print(f&quot;\nConfusion Matrix:&quot;)
+        print(f&quot;                Predicted&quot;)
+        print(f&quot;              Neg      Pos&quot;)
+        print(f&quot;Actual Neg  {self.tn:5d}    {self.fp:5d}&quot;)
+        print(f&quot;Actual Pos  {self.fn:5d}    {self.tp:5d}&quot;)
+        
+        print(f&quot;\nBasic Metrics:&quot;)
+        print(f&quot;  Accuracy:    {self.accuracy():.4f}&quot;)
+        print(f&quot;  Precision:   {self.precision():.4f}&quot;)
+        print(f&quot;  Recall:      {self.recall():.4f}&quot;)
+        print(f&quot;  F1 Score:    {self.f1_score():.4f}&quot;)
+        print(f&quot;  Specificity: {self.specificity():.4f}&quot;)
+        
+        print(f&quot;\nError Rates:&quot;)
+        print(f&quot;  FPR (False Positive Rate): {self.false_positive_rate():.4f}&quot;)
+        print(f&quot;  FNR (False Negative Rate): {self.false_negative_rate():.4f}&quot;)
+
+# Usage example
+# Generate predictions
+np.random.seed(42)
+y_true = np.random.choice([0, 1], size=1000, p=[0.9, 0.1])  # 10% positive
+y_pred_proba = np.random.rand(1000)
+y_pred = (y_pred_proba &gt; 0.5).astype(int)
+
+# Compute metrics
+metrics = ClassificationMetrics(y_true, y_pred, y_pred_proba)
+metrics.summary()</code></pre>
+<h2 class="sh1">Threshold Optimization</h2>
+<h3 class="sh2">Problem</h3>
+<p class="prose">Default threshold: 0.5
+But 0.5 is arbitrary - why not 0.3 or 0.7?
+
+Different thresholds → different precision/recall trade-offs
+Need systematic way to choose threshold</p>
+<h3 class="sh2">Strategies</h3>
+<h3 class="sh3">Maximize F1</h3>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Choose threshold that maximizes F1 score</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">Want to balance precision and recall equally</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code>def find_optimal_threshold_f1(y_true, y_pred_proba):
+    &quot;&quot;&quot;Find threshold that maximizes F1&quot;&quot;&quot;
+    thresholds = np.linspace(0, 1, 100)
+    best_f1 = 0
+    best_threshold = 0.5
+    
+    for thresh in thresholds:
+        y_pred = (y_pred_proba &gt;= thresh).astype(int)
+        metrics = ClassificationMetrics(y_true, y_pred)
+        f1 = metrics.f1_score()
+        
+        if f1 &gt; best_f1:
+            best_f1 = f1
+            best_threshold = thresh
+    
+    return best_threshold, best_f1</code></pre>
+<h3 class="sh3">Target Recall</h3>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Choose threshold that achieves target recall</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">Compliance requires minimum detection rate (e.g., 95%)</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code>def find_threshold_for_recall(y_true, y_pred_proba, target_recall=0.95):
+    &quot;&quot;&quot;Find threshold achieving target recall with best precision&quot;&quot;&quot;
+    thresholds = np.sort(np.unique(y_pred_proba))
+    
+    for thresh in thresholds:
+        y_pred = (y_pred_proba &gt;= thresh).astype(int)
+        metrics = ClassificationMetrics(y_true, y_pred)
+        
+        if metrics.recall() &gt;= target_recall:
+            return thresh, metrics.precision()
+    
+    return 0.0, 0.0  # Can&#x27;t achieve target</code></pre>
+<h3 class="sh3">Target Precision</h3>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Choose threshold that achieves target precision</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">SOC capacity limited, need &lt;100 alerts/day</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code>def find_threshold_for_precision(y_true, y_pred_proba, target_precision=0.9):
+    &quot;&quot;&quot;Find threshold achieving target precision with best recall&quot;&quot;&quot;
+    thresholds = np.sort(np.unique(y_pred_proba))[::-1]
+    
+    for thresh in thresholds:
+        y_pred = (y_pred_proba &gt;= thresh).astype(int)
+        metrics = ClassificationMetrics(y_true, y_pred)
+        
+        if metrics.precision() &gt;= target_precision:
+            return thresh, metrics.recall()
+    
+    return 1.0, 0.0  # Can&#x27;t achieve target</code></pre>
+<h3 class="sh3">Cost Based</h3>
+<h4 class="sh3">Approach</h4>
+<p class="prose">Minimize expected cost: Cost = C_FN × FN + C_FP × FP</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">Know operational costs of errors</p>
+<h4 class="sh3">Numpy Implementation</h4>
+<pre class="code"><code>def find_threshold_min_cost(y_true, y_pred_proba, cost_fn=1000, cost_fp=10):
+    &quot;&quot;&quot;Find threshold minimizing expected cost&quot;&quot;&quot;
+    thresholds = np.linspace(0, 1, 100)
+    min_cost = float(&#x27;inf&#x27;)
+    best_threshold = 0.5
+    
+    for thresh in thresholds:
+        y_pred = (y_pred_proba &gt;= thresh).astype(int)
+        metrics = ClassificationMetrics(y_true, y_pred)
+        
+        cost = cost_fn * metrics.fn + cost_fp * metrics.fp
+        
+        if cost &lt; min_cost:
+            min_cost = cost
+            best_threshold = thresh
+    
+    return best_threshold, min_cost</code></pre>
+<h3 class="sh2">Security Example</h3>
+<p class="prose">Malware detection scenario:
+- Cost of missed malware (FN): $100,000 (breach, remediation)
+- Cost of false alarm (FP): $50 (analyst investigation)
+- Ratio: 2000:1
+
+Standard 0.5 threshold:
+- Recall = 80%, Precision = 70%
+- 20 FN × $100,000 = $2,000,000
+- 300 FP × $50 = $15,000
+- Total cost: $2,015,000
+
+Cost-optimized threshold (0.2):
+- Recall = 95%, Precision = 40%
+- 5 FN × $100,000 = $500,000
+- 1500 FP × $50 = $75,000
+- Total cost: $575,000
+
+Lower threshold = higher recall = fewer missed attacks = lower cost</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Metric Gaming</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Adversary knows which metric you optimize</p>
+<h3 class="sh3">Example Accuracy Gaming</h3>
+<p class="prose">Model optimizes accuracy on 99% benign, 1% malicious dataset
+Adversary ensures attacks look slightly benign
+Model predicts all benign → 99% accuracy
+But 0% attack detection</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">Use multiple metrics, focus on recall for security</p>
+<h3 class="sh2">Threshold Exploitation</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Adversary probes to find threshold</p>
+<h3 class="sh3">Strategy</h3>
+<p class="prose">Send inputs with varying characteristics
+Observe which get flagged
+Infer threshold (e.g., P(malicious) &gt; 0.7)
+Craft attacks with P(malicious) = 0.69</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">- Don&#x27;t reveal scores to users
+- Use ensemble with different thresholds
+- Randomly vary threshold slightly</p>
+<h3 class="sh2">Choosing Security Metrics</h3>
+<h3 class="sh3">Guidance</h3>
+<p class="prose">Primary: Recall (detection rate) - Can&#x27;t miss attacks
+Secondary: Precision (false alarm rate) - Limited analyst capacity
+Tertiary: F1 (balance) - Overall quality
+
+Never: Accuracy alone - Misleading with imbalance
+
+Report: Confusion matrix + all metrics</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Confusion matrix foundation: TP, TN, FP, FN</li><li>Accuracy misleading with imbalance - use precision/recall</li><li>Precision = alert quality, Recall = detection rate</li><li>F1 balances both, use when equal priority</li><li>ROC/AUC for balanced data, PR curve for imbalanced</li><li>Threshold choice drives precision/recall trade-off</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Compute confusion matrix and all metrics in NumPy</li><li>Interpret precision, recall, F1 in security context</li><li>Choose threshold based on operational constraints</li><li>Use PR curve for imbalanced security datasets</li><li>Report multiple metrics, not just accuracy</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Recall = detection rate = most critical for security</li><li>Precision = false alarm rate = analyst capacity constraint</li><li>Default 0.5 threshold rarely optimal for security</li><li>Imbalanced data (1% attacks) requires specialized metrics</li><li>Different security systems optimize different metrics</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>Accuracy is useless for rare events (1% attacks)</li><li>High precision = few false alarms, high recall = few missed attacks</li><li>Can&#x27;t maximize both - choose based on operational costs</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Train/test split best practices</li><li>You now understand how to evaluate classification models properly</li><li>Sections 12-16 cover training methodology (overfitting, regularization, tuning)</li></ul>
+</article>

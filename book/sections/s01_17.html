@@ -1,0 +1,618 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 17 · ~6 pages</div>
+<h1>k-Nearest Neighbors and Distance Metrics</h1>
+<div class="tags"><span class="tag">knn</span><span class="tag">distance-metrics</span><span class="tag">euclidean</span><span class="tag">manhattan</span><span class="tag">cosine-similarity</span><span class="tag">lazy-learning</span><span class="tag">similarity</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">k-Nearest Neighbors (k-NN) is the simplest machine learning algorithm: to classify 
+a new sample, find the k most similar samples in your training data and vote. No 
+training phase, no learned parameters, just pure similarity-based prediction. 
+&quot;You are the average of your k nearest neighbors.&quot;
+
+Despite its simplicity, k-NN is powerful and widely used in security for:
+- Anomaly detection (find nearest normal samples, flag if far away)
+- Malware similarity analysis (find similar known malware)
+- Network intrusion detection (traffic patterns similar to attacks?)
+- Behavioral analysis (user actions similar to fraudsters?)
+
+The algorithm&#x27;s effectiveness depends entirely on the distance metric - how you 
+measure similarity between samples. Different metrics capture different notions of 
+similarity: Euclidean (straight-line distance), Manhattan (grid distance), Cosine 
+(angle-based), Hamming (bit differences). Choosing the right metric is critical.
+
+This section covers:
+- k-NN algorithm mechanics (classification and regression)
+- Distance metrics (Euclidean, Manhattan, Cosine, Hamming, Minkowski)
+- Choosing k (bias-variance tradeoff)
+- Weighted voting and distance-based weighting
+- Advantages, limitations, and optimization techniques</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security applications:
+- Malware clustering: &quot;This sample similar to WannaCry family&quot;
+- Anomaly detection: &quot;User behavior dissimilar to all normal users → investigate&quot;
+- Zero-day detection: &quot;Never seen this exact attack, but similar to known attacks&quot;
+- Threat intelligence: Group attacks by similarity for attribution
+
+Real deployments:
+- Antivirus engines use similarity for unknown malware
+- SIEM systems detect anomalous patterns via k-NN
+- Fraud detection finds transactions similar to known fraud
+
+Why learn k-NN:
+- Foundation for anomaly detection (critical security technique)
+- Distance metrics apply to ALL similarity-based methods
+- Simple but effective baseline
+- Interpretable (can show nearest neighbors as evidence)</p>
+<h2 class="sh1">Knn Algorithm</h2>
+<h3 class="sh2">Basic Idea</h3>
+<p class="prose">To classify new sample x:
+1. Compute distance from x to all training samples
+2. Find k nearest neighbors (smallest distances)
+3. Classification: Majority vote among k neighbors
+4. Regression: Average value of k neighbors</p>
+<h3 class="sh2">Example Classification</h3>
+<p class="prose">Training data: Network packets labeled &quot;normal&quot; or &quot;attack&quot;
+New packet arrives: [packet_size=1500, port=80, protocol=TCP, ...]
+
+Find k=5 nearest packets:
+1. Packet A (distance=0.2): attack
+2. Packet B (distance=0.3): attack
+3. Packet C (distance=0.4): attack
+4. Packet D (distance=0.5): normal
+5. Packet E (distance=0.6): normal
+
+Vote: 3 attack, 2 normal
+Prediction: ATTACK (majority)</p>
+<h3 class="sh2">No Training Phase</h3>
+<p class="prose">k-NN is &quot;lazy learning&quot; or &quot;instance-based learning&quot;
+
+Training: Just store all training samples (no model fitting!)
+Prediction: Do all work at inference time (compute distances)
+
+Contrast with logistic regression:
+- Training: Learn weights via gradient descent (expensive)
+- Prediction: w·x + b (fast, just dot product)
+
+k-NN:
+- Training: None (just store data)
+- Prediction: Compute n distances (expensive if n large)</p>
+<h3 class="sh2">Algorithm Pseudocode</h3>
+<p class="prose">function kNN_predict(X_train, y_train, x_test, k):
+    # Compute distances to all training samples
+    distances = []
+    for i in range(len(X_train)):
+        dist = distance(x_test, X_train[i])
+        distances.append((dist, y_train[i]))
+    
+    # Sort by distance
+    distances.sort(key=lambda x: x[0])
+    
+    # Get k nearest neighbors
+    k_nearest = distances[:k]
+    
+    # Majority vote (classification)
+    labels = [label for (dist, label) in k_nearest]
+    prediction = most_common(labels)
+    
+    return prediction</p>
+<h3 class="sh2">Choosing K</h3>
+<h3 class="sh3">Small K</h3>
+<h4 class="sh3">K Equals 1</h4>
+<p class="prose">Prediction = label of single nearest neighbor
+
+Very flexible (low bias)
+But noisy (high variance)
+Overfits easily</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">k=1, outlier near decision boundary
+→ Prediction determined by single noisy sample</p>
+<h3 class="sh3">Large K</h3>
+<h4 class="sh3">K Equals N</h4>
+<p class="prose">Prediction = majority class in entire dataset
+(always predicts most common class)
+
+Very smooth (high bias)
+But inflexible (low variance)
+Underfits</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">k=1000 in dataset with 70% normal, 30% attack
+→ Almost always predicts &quot;normal&quot; (majority)</p>
+<h3 class="sh3">Optimal K</h3>
+<h4 class="sh3">Rule Of Thumb</h4>
+<p class="prose">k = sqrt(n) where n = number of training samples</p>
+<h4 class="sh3">Typical Range</h4>
+<p class="prose">3-20 for most problems</p>
+<h4 class="sh3">Odd K</h4>
+<p class="prose">Use odd k for binary classification (prevents ties)</p>
+<h4 class="sh3">Tune On Validation</h4>
+<p class="prose">Try k in [1, 3, 5, 7, 9, 11, 15, 20, 30, 50]
+Pick k with best validation accuracy</p>
+<h3 class="sh3">Bias Variance Tradeoff</h3>
+<p class="prose">Small k: High variance, low bias (overfits)
+Large k: Low variance, high bias (underfits)
+
+Optimal k: Balance variance and bias</p>
+<h2 class="sh1">Distance Metrics</h2>
+<h3 class="sh2">Why Distance Matters</h3>
+<p class="prose">k-NN&#x27;s entire behavior determined by distance metric
+Different metrics → different neighbors → different predictions
+
+Critical question: What does &quot;similar&quot; mean for your problem?</p>
+<h3 class="sh2">Euclidean Distance</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">d(x, y) = √(Σᵢ (xᵢ - yᵢ)²)</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Straight-line distance (&#x27;as the crow flies&#x27;)</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Most common distance metric</li><li>Sensitive to feature scale (must normalize!)</li><li>Sensitive to outliers (squared differences)</li></ul>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def euclidean_distance(x1, x2):
+    &quot;&quot;&quot;Compute Euclidean distance between two vectors&quot;&quot;&quot;
+    return np.sqrt(np.sum((x1 - x2) ** 2))
+
+# Vectorized for all training samples
+def euclidean_distances(x, X_train):
+    &quot;&quot;&quot;Compute distances from x to all training samples&quot;&quot;&quot;
+    return np.sqrt(np.sum((X_train - x) ** 2, axis=1))</code></pre>
+<h3 class="sh3">Example</h3>
+<p class="prose">x = [3, 4]
+y = [0, 0]
+
+d = √((3-0)² + (4-0)²)
+  = √(9 + 16)
+  = √25
+  = 5</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">- Features are continuous and similar scale
+- Geometric distance makes sense
+- General-purpose default choice</p>
+<h3 class="sh2">Manhattan Distance</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">d(x, y) = Σᵢ |xᵢ - yᵢ|</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Grid distance (like city blocks, taxi cab distance)</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Less sensitive to outliers than Euclidean</li><li>Works well in high dimensions</li><li>More robust</li></ul>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose">def manhattan_distance(x1, x2):
+    &quot;&quot;&quot;Compute Manhattan distance&quot;&quot;&quot;
+    return np.sum(np.abs(x1 - x2))</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">x = [3, 4]
+y = [0, 0]
+
+d = |3-0| + |4-0|
+  = 3 + 4
+  = 7
+
+(vs Euclidean = 5)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">- Features represent counts or frequencies
+- High-dimensional data
+- Want robustness to outliers</p>
+<h3 class="sh2">Cosine Similarity</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">similarity(x, y) = (x·y) / (||x|| ||y||)</p>
+<h3 class="sh3">Distance</h3>
+<p class="prose">d(x, y) = 1 - similarity(x, y)</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Measures angle between vectors (ignores magnitude)
+
+Parallel vectors: similarity = 1
+Perpendicular: similarity = 0
+Opposite: similarity = -1</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Magnitude-independent (only direction matters)</li><li>Range: [-1, 1] for similarity</li><li>Perfect for text/document similarity</li></ul>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def cosine_similarity(x1, x2):
+    &quot;&quot;&quot;Compute cosine similarity&quot;&quot;&quot;
+    dot_product = np.dot(x1, x2)
+    norm_x1 = np.linalg.norm(x1)
+    norm_x2 = np.linalg.norm(x2)
+    return dot_product / (norm_x1 * norm_x2 + 1e-10)
+
+def cosine_distance(x1, x2):
+    &quot;&quot;&quot;Compute cosine distance&quot;&quot;&quot;
+    return 1 - cosine_similarity(x1, x2)</code></pre>
+<h3 class="sh3">Example</h3>
+<p class="prose">x = [3, 4]  (magnitude = 5)
+y = [6, 8]  (magnitude = 10, same direction!)
+
+similarity = (3×6 + 4×8) / (5 × 10)
+           = 50 / 50
+           = 1 (identical direction)
+
+z = [4, -3]  (perpendicular to x)
+similarity = (3×4 + 4×(-3)) / (5 × 5)
+           = 0 (perpendicular)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">- Text documents (TF-IDF vectors)
+- Sparse high-dimensional data
+- Magnitude doesn&#x27;t matter, only pattern
+
+Security example:
+- Malware API call sequences (order/pattern matters, not count)</p>
+<h3 class="sh2">Hamming Distance</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">d(x, y) = count of positions where xᵢ ≠ yᵢ</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Number of bit flips needed to transform x into y</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>For binary/categorical data</li><li>Counts mismatches</li></ul>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose">def hamming_distance(x1, x2):
+    &quot;&quot;&quot;Compute Hamming distance&quot;&quot;&quot;
+    return np.sum(x1 != x2)</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">x = [1, 0, 1, 1, 0]
+y = [1, 1, 1, 0, 0]
+     ✓  ✗  ✓  ✗  ✓
+
+Hamming = 2 (positions 1 and 3 differ)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">- Binary features (packet flags, malware signatures)
+- Categorical features
+- DNA/protein sequences
+
+Security example:
+- Malware byte sequences
+- Network packet flags comparison</p>
+<h3 class="sh2">Minkowski Distance</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">d(x, y) = (Σᵢ |xᵢ - yᵢ|ᵖ)^(1/p)</p>
+<h3 class="sh3">Special Cases</h3>
+<h4 class="sh3">P Equals 1</h4>
+<p class="prose">Manhattan distance</p>
+<h4 class="sh3">P Equals 2</h4>
+<p class="prose">Euclidean distance</p>
+<h4 class="sh3">P Equals Infinity</h4>
+<p class="prose">Chebyshev distance (max difference)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose">def minkowski_distance(x1, x2, p):
+    &quot;&quot;&quot;Compute Minkowski distance&quot;&quot;&quot;
+    return np.sum(np.abs(x1 - x2) ** p) ** (1/p)</p>
+<h3 class="sh3">Generalization</h3>
+<p class="prose">Minkowski generalizes Manhattan and Euclidean</p>
+<h3 class="sh2">Choosing Distance Metric</h3>
+<p class="prose">Decision tree:
+
+1. Binary/categorical features?
+   → Hamming distance
+
+2. Text/document vectors?
+   → Cosine similarity
+
+3. Need robustness to outliers?
+   → Manhattan distance
+
+4. Default/general case?
+   → Euclidean distance
+
+5. Experiment and validate!
+   → Try multiple, pick best on validation set</p>
+<h2 class="sh1">Complete Implementation</h2>
+<pre class="code"><code>import numpy as np
+from collections import Counter
+
+class KNearestNeighbors:
+    &quot;&quot;&quot;k-NN classifier from scratch&quot;&quot;&quot;
+    
+    def __init__(self, k=5, distance_metric=&#x27;euclidean&#x27;, weights=&#x27;uniform&#x27;):
+        &quot;&quot;&quot;
+        Args:
+            k: Number of neighbors
+            distance_metric: &#x27;euclidean&#x27;, &#x27;manhattan&#x27;, &#x27;cosine&#x27;
+            weights: &#x27;uniform&#x27; or &#x27;distance&#x27; (inverse distance weighting)
+        &quot;&quot;&quot;
+        self.k = k
+        self.distance_metric = distance_metric
+        self.weights = weights
+        self.X_train = None
+        self.y_train = None
+    
+    def fit(self, X, y):
+        &quot;&quot;&quot;Store training data (no actual training!)&quot;&quot;&quot;
+        self.X_train = X
+        self.y_train = y
+        return self
+    
+    def predict(self, X):
+        &quot;&quot;&quot;Predict class for each sample in X&quot;&quot;&quot;
+        predictions = [self._predict_single(x) for x in X]
+        return np.array(predictions)
+    
+    def _predict_single(self, x):
+        &quot;&quot;&quot;Predict single sample&quot;&quot;&quot;
+        # Compute distances to all training samples
+        distances = self._compute_distances(x)
+        
+        # Get indices of k nearest neighbors
+        k_indices = np.argsort(distances)[:self.k]
+        
+        # Get labels of k nearest neighbors
+        k_nearest_labels = self.y_train[k_indices]
+        
+        # Get distances of k nearest neighbors
+        k_nearest_distances = distances[k_indices]
+        
+        # Vote (with or without weighting)
+        if self.weights == &#x27;uniform&#x27;:
+            # Simple majority vote
+            most_common = Counter(k_nearest_labels).most_common(1)
+            return most_common[0][0]
+        else:  # distance-weighted
+            # Weight by inverse distance
+            weights = 1 / (k_nearest_distances + 1e-10)
+            
+            # Weighted vote
+            weighted_votes = {}
+            for label, weight in zip(k_nearest_labels, weights):
+                weighted_votes[label] = weighted_votes.get(label, 0) + weight
+            
+            # Return label with highest weighted vote
+            return max(weighted_votes, key=weighted_votes.get)
+    
+    def _compute_distances(self, x):
+        &quot;&quot;&quot;Compute distances from x to all training samples&quot;&quot;&quot;
+        if self.distance_metric == &#x27;euclidean&#x27;:
+            return np.sqrt(np.sum((self.X_train - x) ** 2, axis=1))
+        
+        elif self.distance_metric == &#x27;manhattan&#x27;:
+            return np.sum(np.abs(self.X_train - x), axis=1)
+        
+        elif self.distance_metric == &#x27;cosine&#x27;:
+            # Cosine distance = 1 - cosine similarity
+            dot_products = np.dot(self.X_train, x)
+            norm_x = np.linalg.norm(x)
+            norms_train = np.linalg.norm(self.X_train, axis=1)
+            similarities = dot_products / (norms_train * norm_x + 1e-10)
+            return 1 - similarities
+        
+        else:
+            raise ValueError(f&quot;Unknown distance metric: {self.distance_metric}&quot;)
+    
+    def score(self, X, y):
+        &quot;&quot;&quot;Compute accuracy&quot;&quot;&quot;
+        predictions = self.predict(X)
+        return np.mean(predictions == y)
+
+# ========================================================================
+# USAGE EXAMPLE
+# ========================================================================
+
+# Generate synthetic data: malware vs benign
+np.random.seed(42)
+
+# Benign files: low entropy, few API calls
+X_benign = np.random.randn(100, 2) * 0.5 + np.array([2, 2])
+y_benign = np.zeros(100)
+
+# Malicious files: high entropy, many API calls
+X_malicious = np.random.randn(100, 2) * 0.5 + np.array([7, 7])
+y_malicious = np.ones(100)
+
+# Combine
+X = np.vstack([X_benign, X_malicious])
+y = np.hstack([y_benign, y_malicious])
+
+# Shuffle
+indices = np.random.permutation(len(y))
+X, y = X[indices], y[indices]
+
+# Train/test split
+split = int(0.8 * len(y))
+X_train, X_test = X[:split], X[split:]
+y_train, y_test = y[:split], y[split:]
+
+# Train k-NN
+knn = KNearestNeighbors(k=5, distance_metric=&#x27;euclidean&#x27;, weights=&#x27;uniform&#x27;)
+knn.fit(X_train, y_train)
+
+# Evaluate
+train_acc = knn.score(X_train, y_train)
+test_acc = knn.score(X_test, y_test)
+
+print(f&quot;k-NN (k={knn.k}, metric={knn.distance_metric})&quot;)
+print(f&quot;Training accuracy: {train_acc:.2%}&quot;)
+print(f&quot;Test accuracy: {test_acc:.2%}&quot;)
+
+# Try different k values
+print(&quot;\nTuning k:&quot;)
+for k in [1, 3, 5, 7, 11, 15]:
+    knn = KNearestNeighbors(k=k)
+    knn.fit(X_train, y_train)
+    acc = knn.score(X_test, y_test)
+    print(f&quot;k={k}: {acc:.2%}&quot;)</code></pre>
+<h2 class="sh1">Weighted Knn</h2>
+<h3 class="sh2">Motivation</h3>
+<p class="prose">Problem with uniform voting:
+All k neighbors have equal say, regardless of distance
+
+Example:
+k=5 neighbors:
+- Neighbor 1 (distance=0.1): malicious
+- Neighbor 2 (distance=0.2): malicious  
+- Neighbor 3 (distance=5.0): benign
+- Neighbor 4 (distance=5.1): benign
+- Neighbor 5 (distance=5.2): benign
+
+Uniform vote: 3 benign vs 2 malicious → predict benign
+But the 2 closest neighbors are malicious!</p>
+<h3 class="sh2">Distance Weighted Voting</h3>
+<p class="prose">Weight each neighbor&#x27;s vote by inverse distance
+
+weight_i = 1 / (distance_i + ε)
+
+Where ε is small constant (avoid division by zero)
+
+Closer neighbors have more influence</p>
+<h3 class="sh2">Example Weighted Vote</h3>
+<p class="prose">Same 5 neighbors:
+
+Neighbor 1 (d=0.1): malicious, weight=10.0
+Neighbor 2 (d=0.2): malicious, weight=5.0
+Neighbor 3 (d=5.0): benign, weight=0.2
+Neighbor 4 (d=5.1): benign, weight=0.196
+Neighbor 5 (d=5.2): benign, weight=0.192
+
+Malicious vote: 10.0 + 5.0 = 15.0
+Benign vote: 0.2 + 0.196 + 0.192 = 0.588
+
+Prediction: Malicious (weighted vote wins!)</p>
+<h3 class="sh2">When To Use Weighting</h3>
+<p class="prose">Use distance weighting when:
+- Close neighbors more reliable than distant ones
+- k is large (includes very distant neighbors)
+- Decision boundary complex
+
+Use uniform voting when:
+- All neighbors roughly equidistant
+- k is small
+- Want simpler, more stable predictions</p>
+<h2 class="sh1">Advantages Limitations</h2>
+<h3 class="sh2">Advantages</h3>
+<h3 class="sh3">Simplicity</h3>
+<ul class="blist"><li>Trivial to implement and understand</li><li>No training phase</li><li>No assumptions about data distribution</li></ul>
+<h3 class="sh3">Versatility</h3>
+<ul class="blist"><li>Works for classification and regression</li><li>Handles multi-class naturally</li><li>Can use any distance metric</li></ul>
+<h3 class="sh3">Adaptability</h3>
+<ul class="blist"><li>Automatically adapts to new data (just add to training set)</li><li>No retraining needed</li></ul>
+<h3 class="sh3">Interpretability</h3>
+<ul class="blist"><li>Can show k nearest neighbors as evidence</li><li>Decision explainable: &#x27;Similar to these known samples&#x27;</li></ul>
+<h3 class="sh2">Limitations</h3>
+<h3 class="sh3">Computational Cost</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Must compute distance to ALL training samples for each prediction</p>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(n × d) per prediction, where n=training samples, d=dimensions</p>
+<h4 class="sh3">Impact</h4>
+<p class="prose">1M training samples, 100 dimensions
+Each prediction: 100M distance calculations
+
+Too slow for real-time at scale</p>
+<h4 class="sh3">Solutions</h4>
+<ul class="blist"><li>KD-trees, Ball trees (space partitioning)</li><li>Approximate nearest neighbors (LSH)</li><li>Dimensionality reduction (PCA)</li></ul>
+<h3 class="sh3">Memory Cost</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Must store ALL training data</p>
+<h4 class="sh3">Impact</h4>
+<p class="prose">1M samples × 1000 features × 4 bytes = 4GB RAM
+vs logistic regression: 1000 weights = 4KB</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">Prototype selection (keep representative samples only)</p>
+<h3 class="sh3">Curse Of Dimensionality</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">In high dimensions, all points roughly equidistant</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">100-dimensional space:
+Nearest neighbor distance ≈ 0.95 × farthest neighbor distance
+
+k-NN breaks down (no meaningful &#x27;nearest&#x27; neighbors)</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">- Feature selection (reduce dimensions)
+- PCA (dimensionality reduction)
+- Use distance metrics robust to high dimensions</p>
+<h3 class="sh3">Sensitive To Irrelevant Features</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">All features contribute equally to distance</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Malware detection features:
+- Entropy (important)
+- File size (important)
+- Filename length (irrelevant!)
+
+Filename length pollutes distance calculation</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">- Feature selection
+- Feature weighting
+- Dimensionality reduction</p>
+<h3 class="sh3">Imbalanced Data</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Majority class dominates k nearest neighbors</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Dataset: 95% benign, 5% malicious
+k=10 nearest neighbors likely all benign
+Never predicts malicious!</p>
+<h4 class="sh3">Solution</h4>
+<p class="prose">- Use smaller k
+- Distance-weighted voting
+- Stratified sampling
+- SMOTE (generate synthetic minority samples)</p>
+<h2 class="sh1">Security Applications</h2>
+<h3 class="sh2">Anomaly Detection</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Normal samples cluster together
+Anomalies far from all normal samples</p>
+<h3 class="sh3">Algorithm</h3>
+<p class="prose">1. Train k-NN on normal samples only
+2. For new sample, find k nearest normal samples
+3. If average distance &gt; threshold → anomaly</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">User behavior monitoring:
+- Typical user: Login 9am, access docs, logout 5pm
+- Anomaly: Login 3am, access database, massive download
+
+k-NN finds no similar normal users → flag as anomaly</p>
+<h3 class="sh3">Threshold Selection</h3>
+<p class="prose">Set threshold based on validation anomalies
+Trade-off: Low threshold = many false positives
+          High threshold = miss anomalies</p>
+<h3 class="sh2">Malware Family Classification</h3>
+<h3 class="sh3">Approach</h3>
+<p class="prose">Extract features from malware (API calls, byte n-grams, etc.)
+Find k nearest known malware samples
+Classify into family based on neighbors</p>
+<h3 class="sh3">Distance Metric</h3>
+<p class="prose">Often use cosine similarity (API call frequency vectors)
+Or Hamming distance (byte sequences)</p>
+<h3 class="sh3">Benefit</h3>
+<p class="prose">Can classify variants of known families
+Even if exact signature unseen</p>
+<h3 class="sh2">Behavioral Analysis</h3>
+<h3 class="sh3">Network Traffic</h3>
+<p class="prose">Features: Packet size distribution, timing, protocols
+Find k nearest traffic patterns
+If similar to attack patterns → flag</p>
+<h3 class="sh3">User Behavior</h3>
+<p class="prose">Features: Actions, timing, locations
+Find k nearest user sessions
+If dissimilar from user&#x27;s past → potential account takeover</p>
+<h2 class="sh1">Optimization</h2>
+<h3 class="sh2">Kd Trees</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Space partitioning data structure
+Recursively split space by median on alternating dimensions
+
+Query time: O(log n) average (vs O(n) brute force)</p>
+<h3 class="sh3">Limitation</h3>
+<p class="prose">Degrades to O(n) in high dimensions (d &gt; 20)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Low-dimensional data (d &lt; 20), exact neighbors needed</p>
+<h3 class="sh2">Approximate Nearest Neighbors</h3>
+<h3 class="sh3">Locality Sensitive Hashing</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Hash similar items to same buckets
+Search only within bucket (not all data)</p>
+<h4 class="sh3">Trade Off</h4>
+<p class="prose">Fast but approximate (may miss true nearest neighbors)</p>
+<h4 class="sh3">When To Use</h4>
+<p class="prose">High-dimensional data, can tolerate approximation</p>
+<h3 class="sh3">Annoy Faiss</h3>
+<h4 class="sh3">Libraries</h4>
+<p class="prose">Annoy (Spotify): Tree-based ANN
+FAISS (Facebook): GPU-accelerated similarity search</p>
+<h4 class="sh3">Performance</h4>
+<p class="prose">1M samples in milliseconds</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>k-NN: Classify based on k nearest training samples</li><li>No training phase (lazy learning)</li><li>Distance metric critical (Euclidean, Manhattan, Cosine, Hamming)</li><li>Choose k: Small k overfits, large k underfits</li><li>Weighted voting: Closer neighbors more influential</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement k-NN from scratch with multiple distance metrics</li><li>Tune k on validation set (try 1, 3, 5, 7, 11, 15)</li><li>Apply distance weighting for better predictions</li><li>Choose appropriate distance metric for problem</li><li>Use k-NN for anomaly detection</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>k-NN natural for similarity-based detection</li><li>Anomaly detection: Flag samples far from normal cluster</li><li>Malware family classification: Find similar known malware</li><li>Interpretable: Show nearest neighbors as evidence</li><li>Beware curse of dimensionality in high-dimensional security data</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>k-NN = lazy learning (no training, store all data)</li><li>Distance metric choice as important as algorithm</li><li>Tune k on validation set (typically 3-15)</li><li>Slow at scale (O(n) per prediction) - use approximate methods</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Support Vector Machines (maximize margin)</li><li>You now understand similarity-based classification</li><li>Distance metrics apply to clustering, dimensionality reduction</li></ul>
+</article>

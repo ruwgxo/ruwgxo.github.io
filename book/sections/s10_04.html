@@ -1,0 +1,1176 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 10 · Section 4 · ~6 pages</div>
+<h1>PGD: Projected Gradient Descent</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">PGD solves the inner maximisation problem of robust optimisation by iterating FGSM steps with projection back onto the epsilon ball, making it the canonical empirical robustness evaluation adversary.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">PGD is the section with the most production consequence in Chapter 10. Every empirical
+robustness claim in the adversarial ML literature is evaluated against PGD. Section 10.15
+adversarial training uses PGD as the inner optimiser. Section 10.14 certified robustness is
+evaluated against PGD. The detection primitives in Sections 10.11-10.12 are calibrated
+against PGD. Understanding PGD precisely -- not as &quot;iterative FGSM&quot; but as the solution to
+the inner maximisation problem of the Madry et al. robust optimisation framework -- is the
+prerequisite for every defence section that follows.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 10.4 is the second white-box attack implementation and the most important evaluation
+tool in Chapter 10. It inherits the FGSM gradient-sign primitive from Section 10.3 and adds
+the projection operator, step-size hyperparameter, and random restart. Every subsequent
+defence claim -- &quot;robust to PGD at epsilon=8/255&quot; -- is measured with the evaluator built
+in this section.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 10.3: FGSM implementation and gradient-sign primitive (PGD iterates FGSM with projection)</li><li>Section 10.1: Lp norm constraints and L-infinity ball definition (projection operator relies on this)</li><li>Chapter 1 Section 1.9: loss functions (cross-entropy; PGD maximises it w.r.t. input)</li><li>Chapter 2 Section 2.3: backpropagation (gradient computation at each PGD step)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Madry et al. 2018: The Robust Optimisation Framework</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Madry, Makelov, Schmidt, Tsipras, and Vladu published &quot;Towards Deep Learning Models Resistant
+to Adversarial Attacks&quot; in 2018. The paper&#x27;&#x27;s central contribution was not a new attack -- it
+was a new problem formulation that placed adversarial training on rigorous optimisation footing
+and identified PGD as the natural inner adversary.
+
+The standard training objective is: min_theta E_{(x,y)~D}[L(f_theta(x), y)]. This minimises
+expected loss over the natural data distribution. The Madry et al. robust training objective is:
+min_theta E_{(x,y)~D}[max_{delta: ||delta||_p &lt;= epsilon, 0 &lt;= x+delta &lt;= 1} L(f_theta(x+delta), y)].
+The inner maximisation replaces the natural input x with the worst-case perturbed input within
+the epsilon ball. Training on this worst-case input produces a model that is simultaneously
+trying to be correct on the hardest possible version of each example.
+
+The inner maximisation problem -- find the delta within the epsilon ball that maximises loss --
+is the adversary&#x27;&#x27;s problem. Solving it exactly is intractable in general. Madry et al. proposed
+PGD as the practical solver: iteratively take gradient steps that increase the loss, projecting
+back onto the epsilon ball after each step to maintain feasibility. The resulting delta is
+not the global maximum of the loss over the epsilon ball, but it is a strong local maximum
+and, empirically, a sufficient approximation for robust training.
+
+This framing has two production consequences. First, PGD adversarial training (Section 10.15)
+is the natural implementation of the robust optimisation objective -- each training step solves
+the inner PGD problem, then takes an outer gradient step. Second, PGD evaluation is the natural
+test of whether a defence addresses the robust optimisation objective: if a model is robust to
+PGD, it has addressed the inner maximisation problem for first-order adversaries.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The PGD Algorithm: Iterative FGSM with Projection Derived</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">PGD for L-infinity adversarial examples iterates the following update:
+
+  x_{t+1} = Pi_{x, epsilon}(x_t + alpha * sign(nabla_{x_t} L(theta, x_t, y)))
+
+where Pi_{x, epsilon} is the projection operator that maps any input back to the set
+{x + delta : ||delta||_inf &lt;= epsilon, 0 &lt;= x + delta &lt;= 1}. The initialisation x_0 is
+either x itself (clean start) or a uniformly random point within the epsilon ball (random
+start). The attack runs for k steps and returns x_k as the adversarial example.
+
+The update has three components. The FGSM component (sign of gradient) is identical to
+Section 10.3: take one gradient ascent step of size alpha in the sign direction. The
+projection component clips the cumulative perturbation delta = x_{t+1} - x to [-epsilon,
+epsilon] per feature, maintaining the L-infinity feasibility constraint. The input validity
+component clips the result to [0, 1] (or whatever the valid input range is), maintaining
+the physical feasibility constraint.
+
+The projection is applied to the delta (the total perturbation from the original x), not
+to x_t directly. This is the critical implementation detail. If you project x_t to
+[x - epsilon, x + epsilon] independently of x, you are projecting a moving target, and
+the cumulative perturbation can drift outside the intended epsilon ball. The correct
+implementation is: delta = clip(x_t + alpha * sign(grad) - x, -epsilon, epsilon);
+x_{t+1} = clip(x + delta, 0, 1). The delta accumulates the total perturbation from
+the original x across all steps; the L-infinity projection operates on the total delta;
+the input validity clip operates on the resulting input.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Projection Operator: L-infinity and L2</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The L-infinity projection is the simpler of the two norms and is the standard in PGD
+implementations. For a perturbation delta and epsilon budget, the projection clips each
+feature independently: delta_projected = clip(delta, -epsilon, epsilon). This is a
+component-wise operation -- each feature of the perturbation is independently constrained
+to lie in [-epsilon, epsilon]. The projected delta then satisfies ||delta_projected||_inf
+= max_i |delta_projected_i| &lt;= epsilon by construction.
+
+The L2 projection requires a different operation. The L2 ball {delta : ||delta||_2 &lt;= epsilon}
+is a hypersphere. To project delta onto this ball, check if ||delta||_2 &gt; epsilon. If so,
+scale the entire delta vector down to lie on the boundary: delta_projected = epsilon *
+delta / ||delta||_2. If ||delta||_2 &lt;= epsilon, the delta is already inside the ball and
+no projection is needed. Unlike L-infinity projection (which clips each feature independently),
+L2 projection rescales the entire perturbation vector, preserving its direction while bounding
+its magnitude.
+
+The two projections produce qualitatively different adversarial examples at matched norm budget.
+L-infinity projection produces uniform perturbations: every feature is perturbed by exactly
+epsilon. L2 projection allows some features to be perturbed by more than others as long as the
+total Euclidean norm stays bounded. In practice for images, L-infinity PGD produces uniform
+fine-grained noise; L2-PGD produces perturbations that concentrate on the most important
+features while leaving others relatively unchanged. C&amp;W (Section 10.5) pushes this logic
+further by directly minimising the L2 norm of the perturbation, finding the minimum-norm
+adversarial example rather than operating at a fixed epsilon budget.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Hyperparameters: Step Size, Iteration Count, and Convergence</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">PGD has three hyperparameters with distinct roles: step size alpha (controls how far each
+FGSM step moves), iteration count k (controls how many steps), and restart count R (controls
+how many random initialisations are tried).
+
+Step size alpha must satisfy alpha &lt; epsilon. If alpha &gt;= epsilon, each step can take the
+perturbation from one side of the epsilon ball to the other in a single move, causing
+oscillation without convergence. The standard rule of thumb is alpha = epsilon / k * c
+where c is a small constant. For evaluation PGD with k=40, alpha = epsilon/4 to epsilon/8
+is common. For adversarial training PGD with k=7, alpha = 2*epsilon/3 is the standard from
+Madry et al. The smaller k in training requires a larger alpha to make progress in fewer steps.
+
+Iteration count k controls the trade-off between attack strength and computation. Empirically,
+attack success rate increases rapidly with the first 10-20 steps and then levels off. Beyond
+40-50 steps, the marginal improvement per additional step is typically small. For production
+robustness evaluation, k=40 with random restart is the standard. For adversarial training,
+k=7 is the common choice because training runs k forward-backward passes per example per
+training step -- at k=40, adversarial training is 40x more expensive than standard training,
+which is often infeasible at production model scales.
+
+The convergence diagnostic is the per-step loss curve: plot the average loss across examples
+as a function of step t. A well-converged PGD run shows a rapid rise in the first 10-20 steps
+followed by a plateau. If the curve is still rising steeply at k=40, increase k. If the curve
+plateaued at k=10, k=40 is wasteful. This diagnostic is built into the evaluator deliverable
+in this section.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Random Restart: Escaping Local Optima in the Epsilon Ball</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Without random restart, PGD initialises from x_0 = x -- the clean input. The gradient at x
+points toward the nearest local maximum of the loss in the epsilon ball, and PGD converges
+to that local maximum. For many inputs, the nearest local maximum is not the global maximum:
+the loss landscape inside the epsilon ball has multiple local peaks, and a clean-start PGD
+finds only the nearest one from x.
+
+Random restart initialises x_0 from a random point inside the epsilon ball:
+x_0 = clip(x + Uniform(-epsilon, epsilon), 0, 1). Running PGD from this random start
+explores a different region of the loss landscape. Running R restarts and keeping the
+adversarial example with the highest loss across all restarts produces a stronger attack
+than any single restart because it samples multiple local optima and selects the best.
+
+The practical trade-off is compute: R restarts multiply the PGD cost by R. For evaluation,
+R=5 to R=20 is common. For adversarial training data generation, R=1 is standard because
+the training process itself provides diversity across batches -- each batch generates new
+adversarial examples from a fresh random start, covering different regions of the landscape
+across the full training run.
+
+The multi-restart implementation must track the per-sample best adversarial example, not
+the batch average. An adversarial example that increases loss for sample i but not for
+sample j should be kept for i and discarded for j. The per-sample loss tracking using
+nn.CrossEntropyLoss(reduction=&#x27;&#x27;none&#x27;&#x27;) is the correct implementation pattern and is
+demonstrated in the pgd_attack.py deliverable.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD as the Universal First-Order Adversary and the Gradient Masking Diagnostic</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Madry et al.&#x27;&#x27;s central claim is that PGD is the strongest first-order (gradient-based)
+adversary: any first-order attack can be viewed as a special case or approximation of PGD.
+FGSM is PGD with k=1 and no projection constraint. Iterative FGSM is PGD with fixed step
+size and no projection. Momentum-based PGD accumulates gradient direction across steps,
+smoothing the path through the loss landscape. The claim is empirically supported: for
+models without gradient masking, PGD with sufficient steps and restarts finds adversarial
+examples at least as strong as any published first-order attack.
+
+This universality claim has a direct implication for robustness evaluation: if a model is
+robust to PGD at epsilon, it is robust to all first-order attacks at epsilon. This makes
+PGD success rate the correct robustness benchmark, not FGSM success rate. A model that
+resists FGSM but not PGD has gradient masking: the gradient signal at x is obfuscated
+(by discontinuities, randomisation, or other mechanisms) such that a single gradient step
+produces a weak adversarial example, but multiple steps find the way through the obfuscation.
+
+The gradient masking diagnostic is: run both FGSM and PGD at the same epsilon on the same
+model and test set. If PGD success rate is substantially higher than FGSM success rate (say
+&gt;15 percentage points), the model has gradient masking. This does not mean the model is
+robust -- gradient masking is a form of obfuscated robustness that is typically broken by
+adaptive attacks. C&amp;W (Section 10.5) with BPDA (Backward Pass Differentiable Approximation)
+is designed specifically to break gradient masking defences.
+
+Any published defence that reports only FGSM robustness without PGD robustness should be
+treated with scepticism. The adversarial ML literature contains numerous examples of proposed
+defences that showed near-zero FGSM attack success rates but were trivially broken by PGD
+with sufficient iterations. The Carlini and Wagner (2017) evaluation guidelines -- which
+motivated the C&amp;W attack in Section 10.5 -- explicitly identify FGSM-only evaluation as
+insufficient.</p>
+<h3 class="sh2">Part 7</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD Adversarial Training and Computational Cost</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">PGD adversarial training (the full version is covered in Section 10.15) uses the PGD inner
+loop as a data augmentation step during training. At each training step: (1) generate a
+PGD adversarial example for each batch element using k=7 inner steps; (2) take a training
+gradient step on the resulting adversarial examples to update model weights. The model is
+never trained on clean examples -- only on the worst-case adversarial examples from each
+batch.
+
+The computational cost is k times the cost of standard training per step. At k=7 (Madry
+et al. configuration), adversarial training is approximately 7x more expensive than standard
+training in wall-clock time. At k=40 (evaluation-grade PGD), it is approximately 40x more
+expensive. This cost is the primary reason production adversarial training uses k=7 rather
+than k=40 -- the adversarial training literature accepts a moderate reduction in empirical
+robustness in exchange for training feasibility.
+
+The accuracy-robustness trade-off from PGD adversarial training is significant and well-
+documented. On CIFAR-10 with epsilon=8/255, standard training achieves ~95% clean accuracy;
+Madry et al. PGD adversarial training achieves ~87% clean accuracy and ~45% PGD robust
+accuracy. The clean accuracy cost (~8 percentage points) is the price of certified empirical
+robustness. For production security systems, this trade-off must be explicitly documented:
+the operational threshold for a fraud classifier or content moderator changes when the model
+is adversarially trained, and the decision boundary shift must be recalibrated post-training.
+
+The pgd_training_data_generator.py deliverable produces PGD adversarial examples formatted
+for use as an augmented training set. Section 10.15 (adversarial_trainer.py) wraps this
+generator in the full min-max training loop. The generator is kept separate here so the
+data generation step can be profiled and cached independently of the training step.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD Algorithm: Annotated Step Breakdown</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Each step of L-infinity PGD with mathematical notation, implementation note, and the critical correctness requirements</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Step</li><li>Operation</li><li>Notation</li><li>PyTorch</li><li>Critical note</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Init (random)</li><li>Sample random start in epsilon ball</li><li>x_0 = clip(x + U(-eps,eps), 0, 1)</li><li>x + torch.zeros_like(x).uniform_(-eps, eps)</li><li>clip to [0,1] after random delta; do NOT clip to x +/- eps yet</li></ul>
+<ul class="blist"><li>Init (clean)</li><li>Start from original input</li><li>x_0 = x</li><li>x.clone().detach()</li><li>Deterministic; misses some local optima</li></ul>
+<ul class="blist"><li>Loop start</li><li>Enable gradient on current x_t</li><li>x_t.requires_grad = True</li><li>x_t.detach().requires_grad_(True)</li><li>Detach FIRST; then enable grad; prevents graph accumulation</li></ul>
+<ul class="blist"><li>Forward</li><li>Compute per-sample loss</li><li>L_i = J(f(x_t), y_i)</li><li>criterion_none(model(x_t), y)</li><li>reduction=none gives per-sample loss for restart tracking</li></ul>
+<ul class="blist"><li>Backward</li><li>Gradient w.r.t. x_t</li><li>g = nabla_{x_t} L</li><li>L.sum().backward()</li><li>sum() aggregates; grad is per-sample in x_t.grad</li></ul>
+<ul class="blist"><li>FGSM step</li><li>Take gradient ascent step</li><li>x_t + alpha * sign(g)</li><li>x_t + alpha * x_t.grad.sign()</li><li>alpha &lt; epsilon required; standard: alpha = epsilon / k * 2.5</li></ul>
+<ul class="blist"><li>L-inf project</li><li>Clip total delta to epsilon ball</li><li>clip(x_step - x, -eps, eps)</li><li>torch.clamp(x_step - x, -eps, eps)</li><li>CRITICAL: project delta from ORIGINAL x, not from x_t</li></ul>
+<ul class="blist"><li>Validity clip</li><li>Clip to valid input range</li><li>clip(x + delta, 0, 1)</li><li>torch.clamp(x + delta, 0.0, 1.0)</li><li>Apply after L-inf projection; both clips are required</li></ul>
+<ul class="blist"><li>Restart track</li><li>Keep best adversarial per sample</li><li>best[improved] = x_{t+1}[improved]</li><li>best_x[improved] = x_adv[improved].detach()</li><li>Use per-sample loss &gt; best_loss as the improved mask</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD Hyperparameter Configurations</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Standard hyperparameter sets for the two primary use cases: robustness evaluation and adversarial training data generation</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Config name</li><li>k (steps)</li><li>alpha</li><li>Restarts (R)</li><li>Use case</li><li>Notes</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Evaluation-grade</li><li>40</li><li>epsilon / 10</li><li>5--10</li><li>Robustness benchmarking</li><li>Slow; strong; use for certifying deployed models</li></ul>
+<ul class="blist"><li>Madry training</li><li>7</li><li>2 * epsilon / 3</li><li>1</li><li>Adversarial training inner loop</li><li>7x training cost; balance between strength and speed</li></ul>
+<ul class="blist"><li>Fast eval</li><li>20</li><li>epsilon / 5</li><li>3</li><li>Development cycle robustness check</li><li>Faster than full eval; catches most failures</li></ul>
+<ul class="blist"><li>Single-restart PGD</li><li>40</li><li>epsilon / 10</li><li>1</li><li>Baseline comparison only</li><li>Do not use for final robustness claims; misses optima</li></ul>
+<ul class="blist"><li>PGD-100 with restart</li><li>100</li><li>epsilon / 25</li><li>10</li><li>Publication-grade evaluation</li><li>Standard for academic robustness papers</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">L-infinity vs L2-PGD: Projection and Perturbation Character</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Side-by-side comparison of L-infinity and L2 PGD at matched attack budget</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Property</li><li>L-infinity PGD</li><li>L2-PGD</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Ball shape</li><li>Hypercube (each feature bounded independently)</li><li>Hypersphere (total Euclidean distance bounded)</li></ul>
+<ul class="blist"><li>Projection operation</li><li>Per-feature clip: delta = clip(delta, -eps, eps)</li><li>Vector rescale: delta = eps * delta / max(||delta||_2, eps)</li></ul>
+<ul class="blist"><li>Perturbation character</li><li>Uniform: every feature perturbed by exactly epsilon</li><li>Concentrated: high-value features perturbed more; low-value less</li></ul>
+<ul class="blist"><li>Attack success rate (typical)</li><li>Higher at small epsilon (exploits all features)</li><li>Similar at matched L2 budget; lower than L-inf at same pixel magnitude</li></ul>
+<ul class="blist"><li>Visual appearance</li><li>Fine-grained uniform noise across image</li><li>Larger changes on salient regions; smoother low-detail areas</li></ul>
+<ul class="blist"><li>Squeezer detection</li><li>Moderate (fine-grained; partially destroyed by smoothing)</li><li>Lower (concentrated perturbation survives some squeezing)</li></ul>
+<ul class="blist"><li>Standard evaluation use</li><li>Dominant in literature (FGSM baseline; PGD-40 standard)</li><li>Used when minimum-norm adversarial examples are required</li></ul>
+<ul class="blist"><li>C&amp;W relationship</li><li>Fixed epsilon; PGD maximises loss within ball</li><li>C&amp;W (Section 10.5) minimises L2 norm; PGD fixes L2 epsilon</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD Core Implementation</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pgd_attack.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Production-quality L-infinity PGD with configurable step size, iterations, multi-restart tracking via per-sample loss, and both targeted and untargeted modes</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch. Inputs assumed normalised to [0, 1].
+Imports ToyLinear from fgsm_attack.py for demonstration.
+Critical correctness: project delta from original x, not from x_t.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pgd_attack.py
+# Section 10.4: PGD -- Projected Gradient Descent
+# 20260523 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+from typing import Optional
+
+
+def pgd_linf(
+    model: nn.Module,
+    x: Tensor,
+    y: Tensor,
+    epsilon: float,
+    alpha: float,
+    n_steps: int,
+    n_restarts: int = 1,
+    targeted: bool = False,
+    clip_min: float = 0.0,
+    clip_max: float = 1.0,
+    criterion: Optional[nn.Module] = None,
+) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    PGD L-infinity adversarial attack (Madry et al. 2018).
+
+    Solves: argmax_{||delta||_inf &lt;= epsilon} L(f(x + delta), y)
+    via k steps of projected gradient ascent with optional random restart.
+
+    Args:
+        model:      PyTorch classifier (eval mode recommended)
+        x:          Input batch, shape (N, *), normalised to [clip_min, clip_max]
+        y:          True labels (untargeted) or target labels (targeted)
+        epsilon:    L-infinity perturbation budget
+        alpha:      Step size per iteration; must satisfy alpha &lt; epsilon
+        n_steps:    Number of PGD iterations per restart
+        n_restarts: Number of random restarts; best adversarial per sample kept
+        targeted:   If True, minimise loss for y (treat y as target class)
+        clip_min:   Minimum valid input value
+        clip_max:   Maximum valid input value
+        criterion:  Loss function (default: CrossEntropyLoss, reduction=none)
+
+    Returns:
+        best_x_adv: Adversarial examples with highest per-sample loss across restarts
+    &#x27;&#x27;&#x27;
+    if criterion is None:
+        criterion = nn.CrossEntropyLoss(reduction=&#x27;none&#x27;)
+
+    direction = -1.0 if targeted else 1.0
+    x = x.detach()
+
+    # Track best adversarial example per sample across all restarts
+    best_loss = torch.full((x.size(0),), -float(&#x27;inf&#x27;), device=x.device)
+    best_x_adv = x.clone()
+
+    for _ in range(n_restarts):
+        # --- Initialise: random point in epsilon ball ---
+        delta_init = torch.zeros_like(x).uniform_(-epsilon, epsilon)
+        x_adv = torch.clamp(x + delta_init, clip_min, clip_max).detach()
+
+        for step in range(n_steps):
+            # Enable gradient on current iterate
+            x_adv = x_adv.detach().requires_grad_(True)
+
+            # Forward + per-sample loss
+            per_sample_loss = criterion(model(x_adv), y)
+            total_loss = direction * per_sample_loss.sum()
+
+            # Backward
+            model.zero_grad()
+            total_loss.backward()
+
+            with torch.no_grad():
+                # FGSM step (gradient ascent for untargeted; descent for targeted)
+                grad_sign = x_adv.grad.data.sign()
+                x_step = x_adv + direction * alpha * grad_sign
+
+                # L-infinity projection: clamp total delta from ORIGINAL x
+                delta = torch.clamp(x_step - x, -epsilon, epsilon)
+
+                # Input validity clip
+                x_adv = torch.clamp(x + delta, clip_min, clip_max)
+
+        # --- Multi-restart: keep per-sample best ---
+        with torch.no_grad():
+            final_loss = criterion(model(x_adv), y)
+            improved = final_loss &gt; best_loss
+            best_loss[improved] = final_loss[improved]
+            best_x_adv[improved] = x_adv[improved]
+
+    return best_x_adv.detach()
+
+
+def attack_success_rate(
+    model: nn.Module,
+    x_adv: Tensor,
+    y_true: Tensor,
+) -&gt; float:
+    with torch.no_grad():
+        preds = model(x_adv).argmax(dim=1)
+    return (preds != y_true).float().mean().item()
+
+
+def pgd_convergence_curve(
+    model: nn.Module,
+    x: Tensor,
+    y: Tensor,
+    epsilon: float,
+    alpha: float,
+    n_steps: int,
+    n_restarts: int = 1,
+) -&gt; list:
+    &#x27;&#x27;&#x27;
+    Return per-step average loss for convergence diagnostics.
+    Runs one restart; tracks loss at each PGD step.
+    &#x27;&#x27;&#x27;
+    criterion = nn.CrossEntropyLoss()
+    x = x.detach()
+    delta_init = torch.zeros_like(x).uniform_(-epsilon, epsilon)
+    x_adv = torch.clamp(x + delta_init, 0.0, 1.0).detach()
+    losses = []
+
+    for step in range(n_steps):
+        x_adv = x_adv.detach().requires_grad_(True)
+        loss = criterion(model(x_adv), y)
+        losses.append(loss.item())
+        model.zero_grad()
+        loss.backward()
+        with torch.no_grad():
+            x_step = x_adv + alpha * x_adv.grad.data.sign()
+            delta = torch.clamp(x_step - x, -epsilon, epsilon)
+            x_adv = torch.clamp(x + delta, 0.0, 1.0)
+    return losses
+
+
+# --- Demo ---
+
+def demo() -&gt; None:
+    try:
+        from fgsm_attack import ToyLinear, attack_success_rate as fgsm_asr
+        from fgsm_attack import fgsm
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        return
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    x = torch.rand(64, 1, 28, 28)
+    y = torch.randint(0, 10, (64,))
+    eps = 8.0 / 255.0
+    alpha = eps / 4.0
+
+    print(&#x27;PGD L-inf demo on ToyLinear (synthetic data)&#x27;)
+    print(f&#x27;epsilon = {eps:.4f} ({eps * 255:.1f}/255), alpha = {alpha:.4f}&#x27;)
+    print()
+
+    configs = [
+        (&#x27;FGSM (k=1)&#x27;, 1, 1),
+        (&#x27;PGD k=7&#x27;, 7, 1),
+        (&#x27;PGD k=20&#x27;, 20, 1),
+        (&#x27;PGD k=40&#x27;, 40, 1),
+        (&#x27;PGD k=40 R=5&#x27;, 40, 5),
+    ]
+
+    for name, k, r in configs:
+        if k == 1 and r == 1:
+            x_adv = fgsm(model, x, y, epsilon=eps)
+        else:
+            x_adv = pgd_linf(model, x, y, epsilon=eps, alpha=alpha,
+                             n_steps=k, n_restarts=r)
+        rate = attack_success_rate(model, x_adv, y)
+        l_inf = (x_adv - x).abs().max().item()
+        print(f&#x27;  {name:&lt;22} success={rate:.3f}  L-inf={l_inf:.4f}&#x27;)
+
+    print()
+    print(&#x27;Convergence curve (PGD k=40, R=1):&#x27;)
+    losses = pgd_convergence_curve(model, x, y, eps, alpha, n_steps=40)
+    for step in [0, 4, 9, 19, 39]:
+        print(f&#x27;  step {step + 1:&gt;3}: loss = {losses[step]:.4f}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    demo()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">L2-PGD Variant</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pgd_l2_variant.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">L2-PGD with vector rescale projection operator; comparison of L-infinity and L2 PGD at matched perturbation budget on the same model</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch, matplotlib.
+Import pgd_linf, ToyLinear from pgd_attack.py and fgsm_attack.py.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pgd_l2_variant.py
+# Section 10.4: L2-PGD Implementation
+# 20260523 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import torch.nn as nn
+from torch import Tensor
+from typing import Optional
+
+
+def project_l2(delta: Tensor, epsilon: float) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    Project delta onto the L2 ball of radius epsilon.
+    If ||delta||_2 &gt; epsilon: rescale to epsilon.
+    If ||delta||_2 &lt;= epsilon: return unchanged.
+    Operates per-sample in a batch.
+    &#x27;&#x27;&#x27;
+    # Flatten each sample for norm computation
+    batch_size = delta.size(0)
+    flat = delta.view(batch_size, -1)
+    norms = flat.norm(p=2, dim=1, keepdim=True)
+    # Scale = min(epsilon / norm, 1.0); apply only where norm &gt; epsilon
+    scale = torch.clamp(epsilon / norms, max=1.0)
+    projected_flat = flat * scale
+    return projected_flat.view_as(delta)
+
+
+def pgd_l2(
+    model: nn.Module,
+    x: Tensor,
+    y: Tensor,
+    epsilon: float,
+    alpha: float,
+    n_steps: int,
+    n_restarts: int = 1,
+    targeted: bool = False,
+    clip_min: float = 0.0,
+    clip_max: float = 1.0,
+    criterion: Optional[nn.Module] = None,
+) -&gt; Tensor:
+    &#x27;&#x27;&#x27;
+    PGD L2 adversarial attack.
+    L2 step: x_t + alpha * g / ||g||_2
+    L2 projection: rescale delta to L2 ball of radius epsilon.
+    &#x27;&#x27;&#x27;
+    if criterion is None:
+        criterion = nn.CrossEntropyLoss(reduction=&#x27;none&#x27;)
+
+    direction = -1.0 if targeted else 1.0
+    x = x.detach()
+    best_loss = torch.full((x.size(0),), -float(&#x27;inf&#x27;), device=x.device)
+    best_x_adv = x.clone()
+
+    for _ in range(n_restarts):
+        # Random L2 start: sample direction uniformly on L2 sphere, scale by random radius
+        delta_init = torch.randn_like(x)
+        flat = delta_init.view(x.size(0), -1)
+        norms = flat.norm(p=2, dim=1, keepdim=True).view(x.size(0), *([1] * (x.dim() - 1)))
+        r = torch.zeros(x.size(0), *([1] * (x.dim() - 1)), device=x.device).uniform_(0, 1)
+        delta_init = epsilon * r * (delta_init / (norms + 1e-8))
+        x_adv = torch.clamp(x + delta_init, clip_min, clip_max).detach()
+
+        for step in range(n_steps):
+            x_adv = x_adv.detach().requires_grad_(True)
+            per_sample_loss = criterion(model(x_adv), y)
+            total_loss = direction * per_sample_loss.sum()
+            model.zero_grad()
+            total_loss.backward()
+
+            with torch.no_grad():
+                grad = x_adv.grad.data
+                # L2 step: normalise gradient to unit L2 norm, scale by alpha
+                flat_grad = grad.view(x.size(0), -1)
+                grad_norm = flat_grad.norm(p=2, dim=1, keepdim=True).view(
+                    x.size(0), *([1] * (x.dim() - 1)))
+                grad_unit = grad / (grad_norm + 1e-8)
+                x_step = x_adv + direction * alpha * grad_unit
+
+                # L2 projection of total delta
+                delta = project_l2(x_step - x, epsilon)
+                x_adv = torch.clamp(x + delta, clip_min, clip_max)
+
+        with torch.no_grad():
+            final_loss = criterion(model(x_adv), y)
+            improved = final_loss &gt; best_loss
+            best_loss[improved] = final_loss[improved]
+            best_x_adv[improved] = x_adv[improved]
+
+    return best_x_adv.detach()
+
+
+def compare_l_inf_l2(model, x, y, eps_linf, eps_l2, n_steps=40, n_restarts=3):
+    &#x27;&#x27;&#x27;Compare L-inf and L2 PGD at independently specified budgets.&#x27;&#x27;&#x27;
+    from pgd_attack import pgd_linf, attack_success_rate
+
+    alpha_linf = eps_linf / 10.0
+    alpha_l2 = eps_l2 / 10.0
+
+    x_adv_linf = pgd_linf(model, x, y, eps_linf, alpha_linf, n_steps, n_restarts)
+    x_adv_l2 = pgd_l2(model, x, y, eps_l2, alpha_l2, n_steps, n_restarts)
+
+    rate_linf = attack_success_rate(model, x_adv_linf, y)
+    rate_l2 = attack_success_rate(model, x_adv_l2, y)
+
+    linf_actual = (x_adv_linf - x).abs().max().item()
+    l2_actual = (x_adv_l2 - x).view(x.size(0), -1).norm(p=2, dim=1).mean().item()
+
+    print(f&#x27;L-inf PGD: success={rate_linf:.3f}, actual L-inf={linf_actual:.4f}&#x27;)
+    print(f&#x27;L2   PGD: success={rate_l2:.3f}, actual L2 mean={l2_actual:.4f}&#x27;)
+    return rate_linf, rate_l2
+
+
+if __name__ == &#x27;__main__&#x27;:
+    try:
+        from fgsm_attack import ToyLinear
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        raise SystemExit
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    x = torch.rand(64, 1, 28, 28)
+    y = torch.randint(0, 10, (64,))
+
+    print(&#x27;L-inf vs L2 PGD comparison (ToyLinear, synthetic data)&#x27;)
+    compare_l_inf_l2(
+        model, x, y,
+        eps_linf=8.0 / 255.0,
+        eps_l2=0.5,
+        n_steps=20,
+        n_restarts=3,
+    )</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD vs FGSM Comparison</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pgd_vs_fgsm_comparison.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Side-by-side comparison of PGD and FGSM at matched epsilon: attack success rate, perturbation quality, and the gradient masking diagnostic (large FGSM-to-PGD gap signals gradient obfuscation)</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch, matplotlib.
+Import fgsm, ToyLinear from fgsm_attack.py; pgd_linf from pgd_attack.py.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pgd_vs_fgsm_comparison.py
+# Section 10.4: PGD vs FGSM Attack Comparison and Gradient Masking Diagnostic
+# 20260523 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import matplotlib.pyplot as plt
+from typing import List, Tuple
+
+
+GRADIENT_MASKING_THRESHOLD = 0.15  # PGD - FGSM gap above this = gradient masking suspected
+
+
+def compare_at_epsilon(
+    model,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    epsilon: float,
+    pgd_steps: int = 40,
+    pgd_restarts: int = 5,
+) -&gt; Tuple[float, float]:
+    from fgsm_attack import fgsm, attack_success_rate
+    from pgd_attack import pgd_linf
+
+    alpha = epsilon / 10.0
+    x_fgsm = fgsm(model, x, y, epsilon=epsilon)
+    x_pgd = pgd_linf(model, x, y, epsilon, alpha, pgd_steps, pgd_restarts)
+
+    fgsm_rate = attack_success_rate(model, x_fgsm, y)
+    pgd_rate = attack_success_rate(model, x_pgd, y)
+    return fgsm_rate, pgd_rate
+
+
+def sweep_and_diagnose(
+    model,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    epsilons: List[float],
+    pgd_steps: int = 40,
+    pgd_restarts: int = 5,
+) -&gt; None:
+    fgsm_rates, pgd_rates, gaps = [], [], []
+
+    for eps in epsilons:
+        fr, pr = compare_at_epsilon(model, x, y, eps, pgd_steps, pgd_restarts)
+        gap = pr - fr
+        fgsm_rates.append(fr)
+        pgd_rates.append(pr)
+        gaps.append(gap)
+
+    print(f&#x27;{&quot;eps/255&quot;:&lt;10} {&quot;FGSM&quot;:&lt;10} {&quot;PGD&quot;:&lt;10} {&quot;gap&quot;:&lt;10} {&quot;diagnosis&quot;:&lt;22}&#x27;)
+    print(&#x27;-&#x27; * 64)
+    for eps, fr, pr, gap in zip(epsilons, fgsm_rates, pgd_rates, gaps):
+        diagnosis = &#x27;gradient masking suspected&#x27; if gap &gt; GRADIENT_MASKING_THRESHOLD else &#x27;normal&#x27;
+        marker = &#x27; &lt;-- FLAG&#x27; if gap &gt; GRADIENT_MASKING_THRESHOLD else &#x27;&#x27;
+        print(f&#x27;{eps * 255:&lt;10.1f} {fr:&lt;10.3f} {pr:&lt;10.3f} {gap:&lt;10.3f} {diagnosis}{marker}&#x27;)
+
+    return fgsm_rates, pgd_rates, gaps
+
+
+def plot_comparison(
+    epsilons: List[float],
+    fgsm_rates: List[float],
+    pgd_rates: List[float],
+    gaps: List[float],
+    save_path: str = &#x27;pgd_vs_fgsm.png&#x27;,
+) -&gt; None:
+    eps_255 = [e * 255 for e in epsilons]
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(13, 5))
+
+    ax1.plot(eps_255, fgsm_rates, color=&#x27;#e74c3c&#x27;, linewidth=2,
+             marker=&#x27;o&#x27;, markersize=5, label=&#x27;FGSM (k=1)&#x27;)
+    ax1.plot(eps_255, pgd_rates, color=&#x27;#2980b9&#x27;, linewidth=2,
+             marker=&#x27;s&#x27;, markersize=5, label=&#x27;PGD-40 (R=5)&#x27;)
+    ax1.fill_between(eps_255, fgsm_rates, pgd_rates, alpha=0.15,
+                     color=&#x27;#8e44ad&#x27;, label=&#x27;Gap (PGD - FGSM)&#x27;)
+    ax1.set_xlabel(&#x27;Epsilon (pixel units)&#x27;, fontsize=11)
+    ax1.set_ylabel(&#x27;Attack success rate&#x27;, fontsize=11)
+    ax1.set_title(&#x27;PGD vs FGSM Attack Success Rate&#x27;, fontsize=11)
+    ax1.legend(fontsize=9)
+    ax1.grid(True, alpha=0.3)
+    ax1.set_ylim(0, 1.05)
+
+    colours = [&#x27;#e74c3c&#x27; if g &gt; GRADIENT_MASKING_THRESHOLD else &#x27;#2980b9&#x27; for g in gaps]
+    ax2.bar(eps_255, gaps, color=colours, alpha=0.8)
+    ax2.axhline(GRADIENT_MASKING_THRESHOLD, color=&#x27;grey&#x27;, linestyle=&#x27;--&#x27;,
+                label=f&#x27;Masking threshold ({GRADIENT_MASKING_THRESHOLD})&#x27;)
+    ax2.set_xlabel(&#x27;Epsilon (pixel units)&#x27;, fontsize=11)
+    ax2.set_ylabel(&#x27;PGD - FGSM gap&#x27;, fontsize=11)
+    ax2.set_title(&#x27;Gradient Masking Diagnostic\n(red bars = masking suspected)&#x27;, fontsize=11)
+    ax2.legend(fontsize=9)
+    ax2.grid(True, alpha=0.3, axis=&#x27;y&#x27;)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches=&#x27;tight&#x27;)
+    print(f&#x27;Saved: {save_path}&#x27;)
+    plt.show()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    try:
+        from fgsm_attack import ToyLinear
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        raise SystemExit
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    x = torch.rand(64, 1, 28, 28)
+    y = torch.randint(0, 10, (64,))
+
+    epsilons = [i / 255 for i in [2, 4, 6, 8, 12, 16, 24, 32]]
+    print(&#x27;PGD vs FGSM comparison with gradient masking diagnostic&#x27;)
+    print(&#x27;=&#x27; * 64)
+    fr, pr, gaps = sweep_and_diagnose(model, x, y, epsilons, pgd_steps=20, pgd_restarts=3)
+    plot_comparison(epsilons, fr, pr, gaps)</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD Robustness Evaluator</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pgd_robustness_evaluator.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Standard PGD robustness evaluation across epsilon values with convergence curve, gradient masking diagnostic, and formatted robustness report for production models</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch, matplotlib.
+Import pgd_linf, attack_success_rate from pgd_attack.py.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pgd_robustness_evaluator.py
+# Section 10.4: PGD Robustness Evaluation Tool
+# 20260523 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import torch.nn as nn
+import matplotlib.pyplot as plt
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class RobustnessReport:
+    model_name: str
+    epsilon_values: List[float]
+    clean_accuracy: float
+    pgd_robust_accuracies: List[float]
+    fgsm_success_rates: List[float]
+    pgd_success_rates: List[float]
+    masking_flags: List[bool]
+    pgd_steps: int
+    pgd_restarts: int
+
+
+def evaluate_clean_accuracy(model: nn.Module, x: torch.Tensor, y: torch.Tensor) -&gt; float:
+    with torch.no_grad():
+        preds = model(x).argmax(dim=1)
+    return (preds == y).float().mean().item()
+
+
+def robustness_sweep(
+    model: nn.Module,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    epsilons: List[float],
+    pgd_steps: int = 40,
+    pgd_restarts: int = 5,
+    masking_threshold: float = 0.15,
+    model_name: str = &#x27;model&#x27;,
+) -&gt; RobustnessReport:
+    from pgd_attack import pgd_linf, attack_success_rate
+    from fgsm_attack import fgsm
+
+    clean_acc = evaluate_clean_accuracy(model, x, y)
+    pgd_robust_accs, fgsm_rates, pgd_rates, flags = [], [], [], []
+
+    for eps in epsilons:
+        alpha = eps / 10.0
+        x_fgsm = fgsm(model, x, y, epsilon=eps)
+        x_pgd = pgd_linf(model, x, y, eps, alpha, pgd_steps, pgd_restarts)
+
+        fr = attack_success_rate(model, x_fgsm, y)
+        pr = attack_success_rate(model, x_pgd, y)
+        robust_acc = 1.0 - pr
+
+        fgsm_rates.append(fr)
+        pgd_rates.append(pr)
+        pgd_robust_accs.append(robust_acc)
+        flags.append((pr - fr) &gt; masking_threshold)
+
+    return RobustnessReport(
+        model_name=model_name,
+        epsilon_values=epsilons,
+        clean_accuracy=clean_acc,
+        pgd_robust_accuracies=pgd_robust_accs,
+        fgsm_success_rates=fgsm_rates,
+        pgd_success_rates=pgd_rates,
+        masking_flags=flags,
+        pgd_steps=pgd_steps,
+        pgd_restarts=pgd_restarts,
+    )
+
+
+def print_report(report: RobustnessReport) -&gt; None:
+    print(f&#x27;\nRobustness Report: {report.model_name}&#x27;)
+    print(f&#x27;PGD config: k={report.pgd_steps}, R={report.pgd_restarts}&#x27;)
+    print(f&#x27;Clean accuracy: {report.clean_accuracy:.3f}&#x27;)
+    print()
+    print(f&#x27;{&quot;eps/255&quot;:&lt;10} {&quot;FGSM_succ&quot;:&lt;12} {&quot;PGD_succ&quot;:&lt;12} {&quot;PGD_robust_acc&quot;:&lt;16} {&quot;masking?&quot;}&#x27;)
+    print(&#x27;-&#x27; * 62)
+    for eps, fr, pr, ra, flag in zip(
+        report.epsilon_values,
+        report.fgsm_success_rates,
+        report.pgd_success_rates,
+        report.pgd_robust_accuracies,
+        report.masking_flags,
+    ):
+        flag_str = &#x27;FLAG: gradient masking&#x27; if flag else &#x27;ok&#x27;
+        print(f&#x27;{eps * 255:&lt;10.1f} {fr:&lt;12.3f} {pr:&lt;12.3f} {ra:&lt;16.3f} {flag_str}&#x27;)
+
+    if any(report.masking_flags):
+        print()
+        print(&#x27;WARNING: gradient masking suspected at flagged epsilon values.&#x27;)
+        print(&#x27;Run C&amp;W (Section 10.5) or BPDA to verify actual robustness.&#x27;)
+
+
+def plot_robustness_curve(
+    report: RobustnessReport,
+    save_path: str = &#x27;pgd_robustness_curve.png&#x27;,
+) -&gt; None:
+    eps_255 = [e * 255 for e in report.epsilon_values]
+    plt.figure(figsize=(8, 5))
+    plt.plot(eps_255, [report.clean_accuracy] * len(eps_255),
+             color=&#x27;grey&#x27;, linestyle=&#x27;--&#x27;, label=f&#x27;Clean accuracy ({report.clean_accuracy:.2f})&#x27;)
+    plt.plot(eps_255, report.pgd_robust_accuracies,
+             color=&#x27;#2980b9&#x27;, linewidth=2, marker=&#x27;s&#x27;, markersize=5,
+             label=f&#x27;PGD robust accuracy (k={report.pgd_steps}, R={report.pgd_restarts})&#x27;)
+    plt.fill_between(eps_255, report.pgd_robust_accuracies,
+                     [report.clean_accuracy] * len(eps_255),
+                     alpha=0.1, color=&#x27;#e74c3c&#x27;, label=&#x27;Accuracy-robustness gap&#x27;)
+    plt.xlabel(&#x27;Epsilon (pixel units)&#x27;, fontsize=11)
+    plt.ylabel(&#x27;Accuracy&#x27;, fontsize=11)
+    plt.title(f&#x27;PGD Robustness Curve: {report.model_name}&#x27;, fontsize=11)
+    plt.legend(fontsize=9)
+    plt.grid(True, alpha=0.3)
+    plt.ylim(0, 1.05)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches=&#x27;tight&#x27;)
+    print(f&#x27;Saved: {save_path}&#x27;)
+    plt.show()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    try:
+        from fgsm_attack import ToyLinear
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        raise SystemExit
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    x = torch.rand(128, 1, 28, 28)
+    y = torch.randint(0, 10, (128,))
+
+    epsilons = [i / 255 for i in [2, 4, 8, 16, 24, 32]]
+    report = robustness_sweep(
+        model, x, y, epsilons,
+        pgd_steps=20, pgd_restarts=3,
+        model_name=&#x27;ToyLinear (synthetic)&#x27;,
+    )
+    print_report(report)
+    plot_robustness_curve(report)</code></pre>
+<h3 class="sh2">Deliverable 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PGD Training Data Generator</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pgd_training_data_generator.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Generates PGD adversarial examples batch-by-batch for adversarial training data augmentation; formatted for direct use by the Section 10.15 adversarial training loop</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention.
+Requires: torch. Import pgd_linf from pgd_attack.py.
+Configurable for both k=7 (Madry training) and k=40 (evaluation-grade).</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pgd_training_data_generator.py
+# Section 10.4: PGD Adversarial Training Data Generator
+# 20260523 | AI Security Mastery by Raghav Dinesh
+# Single quotes throughout per book convention
+
+import torch
+import torch.nn as nn
+from dataclasses import dataclass
+from typing import Iterator, Tuple
+
+
+@dataclass
+class PGDConfig:
+    epsilon: float
+    alpha: float
+    n_steps: int
+    n_restarts: int = 1
+    clip_min: float = 0.0
+    clip_max: float = 1.0
+
+    @classmethod
+    def madry_training(cls, epsilon: float) -&gt; &#x27;PGDConfig&#x27;:
+        &#x27;&#x27;&#x27;Madry et al. k=7 training config.&#x27;&#x27;&#x27;
+        return cls(
+            epsilon=epsilon,
+            alpha=2.0 * epsilon / 3.0,
+            n_steps=7,
+            n_restarts=1,
+        )
+
+    @classmethod
+    def evaluation_grade(cls, epsilon: float) -&gt; &#x27;PGDConfig&#x27;:
+        &#x27;&#x27;&#x27;k=40, R=5 evaluation-grade config.&#x27;&#x27;&#x27;
+        return cls(
+            epsilon=epsilon,
+            alpha=epsilon / 10.0,
+            n_steps=40,
+            n_restarts=5,
+        )
+
+
+def generate_adversarial_batch(
+    model: nn.Module,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    config: PGDConfig,
+) -&gt; torch.Tensor:
+    &#x27;&#x27;&#x27;Generate PGD adversarial examples for one batch. Returns x_adv.&#x27;&#x27;&#x27;
+    from pgd_attack import pgd_linf
+    return pgd_linf(
+        model, x, y,
+        epsilon=config.epsilon,
+        alpha=config.alpha,
+        n_steps=config.n_steps,
+        n_restarts=config.n_restarts,
+        clip_min=config.clip_min,
+        clip_max=config.clip_max,
+    )
+
+
+def adversarial_data_stream(
+    model: nn.Module,
+    data_loader: Iterator[Tuple[torch.Tensor, torch.Tensor]],
+    config: PGDConfig,
+) -&gt; Iterator[Tuple[torch.Tensor, torch.Tensor]]:
+    &#x27;&#x27;&#x27;
+    Yield (x_adv, y) pairs for each batch in data_loader.
+    Intended as the inner adversary in a min-max adversarial training loop.
+    Usage in Section 10.15:
+        for x_adv, y in adversarial_data_stream(model, train_loader, pgd_config):
+            loss = criterion(model(x_adv), y)
+            loss.backward()
+            optimiser.step()
+    &#x27;&#x27;&#x27;
+    model.eval()
+    for x, y in data_loader:
+        x_adv = generate_adversarial_batch(model, x, y, config)
+        yield x_adv, y
+    model.train()
+
+
+def benchmark_generation_cost(
+    model: nn.Module,
+    x: torch.Tensor,
+    y: torch.Tensor,
+    configs: dict,
+) -&gt; None:
+    &#x27;&#x27;&#x27;Compare wall-clock generation time for different PGD configs.&#x27;&#x27;&#x27;
+    import time
+    print(f&#x27;{&quot;Config&quot;:&lt;22} {&quot;steps&quot;:&lt;8} {&quot;restarts&quot;:&lt;10} {&quot;time_ms&quot;:&lt;12} {&quot;relative_cost&quot;}&#x27;)
+    print(&#x27;-&#x27; * 58)
+    base_time = None
+    for name, cfg in configs.items():
+        start = time.perf_counter()
+        generate_adversarial_batch(model, x, y, cfg)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        if base_time is None:
+            base_time = elapsed_ms
+        rel = elapsed_ms / base_time
+        print(f&#x27;{name:&lt;22} {cfg.n_steps:&lt;8} {cfg.n_restarts:&lt;10} {elapsed_ms:&lt;12.1f} {rel:.1f}x&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    try:
+        from fgsm_attack import ToyLinear
+    except ImportError:
+        print(&#x27;Run from directory containing fgsm_attack.py&#x27;)
+        raise SystemExit
+
+    torch.manual_seed(42)
+    model = ToyLinear()
+    model.eval()
+    x = torch.rand(32, 1, 28, 28)
+    y = torch.randint(0, 10, (32,))
+    eps = 8.0 / 255.0
+
+    configs = {
+        &#x27;Madry training (k=7)&#x27;: PGDConfig.madry_training(eps),
+        &#x27;Fast eval (k=20 R=3)&#x27;: PGDConfig(eps, eps / 5.0, 20, 3),
+        &#x27;Eval-grade (k=40 R=5)&#x27;: PGDConfig.evaluation_grade(eps),
+    }
+
+    print(&#x27;PGD generation cost benchmark (batch_size=32, ToyLinear)&#x27;)
+    benchmark_generation_cost(model, x, y, configs)
+
+    print()
+    print(&#x27;Demo: adversarial data stream (3 batches)&#x27;)
+    batches = [(torch.rand(16, 1, 28, 28), torch.randint(0, 10, (16,))) for _ in range(3)]
+    cfg = PGDConfig.madry_training(eps)
+    for i, (x_adv, y_batch) in enumerate(adversarial_data_stream(model, iter(batches), cfg)):
+        print(f&#x27;  batch {i}: x_adv shape={tuple(x_adv.shape)}, L-inf={( x_adv - batches[i][0]).abs().max():.4f}&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Using alpha &gt;= epsilon as the step size, causing the perturbation to leave the epsilon ball every step and preventing convergence</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The relationship between alpha and epsilon is not immediately obvious. Engineers
+who read &quot;step size alpha&quot; and choose alpha = epsilon (a natural round number)
+observe that the attack is fast to implement but produces strange adversarial examples
+with seemingly random success rates.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">At alpha = epsilon, each FGSM step moves the perturbation from one edge of the epsilon
+ball to the other. The projection then clips it back. The attack oscillates along the
+boundary of the epsilon ball without converging to a local maximum. Attack success rate
+is erratic and typically lower than FGSM alone. Convergence curves show no clear rise.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Choose alpha = epsilon / k * c where c is typically 2 to 2.5. For k=40, alpha = epsilon/10
+is standard. For k=7 (Madry training), alpha = 2*epsilon/3 is standard. Always verify
+the convergence curve: a well-tuned alpha produces a smoothly rising loss curve that
+plateaus within k steps. If the curve is flat or oscillating, reduce alpha.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Projecting x_adv directly to [x - epsilon, x + epsilon] rather than projecting the accumulated delta from the original x</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The projection intuitively sounds like clamping the current adversarial example.
+Engineers write: x_adv = clip(x_adv, x - epsilon, x + epsilon) and clip to [0, 1].
+This appears correct for one step but accumulates error across multiple steps.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">After each step, the projection clips x_adv relative to the current x_adv, not the
+original x. Over multiple steps the epsilon ball drifts: the adversarial example
+is no longer guaranteed to be within epsilon of the original input. The final L-infinity
+distance (x_adv - x_original).abs().max() may significantly exceed epsilon, invalidating
+the attack as a norm-constrained adversarial example.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Always compute delta = x_adv - x_original before projecting, and project the delta:
+delta = clip(x_step - x_original, -epsilon, epsilon); x_adv = clip(x_original + delta, 0, 1).
+The delta accumulates the total perturbation from the fixed original x. The L-infinity
+projection operates on the total delta. Verify with a post-hoc norm check:
+assert (best_x_adv - x).abs().max() &lt;= epsilon + 1e-6.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Reporting single-restart PGD robustness and treating it as equivalent to multi-restart PGD robustness</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Multi-restart PGD is computationally expensive. Engineers run PGD with R=1 for speed and
+report the resulting robustness numbers. Papers sometimes omit the restart count, making
+it unclear whether the evaluation is single-restart or multi-restart.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Single-restart PGD underestimates attack strength because it converges to the local maximum
+nearest to the clean start, missing stronger adversarial examples reachable from other
+starting points in the epsilon ball. Robustness claims based on R=1 are overly optimistic;
+the model may be substantially less robust under R=5 or R=10.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">For final robustness claims, always use R &gt;= 5 with random starts. Report the restart count
+explicitly alongside epsilon, k, and alpha. Use the PGD robustness evaluator from this
+section which forces explicit restart configuration. The gradient masking diagnostic
+(large FGSM-to-PGD gap) becomes more reliable with more restarts.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Using the same PGD configuration for adversarial training and for robustness evaluation</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A single PGD configuration (epsilon, alpha, k) is used throughout the training and
+evaluation pipeline. Engineers train with k=40 PGD (extremely slow) or evaluate with
+k=7 PGD (too weak), because no distinction is made between the two use cases.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Training with k=40 is approximately 40x more expensive than standard training, making
+large-scale adversarial training infeasible. Evaluating with k=7 underestimates attack
+strength at the evaluation phase, producing overly optimistic robustness numbers.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Use separate PGD configs for training and evaluation: PGDConfig.madry_training(epsilon)
+for the inner training loop (k=7, alpha=2*epsilon/3, R=1) and PGDConfig.evaluation_grade(epsilon)
+for the robustness report (k=40, alpha=epsilon/10, R=5). The training config is optimised
+for speed at acceptable robustness; the evaluation config is optimised for attack strength.
+Both are implemented in PGDConfig in pgd_training_data_generator.py.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Concluding that a model is robust because its PGD success rate is low, without checking whether PGD is properly converging on that model</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">PGD is claimed to be the strongest first-order adversary, so low PGD success rate
+is taken as evidence of robustness. The claim is true for models without gradient masking
+but fails for models with obfuscated gradients (shattered gradients, stochastic defences,
+non-differentiable preprocessing).</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A model with shattered gradients produces near-zero gradients everywhere, making every
+PGD step ineffective. PGD shows 0% success, the model is declared robust, but C&amp;W with
+BPDA achieves 95% success by approximating the non-differentiable components. Published
+defences including input transformations and certain certified defences have been broken
+this way.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Apply the gradient masking diagnostic first: compare FGSM success to PGD success at
+matched epsilon. If PGD barely outperforms FGSM, and both show near-zero success at
+epsilon where natural models are 60%+ vulnerable, gradient masking is likely. Follow up
+with C&amp;W (Section 10.5) or BPDA. The robustness evaluator flags this automatically.
+Any defence claiming PGD robustness below 5% at epsilon=8/255 on CIFAR-10 without
+certified robustness should be treated with scepticism.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">PGD extends FGSM from a single step to an iterative projected gradient ascent that solves the
+inner maximisation problem of the Madry et al. robust optimisation objective. The algorithm
+iterates: take an FGSM step, project the accumulated delta back onto the L-infinity epsilon
+ball from the original x, clip to valid input range. Step size alpha &lt; epsilon prevents
+oscillation; random restart (R &gt;= 5) escapes local optima in the epsilon ball and produces
+the strongest first-order adversarial examples. PGD success rate is the canonical empirical
+robustness measure: the gradient masking diagnostic (PGD success substantially exceeds FGSM
+success) identifies defences that obfuscate gradients without achieving real robustness.
+PGD adversarial training uses k=7 inner steps to balance robustness and compute cost,
+producing models with ~8 percentage point clean accuracy loss and ~45% PGD robust accuracy
+on CIFAR-10 at epsilon=8/255.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>PGD solves the inner maximisation of the min-max robust optimisation problem; it is the adversary that adversarial training trains against</li><li>The projection must operate on the accumulated delta from the original x, not on the current x_adv; this is the most common implementation error</li><li>Random restart (R &gt;= 5) is required for honest robustness evaluation; single-restart PGD underestimates attack strength</li><li>PGD success rate, not FGSM success rate, is the truthful empirical robustness measure; use k=40 and R=5 for evaluation</li><li>The gradient masking diagnostic: if PGD minus FGSM success gap exceeds 15 percentage points, the defence is obfuscating gradients rather than achieving robustness</li><li>Training config (k=7, alpha=2*eps/3, R=1) and evaluation config (k=40, alpha=eps/10, R=5) are distinct; use the evaluator to report published robustness claims</li></ul>
+<h2 class="sh1">Preview Section 10 05</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 10.5: C&amp;W -- The Carlini-Wagner Attack</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 10.5 implements C&amp;W L2 (Carlini and Wagner 2017), the optimality-focused attack
+designed specifically to evaluate and break proposed defences. Where FGSM and PGD fix epsilon
+and maximise loss, C&amp;W minimises ||delta||_2 subject to the misclassification constraint --
+finding the minimum-norm adversarial example. The formulation uses a change of variables
+(tanh-space) to handle box constraints without projection, a binary search on the
+regularisation constant c to balance perturbation size against classification margin,
+and a confidence parameter kappa that controls how strongly wrong the adversarial output
+must be. High kappa C&amp;W produces examples that survive squeezing and consistency checking,
+making it the correct attack for evaluating Track 7 defences. Carlini and Wagner&#x27;&#x27;s original
+goal was breaking every proposed defence of 2016-2017; Section 10.5 uses C&amp;W for the same
+purpose against Chapter 10 Track 7 primitives.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 10.3: FGSM (gradient-sign primitive that PGD iterates)</li><li>Section 10.1: L-infinity norm constraint and projection definition</li><li>Chapter 1 Section 1.9: loss functions (cross-entropy maximised by PGD inner loop)</li><li>Chapter 2 Section 2.3: backpropagation (gradient at each PGD step)</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 10.5: C&amp;W (the attack for defence evaluation; PGD baseline established here)</li><li>Section 10.11: feature squeezing (detection rate against PGD established in deliverable 3)</li><li>Section 10.14: certified robustness (evaluated against PGD; the robustness evaluator is the tool)</li><li>Section 10.15: adversarial training (PGD inner loop; PGDConfig.madry_training used directly)</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>pgd</li><li>projected-gradient-descent</li><li>madry-2018</li><li>min-max-robust-optimisation</li><li>l-infinity-projection</li><li>random-restart</li><li>gradient-masking-diagnostic</li><li>adversarial-training-inner-loop</li><li>robustness-evaluation</li><li>empirical-robustness-standard</li></ul>
+</article>

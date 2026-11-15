@@ -1,0 +1,645 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 1 · Section 10 · ~6 pages</div>
+<h1>Loss Functions Deep Dive</h1>
+<div class="tags"><span class="tag">loss-functions</span><span class="tag">cross-entropy</span><span class="tag">mse</span><span class="tag">hinge-loss</span><span class="tag">custom-loss</span><span class="tag">cost-sensitive</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Loss functions are the compass guiding machine learning optimization. They quantify 
+how wrong your model&#x27;s predictions are and tell gradient descent which direction to 
+move parameters. Choose the wrong loss function and your model will optimize for the 
+wrong objective, no matter how well you tune other hyperparameters.
+
+Different problems need different loss functions. Classification uses cross-entropy, 
+regression uses mean squared error, but there are many more: hinge loss for SVMs, 
+focal loss for imbalanced data, custom losses for specific security constraints. 
+Understanding loss functions lets you:
+1. Match loss to your problem type
+2. Diagnose why models aren&#x27;t learning
+3. Design custom losses for unique requirements
+4. Understand model behavior at a fundamental level
+
+For security, loss function choice is critical because:
+- Class imbalance is extreme (1% attacks vs 99% normal)
+- False negatives cost more than false positives
+- Need custom losses that penalize security failures more heavily
+- Adversaries can exploit loss function properties</p>
+<h2 class="sh1">Why This Matters</h2>
+<p class="prose">Security context:
+- Standard loss treats all errors equally (not acceptable for security)
+- Missing an attack (false negative) &gt;&gt; false alarm (false positive)
+- Need cost-sensitive losses that weight errors differently
+- Imbalanced datasets (1% malicious) require specialized losses
+
+Real scenarios:
+- Malware detection: Missing malware = infected system
+- Fraud detection: Missing fraud = financial loss
+- Intrusion detection: Missing attack = compromised network
+- Spam detection: False positives annoy users, false negatives let spam through
+
+Each requires different loss function that reflects operational costs.</p>
+<h2 class="sh1">Classification Losses</h2>
+<h3 class="sh2">Binary Cross Entropy</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">L(y, ŷ) = -[y log(ŷ) + (1-y) log(1-ŷ)]</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Binary classification with probabilistic outputs</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Convex (single global minimum)</li><li>Differentiable everywhere</li><li>Heavily penalizes confident wrong predictions</li><li>Probabilistic interpretation (negative log-likelihood)</li></ul>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Measures distance between predicted probability and true label
+
+True label y=1, prediction ŷ=0.9: Loss = -log(0.9) = 0.105 (low)
+True label y=1, prediction ŷ=0.1: Loss = -log(0.1) = 2.303 (high)
+
+Loss grows exponentially as confidence in wrong answer increases</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def binary_cross_entropy(y_true, y_pred, epsilon=1e-15):
+    &quot;&quot;&quot;
+    Binary cross-entropy loss
+    
+    Args:
+        y_true: True labels (0 or 1), shape (m,)
+        y_pred: Predicted probabilities, shape (m,)
+        epsilon: Small value to avoid log(0)
+    
+    Returns:
+        Average loss
+    &quot;&quot;&quot;
+    # Clip predictions to avoid log(0)
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    # Compute loss per sample
+    losses = -(y_true * np.log(y_pred) + (1 - y_true) * np.log(1 - y_pred))
+    
+    # Return average
+    return np.mean(losses)</code></pre>
+<h3 class="sh3">Gradient</h3>
+<p class="prose">∂L/∂ŷ = -(y/ŷ - (1-y)/(1-ŷ))
+
+With sigmoid activation, simplifies to: ŷ - y</p>
+<h3 class="sh3">Security Note</h3>
+<p class="prose">Treats all errors equally - not ideal for security
+False negative (y=1, ŷ=0) penalized same as false positive (y=0, ŷ=1)
+Need weighted version for cost-sensitive learning (see below)</p>
+<h3 class="sh2">Categorical Cross Entropy</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">L(y, ŷ) = -Σₖ yₖ log(ŷₖ)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Multi-class classification (K &gt; 2 classes)</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Generalizes binary cross-entropy to K classes</li><li>Used with softmax activation</li><li>One-hot encoded labels</li></ul>
+<h3 class="sh3">Example</h3>
+<p class="prose">True label: class 2 (one-hot: [0, 0, 1, 0])
+Predictions: [0.1, 0.2, 0.6, 0.1]
+
+Loss = -[0×log(0.1) + 0×log(0.2) + 1×log(0.6) + 0×log(0.1)]
+     = -log(0.6)
+     = 0.511</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def categorical_cross_entropy(y_true, y_pred, epsilon=1e-15):
+    &quot;&quot;&quot;
+    Categorical cross-entropy loss
+    
+    Args:
+        y_true: One-hot encoded labels, shape (m, K)
+        y_pred: Predicted probabilities, shape (m, K)
+    
+    Returns:
+        Average loss
+    &quot;&quot;&quot;
+    # Clip predictions
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    # Compute loss per sample
+    losses = -np.sum(y_true * np.log(y_pred), axis=1)
+    
+    return np.mean(losses)</code></pre>
+<h3 class="sh3">Security Example</h3>
+<p class="prose">Network traffic classification:
+Classes: [HTTP, SSH, FTP, DNS, Malicious]
+
+True: Malicious traffic (one-hot: [0, 0, 0, 0, 1])
+Predicted: [0.1, 0.1, 0.1, 0.1, 0.6]
+
+Loss focuses on predicted probability of correct class (0.6)</p>
+<h3 class="sh2">Hinge Loss</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">L(y, ŷ) = max(0, 1 - y·ŷ)</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Support Vector Machines (margin-based classifiers)</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Encourages confident correct predictions (margin)</li><li>Zero loss if prediction correct with margin</li><li>Linear penalty for wrong predictions</li><li>Not probabilistic (outputs decision scores, not probabilities)</li></ul>
+<h3 class="sh3">Margin Concept</h3>
+<p class="prose">Goal: Not just classify correctly, but with confidence
+
+y = +1 (positive class):
+- If ŷ &gt; +1: Loss = 0 (correct with margin)
+- If ŷ = +1: Loss = 0 (barely correct)
+- If 0 &lt; ŷ &lt; +1: Loss &gt; 0 (correct but no margin)
+- If ŷ &lt; 0: Loss high (wrong)</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def hinge_loss(y_true, y_pred):
+    &quot;&quot;&quot;
+    Hinge loss for SVM
+    
+    Args:
+        y_true: Labels in {-1, +1}, shape (m,)
+        y_pred: Decision function values, shape (m,)
+    
+    Returns:
+        Average loss
+    &quot;&quot;&quot;
+    # Compute hinge loss per sample
+    losses = np.maximum(0, 1 - y_true * y_pred)
+    
+    return np.mean(losses)</code></pre>
+<h3 class="sh3">Security Benefit</h3>
+<p class="prose">Maximizes margin = maximizes distance to decision boundary
+= harder for adversary to cross boundary with small perturbations
+
+More robust to adversarial examples than cross-entropy</p>
+<h2 class="sh1">Regression Losses</h2>
+<h3 class="sh2">Mean Squared Error</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">MSE = (1/m) Σᵢ (yᵢ - ŷᵢ)²</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Regression, predicting continuous values</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Heavily penalizes large errors (squared term)</li><li>Differentiable everywhere</li><li>Sensitive to outliers</li></ul>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Squared error grows quadratically
+
+Small error (1): Loss = 1² = 1
+Medium error (5): Loss = 5² = 25
+Large error (10): Loss = 10² = 100
+
+Model focuses heavily on reducing large errors</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose">def mean_squared_error(y_true, y_pred):
+    &quot;&quot;&quot;Mean squared error&quot;&quot;&quot;
+    return np.mean((y_true - y_pred) ** 2)</p>
+<h3 class="sh3">Gradient</h3>
+<p class="prose">∂MSE/∂ŷ = 2(ŷ - y)</p>
+<h3 class="sh3">Security Example</h3>
+<p class="prose">Predicting API response time
+Normal: 50ms, Prediction: 52ms → Error = 2ms, Loss = 4
+Attack (DDoS): 5000ms, Prediction: 100ms → Error = 4900ms, Loss = 24,010,000
+
+Model will focus heavily on detecting DDoS (large errors)</p>
+<h3 class="sh2">Mean Absolute Error</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">MAE = (1/m) Σᵢ |yᵢ - ŷᵢ|</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Regression when outliers present</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Linear penalty (absolute value)</li><li>Robust to outliers (vs MSE)</li><li>Not differentiable at zero</li></ul>
+<h3 class="sh3">Comparison To Mse</h3>
+<p class="prose">MSE: Heavily penalizes outliers (squared)
+MAE: Treats all errors equally (linear)
+
+Error = 10:
+MSE penalty = 100
+MAE penalty = 10
+
+Use MAE when outliers shouldn&#x27;t dominate training</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<p class="prose">def mean_absolute_error(y_true, y_pred):
+    &quot;&quot;&quot;Mean absolute error&quot;&quot;&quot;
+    return np.mean(np.abs(y_true - y_pred))</p>
+<h3 class="sh2">Huber Loss</h3>
+<h3 class="sh3">Formula</h3>
+<p class="prose">Huber(y, ŷ) = {
+  0.5(y - ŷ)²           if |y - ŷ| ≤ δ
+  δ|y - ŷ| - 0.5δ²      if |y - ŷ| &gt; δ
+}</p>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">Regression with outliers, want balance between MSE and MAE</p>
+<h3 class="sh3">Properties</h3>
+<ul class="blist"><li>Quadratic for small errors (like MSE)</li><li>Linear for large errors (like MAE)</li><li>Robust to outliers, smooth gradient</li></ul>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Combines best of MSE and MAE:
+- Small errors: Use MSE (smooth, efficient optimization)
+- Large errors: Use MAE (don&#x27;t overpenalize outliers)
+
+Transition point controlled by δ parameter</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def huber_loss(y_true, y_pred, delta=1.0):
+    &quot;&quot;&quot;
+    Huber loss: MSE for small errors, MAE for large
+    
+    Args:
+        delta: Threshold between quadratic and linear
+    &quot;&quot;&quot;
+    error = y_true - y_pred
+    is_small_error = np.abs(error) &lt;= delta
+    
+    # Small errors: 0.5 * error^2
+    small_error_loss = 0.5 * (error ** 2)
+    
+    # Large errors: delta * |error| - 0.5 * delta^2
+    large_error_loss = delta * np.abs(error) - 0.5 * (delta ** 2)
+    
+    # Combine
+    loss = np.where(is_small_error, small_error_loss, large_error_loss)
+    
+    return np.mean(loss)</code></pre>
+<h2 class="sh1">Security Specific Losses</h2>
+<h3 class="sh2">Weighted Binary Cross Entropy</h3>
+<h3 class="sh3">Motivation</h3>
+<p class="prose">Security datasets are imbalanced: 99% benign, 1% malicious
+Standard BCE treats all errors equally
+Need to penalize false negatives (missed attacks) more than false positives</p>
+<h3 class="sh3">Formula</h3>
+<p class="prose">L = -[w₁·y·log(ŷ) + w₀·(1-y)·log(1-ŷ)]</p>
+<h3 class="sh3">Where</h3>
+<h4 class="sh3">W1</h4>
+<p class="prose">Weight for positive class (malicious)</p>
+<h4 class="sh3">W0</h4>
+<p class="prose">Weight for negative class (benign)</p>
+<h3 class="sh3">Typical Weights</h3>
+<p class="prose">If dataset is 1% positive, 99% negative:
+w₁ = 99 (weight positive class 99x more)
+w₀ = 1
+
+Or use class frequencies:
+w₁ = n_negative / n_positive
+w₀ = 1</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def weighted_binary_cross_entropy(y_true, y_pred, pos_weight=1.0, epsilon=1e-15):
+    &quot;&quot;&quot;
+    Weighted BCE for imbalanced classification
+    
+    Args:
+        pos_weight: Weight for positive class (typically &gt; 1)
+    &quot;&quot;&quot;
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    # Weighted loss
+    loss = -(pos_weight * y_true * np.log(y_pred) + 
+            (1 - y_true) * np.log(1 - y_pred))
+    
+    return np.mean(loss)</code></pre>
+<h3 class="sh3">Security Example</h3>
+<p class="prose">Malware detection: 1% malicious, 99% benign
+Use pos_weight = 99
+
+False negative (missed malware): Loss = 99 × BCE
+False positive (benign flagged): Loss = 1 × BCE
+
+Model learns: Missing malware 99x worse than false alarm</p>
+<h3 class="sh2">Focal Loss</h3>
+<h3 class="sh3">Motivation</h3>
+<p class="prose">Weighted BCE still struggles with extreme imbalance
+Easy examples (confidently correct) dominate gradient
+Hard examples (near decision boundary) get ignored
+
+Focal loss: Down-weight easy examples, focus on hard ones</p>
+<h3 class="sh3">Formula</h3>
+<p class="prose">FL = -αₜ(1-pₜ)ᵞ log(pₜ)</p>
+<h3 class="sh3">Where</h3>
+<h4 class="sh3">Pt</h4>
+<p class="prose">Predicted probability of true class</p>
+<h4 class="sh3">Alpha</h4>
+<p class="prose">Class weight (like weighted BCE)</p>
+<h4 class="sh3">Gamma</h4>
+<p class="prose">Focusing parameter (typically 2)</p>
+<h3 class="sh3">Intuition</h3>
+<p class="prose">Easy example: pₜ = 0.9 (confident correct)
+(1 - 0.9)² = 0.01 → Loss reduced by 100x
+
+Hard example: pₜ = 0.6 (uncertain)
+(1 - 0.6)² = 0.16 → Loss reduced by 6x
+
+Model focuses on hard examples automatically</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def focal_loss(y_true, y_pred, alpha=0.25, gamma=2.0, epsilon=1e-15):
+    &quot;&quot;&quot;
+    Focal loss for extreme class imbalance
+    
+    Args:
+        alpha: Class weight
+        gamma: Focusing parameter (higher = more focus on hard examples)
+    &quot;&quot;&quot;
+    y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+    
+    # Compute pt (probability of true class)
+    pt = np.where(y_true == 1, y_pred, 1 - y_pred)
+    
+    # Focal loss
+    focal_weight = (1 - pt) ** gamma
+    loss = -alpha * focal_weight * np.log(pt)
+    
+    return np.mean(loss)</code></pre>
+<h3 class="sh3">When To Use</h3>
+<p class="prose">- Extreme imbalance (&gt;100:1 ratio)
+- Many easy examples dominating training
+- Single-stage object detection (original use case)
+- Security: Rare attack detection (APT, zero-days)</p>
+<h3 class="sh2">Cost Sensitive Loss</h3>
+<h3 class="sh3">Motivation</h3>
+<p class="prose">Different errors have different operational costs
+
+Security costs:
+- False negative (missed attack): $1,000,000 (breach)
+- False positive (false alarm): $10 (analyst time)
+
+Need loss reflecting real-world costs</p>
+<h3 class="sh3">Formula</h3>
+<p class="prose">L = C_FN × (y=1, ŷ=0) + C_FP × (y=0, ŷ=1)</p>
+<h3 class="sh3">Where</h3>
+<h4 class="sh3">C Fn</h4>
+<p class="prose">Cost of false negative</p>
+<h4 class="sh3">C Fp</h4>
+<p class="prose">Cost of false positive</p>
+<h3 class="sh3">Example Costs</h3>
+<p class="prose">Fraud detection:
+C_FN = $1000 (missed fraud = financial loss)
+C_FP = $5 (manual review cost)
+Ratio: 200:1
+
+Malware detection:
+C_FN = $100,000 (infected system, data breach)
+C_FP = $50 (false alarm investigation)
+Ratio: 2000:1</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def cost_sensitive_loss(y_true, y_pred, cost_fn=100, cost_fp=1, threshold=0.5):
+    &quot;&quot;&quot;
+    Cost-sensitive loss based on operational costs
+    
+    Args:
+        cost_fn: Cost of false negative
+        cost_fp: Cost of false positive
+        threshold: Classification threshold
+    &quot;&quot;&quot;
+    # Convert probabilities to predictions
+    y_pred_class = (y_pred &gt;= threshold).astype(int)
+    
+    # Identify errors
+    false_negatives = (y_true == 1) &amp; (y_pred_class == 0)
+    false_positives = (y_true == 0) &amp; (y_pred_class == 1)
+    
+    # Compute cost
+    total_cost = (cost_fn * false_negatives.sum() + 
+                 cost_fp * false_positives.sum())
+    
+    return total_cost / len(y_true)</code></pre>
+<h3 class="sh3">Training With Cost Sensitive</h3>
+<p class="prose">Can&#x27;t use directly with gradient descent (not differentiable)
+
+Options:
+1. Use weighted BCE with weights = cost ratio
+2. Adjust classification threshold after training
+3. Use cost-aware evaluation during training</p>
+<h3 class="sh2">Asymmetric Loss For Security</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Penalize false negatives exponentially more than false positives</p>
+<h3 class="sh3">Formula</h3>
+<p class="prose">L = e^(α·FN_rate) + FP_rate</p>
+<h3 class="sh3">Where</h3>
+<h4 class="sh3">Alpha</h4>
+<p class="prose">Controls asymmetry (higher = more penalty for FN)</p>
+<h3 class="sh3">Behavior</h3>
+<p class="prose">Model will drive false negative rate to near zero
+Even if false positive rate increases significantly
+
+Security priority: Miss no attacks, even with many false alarms</p>
+<h3 class="sh3">Numpy Implementation</h3>
+<pre class="code"><code>def asymmetric_security_loss(y_true, y_pred, alpha=5.0, threshold=0.5):
+    &quot;&quot;&quot;
+    Exponentially penalize false negatives
+    &quot;&quot;&quot;
+    y_pred_class = (y_pred &gt;= threshold).astype(int)
+    
+    # Compute rates
+    fn_rate = np.mean((y_true == 1) &amp; (y_pred_class == 0))
+    fp_rate = np.mean((y_true == 0) &amp; (y_pred_class == 1))
+    
+    # Asymmetric penalty
+    loss = np.exp(alpha * fn_rate) + fp_rate
+    
+    return loss</code></pre>
+<h2 class="sh1">Loss Function Selection</h2>
+<h3 class="sh2">Decision Tree</h3>
+<p class="prose">Is this classification or regression?
+
+├─ CLASSIFICATION
+│  ├─ Binary (2 classes)?
+│  │  ├─ Balanced classes?
+│  │  │  └─ Use: Binary Cross-Entropy
+│  │  ├─ Imbalanced (&lt;10:1)?
+│  │  │  └─ Use: Weighted Binary Cross-Entropy
+│  │  └─ Extreme imbalance (&gt;100:1)?
+│  │     └─ Use: Focal Loss
+│  │
+│  └─ Multi-class (K &gt; 2)?
+│     ├─ Balanced classes?
+│     │  └─ Use: Categorical Cross-Entropy
+│     └─ Need margins (adversarial robustness)?
+│        └─ Use: Hinge Loss (SVM)
+│
+└─ REGRESSION
+   ├─ No outliers?
+   │  └─ Use: Mean Squared Error (MSE)
+   ├─ Many outliers?
+   │  └─ Use: Mean Absolute Error (MAE)
+   └─ Some outliers?
+      └─ Use: Huber Loss</p>
+<h3 class="sh2">Security Specific Guidance</h3>
+<h3 class="sh3">Attack Detection</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Binary classification, extreme imbalance (1% attacks)</p>
+<h4 class="sh3">Recommended</h4>
+<p class="prose">Weighted BCE or Focal Loss</p>
+<h4 class="sh3">Weights</h4>
+<p class="prose">pos_weight = 99 (or higher for critical systems)</p>
+<h3 class="sh3">Malware Classification</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Multi-class (malware families), imbalanced</p>
+<h4 class="sh3">Recommended</h4>
+<p class="prose">Weighted Categorical Cross-Entropy</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">Weight malicious classes higher than benign</p>
+<h3 class="sh3">Anomaly Scoring</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Regression, predicting anomaly score</p>
+<h4 class="sh3">Recommended</h4>
+<p class="prose">Huber Loss (robust to outlier normal samples)</p>
+<h3 class="sh3">Zero Day Detection</h3>
+<h4 class="sh3">Problem</h4>
+<p class="prose">Binary, extreme imbalance, high FN cost</p>
+<h4 class="sh3">Recommended</h4>
+<p class="prose">Focal Loss + Cost-sensitive threshold</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">Can&#x27;t miss zero-days, tolerate high FP rate</p>
+<h2 class="sh1">Loss Function Library</h2>
+<pre class="code"><code>import numpy as np
+
+class LossFunctions:
+    &quot;&quot;&quot;Collection of loss functions for ML&quot;&quot;&quot;
+    
+    @staticmethod
+    def binary_cross_entropy(y_true, y_pred, epsilon=1e-15):
+        &quot;&quot;&quot;Standard BCE for balanced binary classification&quot;&quot;&quot;
+        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+        return -np.mean(y_true * np.log(y_pred) + (1-y_true) * np.log(1-y_pred))
+    
+    @staticmethod
+    def weighted_binary_cross_entropy(y_true, y_pred, pos_weight=1.0, epsilon=1e-15):
+        &quot;&quot;&quot;Weighted BCE for imbalanced data&quot;&quot;&quot;
+        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+        loss = -(pos_weight * y_true * np.log(y_pred) + 
+                (1 - y_true) * np.log(1 - y_pred))
+        return np.mean(loss)
+    
+    @staticmethod
+    def focal_loss(y_true, y_pred, alpha=0.25, gamma=2.0, epsilon=1e-15):
+        &quot;&quot;&quot;Focal loss for extreme imbalance&quot;&quot;&quot;
+        y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
+        pt = np.where(y_true == 1, y_pred, 1 - y_pred)
+        focal_weight = (1 - pt) ** gamma
+        loss = -alpha * focal_weight * np.log(pt)
+        return np.mean(loss)
+    
+    @staticmethod
+    def hinge_loss(y_true, y_pred):
+        &quot;&quot;&quot;Hinge loss for SVM (margin-based)&quot;&quot;&quot;
+        return np.mean(np.maximum(0, 1 - y_true * y_pred))
+    
+    @staticmethod
+    def mean_squared_error(y_true, y_pred):
+        &quot;&quot;&quot;MSE for regression&quot;&quot;&quot;
+        return np.mean((y_true - y_pred) ** 2)
+    
+    @staticmethod
+    def mean_absolute_error(y_true, y_pred):
+        &quot;&quot;&quot;MAE for regression with outliers&quot;&quot;&quot;
+        return np.mean(np.abs(y_true - y_pred))
+    
+    @staticmethod
+    def huber_loss(y_true, y_pred, delta=1.0):
+        &quot;&quot;&quot;Huber loss: MSE for small errors, MAE for large&quot;&quot;&quot;
+        error = y_true - y_pred
+        is_small = np.abs(error) &lt;= delta
+        small_loss = 0.5 * (error ** 2)
+        large_loss = delta * np.abs(error) - 0.5 * (delta ** 2)
+        return np.mean(np.where(is_small, small_loss, large_loss))
+
+# Usage example: Malware detection with imbalanced data
+
+# Simulate data: 1% malicious, 99% benign
+np.random.seed(42)
+y_true = np.random.choice([0, 1], size=10000, p=[0.99, 0.01])
+
+# Simulate predictions (model that predicts all benign)
+y_pred = np.random.uniform(0, 0.2, size=10000)  # Low probabilities
+
+# Compare loss functions
+loss = LossFunctions()
+
+bce = loss.binary_cross_entropy(y_true, y_pred)
+weighted_bce = loss.weighted_binary_cross_entropy(y_true, y_pred, pos_weight=99)
+focal = loss.focal_loss(y_true, y_pred, alpha=0.25, gamma=2.0)
+
+print(f&quot;Standard BCE: {bce:.4f}&quot;)
+print(f&quot;Weighted BCE (w=99): {weighted_bce:.4f}&quot;)
+print(f&quot;Focal Loss: {focal:.4f}&quot;)
+
+# Weighted/focal loss will be much higher, driving model to detect rare class</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Using MSE for classification</p>
+<h3 class="sh3">Problem</h3>
+<p class="prose">MSE not designed for classification
+- Gradients can vanish (model stops learning)
+- Non-convex optimization landscape
+- Doesn&#x27;t match probabilistic interpretation</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">True: y=1, Predicted: ŷ=0.9
+MSE: (1-0.9)² = 0.01
+BCE: -log(0.9) = 0.105
+
+MSE gradient tiny when close to correct → slow learning</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Always use cross-entropy for classification</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Not weighting losses for imbalanced data</p>
+<h3 class="sh3">Problem</h3>
+<p class="prose">Dataset: 99% benign, 1% malicious
+Model predicts everything as benign
+Standard BCE: Loss decreases!
+Result: 99% accuracy, 0% attack detection</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use weighted BCE with pos_weight = 99
+Or use focal loss
+Model forced to learn rare class</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Using same loss for training and evaluation</p>
+<h3 class="sh3">Issue</h3>
+<p class="prose">Training loss (BCE): Optimize probabilistic predictions
+Evaluation metric (F1): Measure binary classification quality
+
+Model might have low loss but poor F1 score</p>
+<h3 class="sh3">Solution</h3>
+<p class="prose">Train with BCE (gradient descent needs differentiable loss)
+Evaluate with F1, precision, recall (Section 11)
+Tune threshold based on evaluation metrics</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Error</h3>
+<p class="prose">Ignoring operational costs in loss function</p>
+<h3 class="sh3">Scenario</h3>
+<p class="prose">Fraud detection:
+- Missed fraud: $1000 loss
+- False alarm: $5 investigation cost
+- Ratio: 200:1
+
+Standard BCE treats both errors equally</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use weighted BCE with pos_weight = 200
+Or adjust classification threshold after training
+Align loss with business impact</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Adversarial Loss Exploitation</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Adversary knows your loss function</p>
+<h3 class="sh3">Strategy</h3>
+<p class="prose">If using MSE: Craft inputs far from decision boundary
+If using BCE: Craft inputs that maximize uncertainty (ŷ ≈ 0.5)
+If using hinge: Stay just inside margin</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Model trained with BCE
+Adversary crafts input: P(malicious) = 0.49
+Just below 0.5 threshold → evades detection
+Loss: Low (model confident it&#x27;s working)
+Reality: Malicious input let through</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">Use ensemble with different losses
+Regularly retrain with adversarial examples
+Don&#x27;t rely solely on threshold-based decisions</p>
+<h3 class="sh2">Loss Poisoning</h3>
+<h3 class="sh3">Attack</h3>
+<p class="prose">Inject samples that confuse loss function</p>
+<h3 class="sh3">Example</h3>
+<p class="prose">Model uses MSE (sensitive to outliers)
+Adversary injects samples with extreme values
+Loss explodes → gradient descent unstable
+Model fails to converge</p>
+<h3 class="sh3">Defense</h3>
+<p class="prose">Use robust losses (Huber, MAE)
+Outlier detection before training
+Monitor loss distribution for anomalies</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Conceptual Understanding</h3>
+<ul class="blist"><li>Loss function defines what model optimizes - choose carefully</li><li>Cross-entropy for classification, MSE for regression (general rule)</li><li>Imbalanced data needs weighted or focal loss</li><li>Security requires cost-sensitive losses (FN cost &gt;&gt; FP cost)</li><li>Different losses encourage different model behaviors</li></ul>
+<h3 class="sh2">Practical Skills</h3>
+<ul class="blist"><li>Implement multiple loss functions in NumPy</li><li>Choose loss based on problem type and class distribution</li><li>Weight losses for imbalanced security datasets</li><li>Design custom losses reflecting operational costs</li><li>Use appropriate loss for training vs evaluation</li></ul>
+<h3 class="sh2">Security Mindset</h3>
+<ul class="blist"><li>Standard losses treat all errors equally (unacceptable for security)</li><li>Weight losses to reflect attack detection priority</li><li>Adversaries can exploit loss function properties</li><li>Robust losses (Huber, MAE) resist poisoning</li><li>Loss = how model sees optimization - shape it for security goals</li></ul>
+<h3 class="sh2">Remember This</h3>
+<ul class="blist"><li>For security: Weighted BCE or Focal Loss (imbalanced data is the norm)</li><li>Never use MSE for classification (wrong tool for the job)</li><li>Loss function choice as important as model architecture</li></ul>
+<h3 class="sh2">Next Steps</h3>
+<ul class="blist"><li>Next section: Evaluation metrics (accuracy, precision, recall, F1, ROC-AUC)</li><li>Connect losses to metrics: BCE optimizes, F1 evaluates</li><li>You now understand what models optimize during training</li></ul>
+</article>

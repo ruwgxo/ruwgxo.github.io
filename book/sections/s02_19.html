@@ -1,0 +1,516 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 2 · Section 19 · ~5 pages</div>
+<h1>Attention Mechanism Preview</h1>
+<div class="tags"><span class="tag">attention</span><span class="tag">self-attention</span><span class="tag">transformers</span><span class="tag">encoder-decoder</span><span class="tag">alignment</span><span class="tag">context-vector</span></div>
+</header>
+<h2 class="sh1">Overview</h2>
+<p class="prose">Attention mechanisms revolutionized sequence modeling by allowing networks
+to focus on relevant parts of input when producing output. Unlike RNNs
+that compress entire sequence into fixed-size hidden state, attention
+creates dynamic context vectors that look at different input positions
+for each output step.
+
+This preview introduces core attention concepts before Chapter 3&#x27;s deep
+dive into transformers. You&#x27;ll understand the fundamental problem attention
+solves (fixed-size bottleneck), learn the attention computation (query-key-
+value mechanism), implement basic attention from scratch, see how it enables
+100x longer sequences than RNNs, and connect to security implications
+(attention patterns leak information, can be exploited).
+
+Note: This is a PREVIEW. Full transformer architecture, self-attention,
+multi-head attention, and modern LLMs covered in Chapter 3. This section
+provides foundation to understand why transformers replaced RNNs.</p>
+<h2 class="sh1">Learning Objectives</h2>
+<h3 class="sh2">Conceptual</h3>
+<ul class="blist"><li>Understand bottleneck problem in RNN encoder-decoder</li><li>Grasp attention as weighted sum of values</li><li>Know query-key-value paradigm</li><li>Understand alignment scores and softmax</li><li>Recognize why attention enables longer sequences</li><li>Preview self-attention (full coverage in Chapter 3)</li></ul>
+<h3 class="sh2">Practical</h3>
+<ul class="blist"><li>Implement basic attention mechanism (NumPy)</li><li>Visualize attention weights (alignment matrix)</li><li>Build simple seq2seq with attention</li><li>Compare RNN vs RNN+attention empirically</li><li>Understand attention output shapes</li><li>Bridge to Chapter 3 (transformers)</li></ul>
+<h3 class="sh2">Security Focused</h3>
+<ul class="blist"><li>Attention patterns leak sensitive information</li><li>Adversarial inputs exploit attention distribution</li><li>Attention weights reveal model architecture</li><li>Preview: prompt injection via attention manipulation</li></ul>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Sections 02_17-02_18 (RNN, LSTM/GRU)</li><li>Understanding of encoder-decoder architecture</li><li>Matrix operations and dot products</li></ul>
+<h2 class="sh1">Bottleneck Problem</h2>
+<h3 class="sh2">Rnn Encoder Decoder</h3>
+<h3 class="sh3">Architecture</h3>
+<p class="prose">Standard sequence-to-sequence (seq2seq):
+
+Encoder (RNN/LSTM):
+Input sequence → h_1, h_2, ..., h_T → final h_T
+
+Decoder (RNN/LSTM):
+h_T (context) → y_1, y_2, ..., y_M
+
+Key: Decoder only sees h_T (final encoder state)</p>
+<h3 class="sh3">The Bottleneck</h3>
+<p class="prose">Problem: Entire input sequence compressed into single vector h_T
+
+Example: Machine translation
+Input: &quot;The cat sat on the mat&quot; (6 words)
+Encoder: All 6 words → single h_T vector (e.g., 512 dim)
+
+Information loss:
+- Early words (e.g., &quot;The&quot;) mostly forgotten
+- Position information lost
+- Long sentences → more compression → more loss</p>
+<h3 class="sh3">Empirical Failure</h3>
+<p class="prose">Seq2seq without attention:
+- Works okay for short sentences (&lt;20 words)
+- Fails on longer sentences (&gt;50 words)
+
+English → French translation:
+10 words: 65% BLEU
+30 words: 45% BLEU
+50 words: 25% BLEU (terrible!)
+
+Performance degrades with length</p>
+<h3 class="sh2">What We Want</h3>
+<h3 class="sh3">Selective Access</h3>
+<p class="prose">When translating &quot;sat&quot;, decoder should focus on:
+- &quot;sat&quot; (source word)
+- &quot;cat&quot; (subject)
+- &quot;on&quot; (preposition)
+
+Not: &quot;The&quot; or &quot;mat&quot; (less relevant for this word)</p>
+<h3 class="sh3">Dynamic Context</h3>
+<p class="prose">Different output words need different context:
+
+Translating &quot;The&quot; → focus on &quot;The&quot;
+Translating &quot;cat&quot; → focus on &quot;cat&quot;, &quot;The&quot;
+Translating &quot;sat&quot; → focus on &quot;sat&quot;, &quot;cat&quot;
+
+Context should change dynamically per output step</p>
+<h2 class="sh1">Attention Mechanism</h2>
+<h3 class="sh2">Core Idea</h3>
+<h3 class="sh3">Weighted Sum</h3>
+<p class="prose">Instead of single context vector h_T:
+
+For each decoder step, compute context c_t:
+c_t = Σ_i α_t,i · h_i
+
+Where:
+- h_i: encoder hidden states (all of them, not just last)
+- α_t,i: attention weights (how much to focus on position i)
+- c_t: context vector for decoder step t</p>
+<h3 class="sh3">Attention Weights</h3>
+<p class="prose">α_t,i = how much decoder step t should attend to encoder step i
+
+Properties:
+- α_t,i ≥ 0 (non-negative)
+- Σ_i α_t,i = 1 (sum to 1, like probabilities)
+
+Computed via softmax over alignment scores</p>
+<h3 class="sh2">Attention Computation</h3>
+<h3 class="sh3">Step By Step</h3>
+<p class="prose">Given:
+- Query: decoder state s_t
+- Keys: encoder states h_1, ..., h_T
+
+Step 1: Compute alignment scores
+e_t,i = score(s_t, h_i)
+
+Measures compatibility between query s_t and key h_i
+
+Step 2: Compute attention weights via softmax
+α_t,i = exp(e_t,i) / Σ_j exp(e_t,j)
+
+Normalizes scores to probabilities
+
+Step 3: Compute context vector
+c_t = Σ_i α_t,i · h_i
+
+Weighted sum of values (here, values = keys = h_i)</p>
+<h3 class="sh3">Score Functions</h3>
+<p class="prose">How to compute score(s_t, h_i)?
+
+Option 1 - Dot product (simplest):
+score(s_t, h_i) = s_t^T · h_i
+
+Option 2 - Scaled dot product:
+score(s_t, h_i) = (s_t^T · h_i) / √d
+
+Option 3 - Additive (Bahdanau):
+score(s_t, h_i) = v^T · tanh(W_s · s_t + W_h · h_i)
+
+Option 4 - Bilinear:
+score(s_t, h_i) = s_t^T · W · h_i
+
+Most common: Scaled dot product (used in Transformers)</p>
+<h3 class="sh2">Implementation</h3>
+<pre class="code"><code>import numpy as np
+
+class AttentionLayer:
+    &quot;&quot;&quot;
+    Basic attention mechanism.
+    
+    Computes context vector as weighted sum of encoder states.
+    &quot;&quot;&quot;
+    
+    def __init__(self, hidden_size):
+        self.hidden_size = hidden_size
+        
+        # Learnable parameters for additive attention
+        self.W_s = np.random.randn(hidden_size, hidden_size) * 0.01
+        self.W_h = np.random.randn(hidden_size, hidden_size) * 0.01
+        self.v = np.random.randn(hidden_size, 1) * 0.01
+    
+    def forward(self, query, keys, values):
+        &quot;&quot;&quot;
+        Compute attention.
+        
+        Parameters:
+        - query: decoder state (hidden_size, 1)
+        - keys: encoder states (hidden_size, T) where T = sequence length
+        - values: typically same as keys (hidden_size, T)
+        
+        Returns:
+        - context: context vector (hidden_size, 1)
+        - attention_weights: (T, 1) attention distribution
+        &quot;&quot;&quot;
+        T = keys.shape[1]  # sequence length
+        
+        # Step 1: Compute alignment scores (additive attention)
+        # Broadcast query to match keys shape
+        query_expanded = query.repeat(T, axis=1)  # (hidden, T)
+        
+        # e_i = v^T · tanh(W_s·query + W_h·keys)
+        scores = self.v.T @ np.tanh(
+            self.W_s @ query_expanded + self.W_h @ keys
+        )  # (1, T)
+        
+        scores = scores.T  # (T, 1)
+        
+        # Step 2: Compute attention weights (softmax)
+        attention_weights = self._softmax(scores)  # (T, 1)
+        
+        # Step 3: Compute context vector (weighted sum)
+        context = values @ attention_weights  # (hidden, T) @ (T, 1) = (hidden, 1)
+        
+        return context, attention_weights
+    
+    def _softmax(self, x):
+        &quot;&quot;&quot;Numerically stable softmax&quot;&quot;&quot;
+        exp_x = np.exp(x - np.max(x))
+        return exp_x / np.sum(exp_x)
+
+# Example usage
+attention = AttentionLayer(hidden_size=128)
+
+# Encoder outputs (e.g., 6 time steps)
+encoder_states = np.random.randn(128, 6)
+
+# Decoder state at some step
+decoder_state = np.random.randn(128, 1)
+
+# Compute attention
+context, weights = attention.forward(
+    query=decoder_state,
+    keys=encoder_states,
+    values=encoder_states
+)
+
+print(f&quot;Context shape: {context.shape}&quot;)  # (128, 1)
+print(f&quot;Attention weights: {weights.T}&quot;)  # (1, 6) - sums to 1
+# Example output: [0.05, 0.15, 0.40, 0.25, 0.10, 0.05]
+# → Highest attention (0.40) on position 3</code></pre>
+<h2 class="sh1">Seq2Seq With Attention</h2>
+<h3 class="sh2">Architecture</h3>
+<h3 class="sh3">Encoder</h3>
+<p class="prose">Same as before: RNN/LSTM processes input
+
+Input: x_1, ..., x_T
+Encoder: h_1, h_2, ..., h_T
+
+Key change: Save ALL hidden states, not just h_T</p>
+<h3 class="sh3">Decoder</h3>
+<p class="prose">At each step t:
+
+1. Compute attention over encoder states
+   c_t = Attention(s_{t-1}, h_1:T)
+
+2. Concatenate context with input
+   decoder_input = [y_{t-1}, c_t]
+
+3. Update decoder state
+   s_t = LSTM(decoder_input, s_{t-1})
+
+4. Generate output
+   y_t = Softmax(W · s_t)</p>
+<h3 class="sh3">Key Difference</h3>
+<p class="prose">Without attention:
+- Decoder sees only h_T (fixed context)
+
+With attention:
+- Decoder sees dynamic c_t (different for each step)
+- Can focus on relevant input positions</p>
+<h3 class="sh2">Training</h3>
+<h3 class="sh3">Forward Pass</h3>
+<p class="prose">1. Encode: Get h_1, ..., h_T
+2. For each decoder step:
+   a. Compute attention → c_t
+   b. Decode → y_t
+3. Compute loss (cross-entropy)</p>
+<h3 class="sh3">Backward Pass</h3>
+<p class="prose">Gradients flow through:
+- Decoder RNN (standard BPTT)
+- Attention weights (via softmax)
+- Encoder RNN (via attention-weighted gradients)
+
+Key: ALL encoder states receive gradients (not just h_T)
+→ Better gradient flow than standard seq2seq</p>
+<h3 class="sh2">Example Translation</h3>
+<h3 class="sh3">Task</h3>
+<p class="prose">English: &quot;The cat sat on the mat&quot;
+French: &quot;Le chat est assis sur le tapis&quot;</p>
+<h3 class="sh3">Attention Visualization</h3>
+<p class="prose">When generating &quot;chat&quot; (cat):
+Attention weights on English words:
+
+The: 0.05  (low - not relevant)
+cat: 0.85  (high - main focus!)
+sat: 0.05  (low - not relevant here)
+on:  0.02  (very low)
+the: 0.02  (very low)
+mat: 0.01  (very low)
+
+When generating &quot;assis&quot; (sat):
+
+The: 0.03
+cat: 0.25  (some attention - subject)
+sat: 0.65  (high - main verb!)
+on:  0.05
+the: 0.01
+mat: 0.01
+
+Attention dynamically focuses on relevant words!</p>
+<h2 class="sh1">Visualizing Attention</h2>
+<h3 class="sh2">Alignment Matrix</h3>
+<h3 class="sh3">What It Shows</h3>
+<p class="prose">Alignment matrix: (T_target × T_source)
+
+Rows: target (output) words
+Columns: source (input) words
+Cell (i,j): attention weight α_i,j
+
+Heatmap shows which source words decoder attends to
+for each target word</p>
+<h3 class="sh3">Implementation</h3>
+<pre class="code"><code>def visualize_attention(attention_weights, source_words, target_words):
+    &quot;&quot;&quot;
+    Visualize attention alignment matrix.
+    
+    Parameters:
+    - attention_weights: (T_target, T_source) matrix
+    - source_words: list of source words
+    - target_words: list of target words
+    &quot;&quot;&quot;
+    import matplotlib.pyplot as plt
+    
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Plot heatmap
+    im = ax.imshow(attention_weights, cmap=&#x27;Blues&#x27;)
+    
+    # Set ticks
+    ax.set_xticks(range(len(source_words)))
+    ax.set_yticks(range(len(target_words)))
+    ax.set_xticklabels(source_words, rotation=45)
+    ax.set_yticklabels(target_words)
+    
+    # Add colorbar
+    plt.colorbar(im, ax=ax)
+    
+    # Labels
+    ax.set_xlabel(&#x27;Source Words&#x27;)
+    ax.set_ylabel(&#x27;Target Words&#x27;)
+    ax.set_title(&#x27;Attention Alignment Matrix&#x27;)
+    
+    plt.tight_layout()
+    plt.show()</code></pre>
+<h3 class="sh3">Interpretation</h3>
+<p class="prose">Diagonal pattern: Monotonic alignment (similar word order)
+Off-diagonal: Reordering (different word order in languages)
+Bright spots: Strong attention (important word pairs)
+Dim areas: Weak attention (less relevant)</p>
+<h3 class="sh2">Attention Patterns</h3>
+<h3 class="sh3">Monotonic Alignment</h3>
+<p class="prose">English: &quot;I love you&quot;
+Spanish: &quot;Te amo&quot;
+
+Mostly diagonal (similar order)</p>
+<h3 class="sh3">Reordering</h3>
+<p class="prose">English: &quot;The red car&quot;
+French: &quot;La voiture rouge&quot;
+
+&quot;rouge&quot; attends to &quot;red&quot; (reordering)</p>
+<h3 class="sh3">Many To One</h3>
+<p class="prose">English: &quot;do not&quot;
+French: &quot;ne ... pas&quot;
+
+Multiple source words map to single target word</p>
+<h2 class="sh1">Why Attention Works</h2>
+<h3 class="sh2">Addresses Bottleneck</h3>
+<h3 class="sh3">Information Capacity</h3>
+<p class="prose">Without attention:
+- Fixed-size vector (e.g., 512 dim)
+- Must compress entire sequence
+- Information loss inevitable
+
+With attention:
+- Access to ALL encoder states
+- No compression necessary
+- Full information available</p>
+<h3 class="sh3">Variable Length Sequences</h3>
+<p class="prose">10-word sentence: h_1, ..., h_10 (10 vectors available)
+100-word sentence: h_1, ..., h_100 (100 vectors available)
+
+Context capacity scales with input length!</p>
+<h3 class="sh2">Better Gradient Flow</h3>
+<h3 class="sh3">Shorter Paths</h3>
+<p class="prose">Without attention:
+Loss at step 50 → gradients through decoder (50 steps)
+                → encoder final state
+                → encoder step 1 (50+ steps)
+Total: 100+ steps of backprop
+
+With attention:
+Loss at step 50 → attention weights
+                → directly to relevant encoder state
+Total: Much shorter path!</p>
+<h3 class="sh3">All Encoder States Updated</h3>
+<p class="prose">Standard seq2seq: Only h_T receives direct gradient
+
+Attention seq2seq: ALL h_i receive gradients
+→ Better encoder training
+→ Better representations</p>
+<h3 class="sh2">Empirical Improvements</h3>
+<h3 class="sh3">Translation Quality</h3>
+<p class="prose">English → French (WMT dataset):
+
+Seq2seq without attention:
+- 10 words: 28 BLEU
+- 30 words: 18 BLEU
+- 50 words: 10 BLEU
+
+Seq2seq with attention:
+- 10 words: 32 BLEU
+- 30 words: 29 BLEU
+- 50 words: 25 BLEU
+
+Attention maintains quality on longer sequences!</p>
+<h3 class="sh3">Other Tasks</h3>
+<p class="prose">Image captioning: +15% CIDEr score
+Speech recognition: 20% WER reduction
+Summarization: +8 ROUGE score
+
+Attention helps across many sequence tasks</p>
+<h2 class="sh1">Self Attention Preview</h2>
+<h3 class="sh2">Limitation Of Encoder Decoder Attention</h3>
+<h3 class="sh3">Sequential Processing</h3>
+<p class="prose">Encoder still processes sequentially:
+h_1 → h_2 → h_3 → ... → h_T
+
+Time step 3 only sees up to position 3
+Can&#x27;t look ahead to position 10</p>
+<h3 class="sh3">Rnn Bottleneck Remains</h3>
+<p class="prose">Even with attention, encoder is RNN:
+- Sequential (can&#x27;t parallelize)
+- Vanishing gradients still possible
+- Long sequences still challenging</p>
+<h3 class="sh2">Self Attention Solution</h3>
+<h3 class="sh3">Attention Within Sequence</h3>
+<p class="prose">Self-attention: Each position attends to all positions
+
+For position i:
+- Query: representation at i
+- Keys: representations at ALL positions
+- Compute attention over entire sequence
+
+Result: position i sees entire sequence at once!</p>
+<h3 class="sh3">Parallelization</h3>
+<p class="prose">No sequential dependency:
+- Can compute all positions in parallel
+- No RNN needed
+- Much faster
+
+This is the foundation of Transformers!</p>
+<h3 class="sh2">Bridge To Chapter 3</h3>
+<h3 class="sh3">What Chapter 3 Covers</h3>
+<p class="prose">Full transformer architecture:
+- Self-attention mechanism (detailed)
+- Multi-head attention (multiple attention in parallel)
+- Positional encoding (position information)
+- Encoder-decoder transformer
+- GPT (decoder-only)
+- BERT (encoder-only)
+
+This section: Basic attention concept
+Chapter 3: Complete transformer from scratch</p>
+<h3 class="sh3">Preview Transformers</h3>
+<p class="prose">Transformer = Attention is All You Need (2017 paper)
+
+Key ideas:
+- Replace RNNs with self-attention
+- Process entire sequence in parallel
+- Stack many attention layers
+
+Result: State-of-the-art in NLP
+Foundation for GPT, BERT, Claude, ChatGPT</p>
+<h2 class="sh1">Security Implications</h2>
+<h3 class="sh2">Attention Patterns Leak Information</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Attention weights reveal what model focuses on
+
+Example:
+Input: &quot;The password is secret123&quot;
+Model generates: &quot;The password is [REDACTED]&quot;
+
+Attention weights show model attended to &quot;secret123&quot;
+→ Leaks what was redacted!</p>
+<h3 class="sh3">Extraction Attack</h3>
+<p class="prose">Attacker can analyze attention patterns:
+1. Query model with test inputs
+2. Observe attention weights (if accessible)
+3. Infer sensitive information from patterns
+
+Defense: Don&#x27;t expose attention weights in API</p>
+<h3 class="sh2">Adversarial Attention Manipulation</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Adversarial input can manipulate attention:
+
+Clean input: &quot;This product is great&quot;
+→ Attention: &quot;great&quot; (positive sentiment)
+
+Adversarial: &quot;This product is not not great&quot;
+→ Attention: &quot;not not&quot; (confused)
+→ Misclassification</p>
+<h3 class="sh3">Attack Strategy</h3>
+<p class="prose">Design input to:
+- Force attention away from key words
+- Dilute attention across irrelevant tokens
+- Concentrate attention on misleading words</p>
+<h3 class="sh2">Attention Reveals Architecture</h3>
+<h3 class="sh3">Observation</h3>
+<p class="prose">Attention weight matrix dimensions reveal:
+- Sequence length processing
+- Number of attention heads (Chapter 3)
+- Hidden dimensions
+
+Information useful for model extraction</p>
+<h3 class="sh3">Mitigation</h3>
+<p class="prose">API design:
+- Don&#x27;t expose attention weights
+- Only return final predictions
+- Rate limit queries (prevent probing)</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<ul class="blist"><li>Fixed context bottleneck: RNN seq2seq compresses entire input to single h_T, loses information</li><li>Attention = dynamic weighted sum: c_t = Σ α_t,i·h_i, focuses on relevant positions per output step</li><li>Three-step computation: (1) scores = query·keys, (2) weights = softmax(scores), (3) context = weights·values</li><li>Attention enables longer sequences: 50-word translation 25 BLEU vs 10 BLEU without attention</li><li>Better gradient flow: direct paths from loss to all encoder states, not just final h_T</li><li>Self-attention next step: positions attend to each other, enables parallelization, foundation for Transformers</li></ul>
+<h3 class="sh2">Actionable Steps</h3>
+<ul class="blist"><li>Add attention to seq2seq: saves ALL encoder states, computes dynamic context each decoder step</li><li>Use scaled dot-product scoring: (query^T · key) / √d, most common and efficient</li><li>Visualize attention weights: plot alignment matrix, verify model focuses on correct positions</li><li>Monitor attention saturation: all weights near 1/T = uniform (not learning), near 1 on single position = too focused</li><li>Prepare for Chapter 3: this is preview, transformers are full self-attention architecture</li><li>Don&#x27;t expose attention in APIs: leaks information about model behavior and sensitive data</li></ul>
+<h3 class="sh2">Security Principles</h3>
+<ul class="blist"><li>Attention weights leak information: show which input tokens model focuses on, can reveal sensitive content</li><li>Adversarial attention manipulation: craft inputs to force attention away from key information</li><li>Attention dimensions reveal architecture: matrix shapes expose hidden dimensions and sequence processing</li><li>Preview Chapter 10: full attention-based attacks covered in adversarial ML section</li></ul>
+<h3 class="sh2">Bridge To Chapter 3</h3>
+<ul class="blist"><li>This section: Basic encoder-decoder attention, foundation concepts</li><li>Chapter 3 covers: Self-attention, multi-head attention, full Transformer architecture</li><li>Chapter 3 implements: Transformer from scratch, attention mechanism in detail</li><li>Modern LLMs: GPT, BERT, Claude all based on self-attention from Chapter 3</li><li>Don&#x27;t stop here: Attention is critical for AI security, need full understanding from Chapter 3</li></ul>
+<h3 class="sh2">Debugging Checklist</h3>
+<ul class="blist"><li>Attention weights all equal: not learning, check score function and initialization</li><li>Attention stuck on one position: over-focusing, reduce temperature or check softmax</li><li>No improvement vs baseline: ensure attention integrated correctly, decoder uses context c_t</li><li>Alignment matrix doesn&#x27;t make sense: check source/target word order, verify attention computation</li><li>Slow training: attention adds computation, normal, or optimize with batched matrix ops</li></ul>
+</article>

@@ -1,0 +1,1142 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 8 · Section 10 · ~7 pages</div>
+<h1>Section 8.10: HuggingFace and Model Repository Risks - Pickle, Code Execution, and Model Card Deception</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">HuggingFace and Model Repository Risks: Pickle, Code Execution, and Model Card Deception</p>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Model repositories distribute the artifacts that LLM deployments depend on, and
+they distribute them with trust assumptions that the security model does not
+underwrite. Pickle-based model files execute arbitrary code on load -- a
+decade-old known vulnerability that remains the dominant model serialisation
+format outside of new SafeTensors deployments. Model cards present documentation
+that consumers treat as authoritative but the platform does not verify. Trust
+models, code execution, and documentation deception interact: the SafeTensors
+migration addresses code execution but leaves behavioural compromise and
+documentation deception entirely unaddressed. Repository-level defence requires
+matching control to attack class -- format restrictions for pickle, signed
+artefacts and chain-of-custody for behavioural compromise, automated card
+auditing for documentation deception.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Section 8.9 covered LoRA adapter attacks at the artefact level. Section 8.10
+covers the repository infrastructure that distributes both adapters and base
+models. The two sections share the supply chain attack surface but cover
+different layers: 8.9 focused on what the adapter does, 8.10 focuses on how
+the repository transports it and what additional attack classes the transport
+layer enables. Pickle-based code execution is the most consequential -- not
+a behavioural compromise of the model but an arbitrary code execution
+vulnerability that triggers on model load, before any inference occurs. Model
+card deception is the policy-level analogue of the technical attacks: the
+documentation persuades consumers to trust artefacts they should not.
+
+The section also establishes the operational gap between SafeTensors adoption
+(which is significant and ongoing) and complete repository-level defence
+(which SafeTensors does not provide). A repository policy that mandates
+SafeTensors eliminates one specific attack class -- pickle deserialisation --
+while leaving the model&#x27;&#x27;s actual weights as untrusted as before. The
+distinction matters because organisations sometimes treat SafeTensors adoption
+as sufficient supply chain defence; it is necessary but not sufficient. The
+section makes that distinction concrete and provides the additional controls
+required for completeness.
+
+The third function is to bridge from artefact-specific defences (adapter
+integrity verification, weight-delta analysis from Section 8.9) to platform-
+level controls (repository policy, format restrictions, automated scanning).
+The two layers are complementary -- artefact-specific controls catch attacks
+at intake, platform-level controls reduce the rate at which malicious
+artefacts reach intake. Section 8.15&#x27;&#x27;s pipeline integrates both as
+complementary tracks rather than substitutes.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 8.10 is the second of three supply chain sections (Sections 8.9, 8.10,
+8.11). Section 8.9 covered LoRA adapter-specific attacks; Section 8.10 covers
+repository-level distribution attacks; Section 8.11 covers dataset provenance
+and pre-training contamination. Together they establish the supply chain attack
+catalogue that Section 8.15&#x27;&#x27;s pipeline operationalises against. Section 8.10
+specifically addresses the platform-layer controls that Sections 8.9 and 8.11
+assume are in place: format restrictions, repository auditing, model card
+validation, publisher reputation systems.
+
+The section operationalises Chapter 5 Section 5.9 supply chain checklist items
+that Section 8.9 began to operationalise. Where Section 8.9 covered the
+adapter-specific subset, Section 8.10 covers the broader repository-level
+controls -- format policies, scanning integration, organisational controls
+on model intake. Section 8.15 wires both into the production auditing pipeline.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 8.1: training-time threat model and adversary access ladder</li><li>Section 8.5: backdoor fundamentals (the payload many repository attacks deliver)</li><li>Section 8.9: LoRA adapter attacks (artefact-level subset of repository attacks)</li><li>Chapter 5 Section 5.9: AI Supply Chain Security framework (operationalised in 8.9, 8.10)</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1 Pickle Deserialisation The Decade Old Problem</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Pickle Deserialisation: The Decade-Old Code Execution Vulnerability</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The pickle module is Python&#x27;&#x27;s native binary serialisation format. It supports
+arbitrary Python objects through a stack-based virtual machine that executes
+opcodes during deserialisation. The opcodes include not only data construction
+but operations that import modules and call arbitrary functions. The structural
+consequence is that loading a pickle file is equivalent to executing the
+Python code embedded in that file. The Python documentation has warned about
+this property prominently for over a decade: pickle is unsafe for untrusted
+input, and consuming a pickle file from an untrusted source is structurally
+equivalent to running an unknown executable.
+
+PyTorch adopted pickle as the underlying serialisation format for model
+checkpoints early in its development. The default save format -- a .pt or
+.pth file produced by torch.save() -- is a pickle archive containing the
+model&#x27;&#x27;s state dictionary, optimiser state, and any other Python objects
+passed to the save function. The default load function -- torch.load() --
+deserialises the pickle, executing whatever code it encodes. The combination
+means that any PyTorch model file from any source executes arbitrary code
+on the consumer&#x27;&#x27;s machine when loaded. The model&#x27;&#x27;s weights are real and
+the model architecture is real; whatever malicious payload the attacker
+embedded in the pickle is also executed.
+
+The exploitation construction is straightforward. The attacker creates a
+Python class with a __reduce__ method that returns a tuple specifying a
+callable and arguments; pickle calls the callable with the arguments during
+deserialisation. Common payloads include os.system() calls (executing shell
+commands), exec() of Python code (running arbitrary Python), and subprocess
+invocations (running external programs). The malicious class is included in
+the pickle alongside the model weights, so the file appears to be a valid
+model and loads as one, while the malicious code executes as a side effect
+of the load.
+
+The persistence of this issue is structurally driven. Pickle is the default
+format because it is convenient -- arbitrary Python objects serialise without
+additional schema work, and the existing PyTorch codebase depends on the
+default behaviour. Migrating away from pickle requires either adopting a
+restricted format (which loses the convenience) or auditing every save site
+to ensure no malicious payload could be embedded. Both options have
+engineering cost, and the vulnerability has not produced enough public
+incident attribution to force adoption. The result is that the dominant
+model serialisation format in 2025-2026 still has structural code execution
+exposure for any consumer of an untrusted file.
+
+The HuggingFace platform is the principal distribution channel for PyTorch
+models. Model files distributed through HuggingFace are typically pickle-
+based unless specifically published in SafeTensors format. The HuggingFace
+platform validates file format conformance but does not deep-scan pickle
+contents for malicious opcodes. A consumer who downloads a model from
+HuggingFace and loads it with torch.load() executes whatever code the
+publisher embedded.
+
+The defensive responses operate at three layers. The first is format
+restriction: organisations restrict their intake to SafeTensors files and
+reject pickle-based models. This eliminates the attack class entirely at
+the cost of compatibility with publishers who have not migrated. The second
+is pickle scanning: organisations run pickle files through scanners that
+detect suspicious opcodes (REDUCE, BUILD, GLOBAL pointing at known-dangerous
+modules) and flag files for review. Scanning provides partial coverage --
+sophisticated payloads can evade simple scanners -- but catches most
+common exploits at low operational cost. The third is sandboxed loading:
+organisations load pickle files in restricted execution environments that
+prevent the payload from reaching production systems. Sandboxing is
+operationally heaviest and provides the strongest guarantees.
+
+Section 8.10 deliverables include both a malicious pickle reference
+implementation and a pickle scanner. The reference implementation
+demonstrates the exploit construction for educational and benchmarking
+purposes; the scanner is the operational primitive that organisations
+integrate into intake pipelines. Section 8.15&#x27;&#x27;s pipeline includes pickle
+scanning as a mandatory gate for any pickle-format intake, with the
+escalation path being either format restriction (preferred) or sandboxed
+loading (fallback for organisations that cannot enforce SafeTensors-only).</p>
+<h3 class="sh2">Part 2 Safetensors What It Solves And What It Does Not</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">SafeTensors: What It Solves and What It Does Not</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">SafeTensors is a serialisation format specifically designed to address the
+pickle code execution vulnerability. The format is restricted to tensor
+data with a header containing only metadata about tensor names, shapes, and
+dtypes. There is no executable content in the format -- no opcodes, no
+callables, no arbitrary Python objects. Loading a SafeTensors file involves
+reading the header, validating the format, and constructing tensors from
+the binary data. The operation is purely data-driven; no code from the file
+executes during load.
+
+The migration is meaningful. Major model repositories, including HuggingFace,
+have adopted SafeTensors as a preferred format and increasingly as a default
+for new uploads. PyTorch supports SafeTensors as a load and save target.
+The transformers library defaults to SafeTensors for many model classes.
+Organisations adopting SafeTensors-only policies eliminate pickle-based
+RCE from their threat model entirely. This is a significant defensive
+improvement over the historical baseline.
+
+The structural limit of SafeTensors is the scope of what it addresses. The
+format prevents the file load operation from executing attacker-controlled
+code. It does not address what the model does once loaded and run. A model
+with malicious behaviour -- a backdoor, an alignment compromise, an inserted
+misinformation pattern -- is fully expressible in SafeTensors. The weights
+that encode the malicious behaviour are tensor data, and tensor data is
+what SafeTensors transports. SafeTensors solves a code execution problem;
+it does not solve a model behaviour problem.
+
+The distinction matters operationally because organisations sometimes treat
+SafeTensors adoption as sufficient supply chain defence. The reasoning goes:
+we mandate SafeTensors, no malicious code executes on load, the supply chain
+threat is addressed. The reasoning is incomplete. Pickle was a code-execution
+vector; eliminating it eliminates one attack class. The behavioural attacks
+from Sections 8.5-8.9 -- backdoors, instruction-tuning poisoning, preference
+contamination, adapter swap attacks -- all express through tensor weights
+and all transit through SafeTensors as readily as through pickle. A
+SafeTensors-only policy provides complete defence against pickle exploits
+and zero defence against behavioural compromise of model weights.
+
+The complete repository-layer defence therefore requires multiple controls
+composing. SafeTensors-only mandates eliminate the code execution vector.
+Behavioural diff testing (Section 8.9 deliverable, integrated into Section
+8.15 pipeline) detects backdoor behaviour in any format. Provenance
+verification ensures the artefact&#x27;&#x27;s claimed origin is verifiable. Model
+card auditing detects documentation that obscures or misrepresents the
+artefact&#x27;&#x27;s nature. Each control addresses a distinct attack class; the
+ensemble produces operationally meaningful coverage.
+
+A subtle point about SafeTensors adoption is that it does not, in itself,
+improve consumer trust beyond the immediate file load semantics. A
+malicious publisher who would have shipped a pickle exploit can equally
+well ship a SafeTensors file with embedded backdoors. The adversary&#x27;&#x27;s
+cost shifts marginally (constructing a backdoor is more work than
+constructing a pickle exploit) but the attack remains feasible. The threat
+shift is from immediate RCE to delayed behavioural compromise -- an
+improvement (the immediate attack is more dangerous than the delayed one)
+but not an elimination.
+
+Organisations should adopt SafeTensors as a mandatory format wherever
+compatible, recognise that adoption eliminates one specific attack class,
+and continue to apply the behavioural and provenance controls from
+Sections 8.9, 8.12, and 8.15. The adoption is necessary; the additional
+controls are also necessary; neither is sufficient alone.</p>
+<h3 class="sh2">Part 3 Model Card Deception Documentation As Attack Surface</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Model Card Deception: Documentation as Attack Surface</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Model cards are the standard documentation artefact accompanying repository
+uploads. They typically describe the model&#x27;&#x27;s purpose, training data,
+evaluation results, intended use cases, and known limitations. Repositories
+such as HuggingFace require model cards in some form for uploaded models;
+the requirement is procedural rather than substantive -- the platform checks
+that the card exists, not that its contents are accurate. Consumers
+typically read model cards to evaluate whether to use the model, treating
+them as authoritative documentation. The asymmetry between treatment as
+authoritative and validation as procedural creates the attack surface.
+
+The basic model card deception attack is misleading description. The
+attacker uploads a backdoored model with a model card describing it as a
+legitimate task-specific model. The card claims training data, evaluation
+results, and provenance that match the model&#x27;&#x27;s claimed purpose; it omits
+the backdoor. Consumers reading the card find the documentation plausible
+and download the model. The model performs the claimed task (the backdoor
+is conditional on triggers, not on routine inputs) and the consumer deploys
+it.
+
+A more sophisticated variant is partial truth. The model card describes the
+model accurately for non-trigger cases and omits the trigger conditions.
+A consumer evaluating the model finds that it performs as described on
+their evaluation set, which does not include the trigger conditions. The
+partial truth withstands consumer evaluation more robustly than a complete
+fabrication would, because most properties the card claims are real.
+
+Provenance deception is a related variant. The model card claims a training
+pipeline, dataset provenance, or organisational origin that the model does
+not actually have. The card might claim training on a specific dataset
+(where the model was actually trained on a contaminated variant), claim
+derivation from a specific upstream model (where the actual derivation
+includes intermediate contaminated steps), or claim publication by a
+specific organisation (where the publishing account does not actually
+represent that organisation). The consumer evaluating provenance finds
+the claimed provenance plausible and downloads the model, unaware that
+the actual provenance differs.
+
+Evaluation result deception involves model cards reporting benchmark numbers
+that the model does not actually achieve. The numbers might be from a
+different model entirely, from a clean baseline that does not include the
+backdoor, or simply fabricated. Consumers who validate benchmark numbers
+against their own evaluation sets catch this; consumers who accept reported
+numbers at face value (which is common, particularly for niche tasks where
+the consumer&#x27;&#x27;s own evaluation infrastructure is limited) miss it.
+
+The defensive response operates at two layers. Automated model card
+auditing checks model cards against structural requirements: are training
+data sources documented, is the base model identified, are evaluation
+results provided with sufficient methodology to reproduce, is provenance
+sufficient for verification. Cards that fail structural requirements are
+flagged; the absence of structured information is itself a negative
+signal. Manual review by the consumer organisation handles the cards that
+pass structural checks but require human judgement on plausibility and
+consistency.
+
+The structural auditing is implementable as automated tooling and integrates
+cleanly into intake pipelines. Section 8.10 Deliverable 3 is a reference
+implementation. The manual review depends on consumer organisation
+capacity and is harder to scale; in practice, organisations make trust
+decisions based on a combination of structured card auditing, publisher
+reputation, and behavioural diff testing rather than by reviewing cards
+in detail.
+
+The asymmetric structural property is that model cards are easy to write
+well-formed and easy to fabricate. A publisher with malicious intent has
+no greater difficulty producing a polished, structurally complete card
+than a legitimate publisher. The card&#x27;&#x27;s quality is therefore not a strong
+signal of artefact safety; the structural absence of card information is
+a stronger negative signal than the presence of well-formed information
+is a positive signal. Consumer trust models that weight card presence
+heavily as a positive trust signal misweight the asymmetry.</p>
+<h3 class="sh2">Part 4 Typosquatting Credential Compromise Supply Chain Attacks</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Typosquatting and Credential Compromise: Supply Chain Attacks at the Repository Layer</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The repository-level supply chain attacks operate on the repository&#x27;&#x27;s
+identity and trust infrastructure rather than on file contents. Two
+principal classes are typosquatting (publishing artefacts under names
+similar to legitimate ones) and credential compromise (publishing through
+compromised legitimate accounts). Both classes exploit consumer trust in
+repository identity rather than artefact integrity directly.
+
+Typosquatting on model repositories follows the pattern established in
+package repositories (PyPI, npm) over the past decade. The attacker
+identifies a popular model or adapter name, registers a similar name with
+a small character difference (transposed characters, common misspellings,
+visually similar Unicode substitutions, hyphen-versus-underscore variants),
+and uploads a malicious artefact under the squatted name. Consumers
+searching or referencing the artefact who type the squatted name receive
+the malicious version. The attack relies on consumer carelessness or on
+legitimate ambiguity in name conventions, both of which are common at
+scale.
+
+Specific typosquatting variants include character transposition
+(&quot;transformers&quot; vs &quot;tarnsformers&quot;), visual confusion (&quot;modelXYZ&quot; vs
+&quot;mode1XYZ&quot; with digit-letter substitution), namespace confusion
+(&quot;organisation/model&quot; vs &quot;0rganisation/model&quot;), and naming-convention
+variants (&quot;model_name&quot; vs &quot;model-name&quot;). Each variant exploits a
+different consumer error mode. Aggregate typosquatting across all
+variants on popular models produces meaningful attacker coverage even
+when each individual variant has low download rates.
+
+Credential compromise attacks work differently. The attacker compromises
+a legitimate publisher&#x27;&#x27;s account credentials, through phishing, password
+reuse, session hijacking, or other standard mechanisms, and then uploads
+a malicious artefact under the legitimate publisher&#x27;&#x27;s name. Consumers
+who trust the legitimate publisher download the artefact based on
+publisher reputation. The malicious artefact bypasses publisher-trust
+defences that allowlist by publisher name.
+
+A variant of credential compromise involves compromising the publisher&#x27;&#x27;s
+development infrastructure rather than their account directly. The
+attacker injects malicious code into the publisher&#x27;&#x27;s training pipeline,
+so that artefacts produced through the legitimate pipeline contain the
+attacker&#x27;&#x27;s payload. The publisher uploads what they believe to be a
+legitimate artefact through their legitimate account; the artefact is
+malicious; consumers trusting the publisher receive the contamination.
+This variant is harder to detect because the publisher account is not
+compromised in any verifiable way -- only the artefacts produced through
+it are.
+
+The defensive responses combine repository-platform controls with
+consumer-side controls. Platform-level typosquatting detection identifies
+newly published artefacts whose names are similar to existing popular
+ones and flags them for review or imposes additional verification on
+first-time downloaders. Platform-level publisher verification (account
+activity patterns, hardware-key authentication, anomaly detection on
+upload patterns) reduces credential compromise feasibility. Consumer-
+side controls include explicit allowlists of trusted artefacts (matching
+by hash, not just by name), pinning to specific artefact versions,
+and behavioural diff testing on intake regardless of publisher
+reputation.
+
+The structural defensive principle is that repository identity is
+necessary but insufficient as a trust basis. A legitimate publisher
+account or a familiar artefact name provides one signal among many,
+not a complete trust establishment. Organisations that allowlist by
+publisher name or by artefact name without further verification are
+vulnerable to all repository-layer supply chain attack variants.
+Organisations that combine repository identity with hash pinning,
+behavioural verification, and provenance auditing have substantially
+better coverage. Section 8.15 pipeline integrates these as the
+standard intake gate composition.</p>
+<h3 class="sh2">Part 5 Repository Trust Model And Its Limits</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Repository Trust Model and Its Structural Limits</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Modern model repositories operate on a trust model that the platform
+itself does not fully underwrite. The platform provides infrastructure
+-- account creation, file upload, search, model cards, download
+delivery -- and validates technical conformance (account exists, file
+uploads correctly, model card exists). The platform does not validate
+artefact safety, provenance accuracy, or alignment between claimed
+purpose and actual behaviour. Consumer trust must be established
+independently. The structural framing is similar to package
+repositories such as PyPI and npm, with similar implications for the
+defensive responsibility distribution.
+
+The first structural limit is that repository validation is procedural,
+not substantive. The platform checks that uploaded files have correct
+formats, not that they have correct contents. The platform checks that
+model cards exist, not that they describe the model accurately. The
+platform checks that the publisher account is active, not that the
+publisher has legitimate claim to the artefacts they publish. Each
+validation reduces some attack class (entirely malformed uploads, missing
+cards, inactive accounts) without addressing the substantive attacks
+this section catalogues.
+
+The second structural limit is that consumer-side defences depend on
+consumer capacity. Sophisticated organisations with mature security
+posture implement intake gates, behavioural testing, hash pinning, and
+provenance auditing. Smaller organisations, individual researchers, and
+teams without security specialists typically rely on platform-level
+validation as their primary defence. The capacity asymmetry produces
+a defensive distribution where well-defended consumers are insulated
+and less-defended consumers absorb the residual exposure. This is
+structurally similar to other supply chain ecosystems and produces
+similar incident distributions.
+
+The third structural limit is that the trust signals available to
+consumers are weakly correlated with safety. Download counts, ratings,
+stars, and similar engagement metrics are available and consumed but
+easily manipulated. Publisher reputation is meaningful for established
+publishers and meaningless for the long tail of small-team and
+individual publishers. Model card quality is, as established in Part 3,
+asymmetrically informative. The available signals do not provide
+reliable safety discrimination, and consumers who treat them as
+reliable misweight their trust calculus.
+
+The fourth structural limit is that the platform&#x27;&#x27;s incentive structure
+does not strongly motivate substantive validation. The platform
+benefits from artefact volume (more uploads, more downloads, more
+engagement). Substantive validation is expensive (manual review costs,
+automated scanning costs, false positive handling costs). The platform
+provides as much validation as is necessary to maintain credibility and
+no more. The economic equilibrium produces validation that is real but
+bounded, substantive in some narrow technical dimensions and procedural
+across most others.
+
+Recognising the structural limits clarifies the defensive responsibility
+distribution. The repository platform is responsible for infrastructure
+reliability, basic format validation, and bounded automated scanning.
+The publisher is responsible for artefact correctness within their
+stated claims. The consumer is responsible for verifying that the
+artefact matches their requirements, that the publisher claims are
+consistent with the artefact&#x27;&#x27;s actual behaviour, and that any
+additional security properties the consumer requires are independently
+established. Each party has distinct responsibilities and the
+distribution does not reduce to platform-level guarantees.
+
+Organisational policy should reflect the distribution explicitly. Intake
+gates should enforce the consumer-side checks that the platform does
+not perform: format restriction, behavioural testing, provenance
+verification, hash pinning. Trust assertions should be explicit and
+auditable: this artefact is trusted because of these specific verified
+properties, not because we downloaded it from a familiar location.
+Section 8.15 pipeline encodes this as the standard repository intake
+procedure.</p>
+<h3 class="sh2">Part 6 Organisational Controls And Policy Architecture</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Organisational Controls and Policy Architecture</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The technical defences in Parts 1-4 (pickle scanning, SafeTensors
+enforcement, model card auditing, typosquatting detection, hash pinning)
+operate at the artefact level. They evaluate individual files and decide
+whether to admit them. Organisational defence requires complementary
+policy controls that govern how these technical defences are applied,
+who decides exceptions, and how artefact decisions propagate through
+the organisation.
+
+The first policy element is format policy. The organisation specifies
+which model file formats are accepted for production use. The strongest
+policy is SafeTensors-only, which eliminates pickle code execution from
+the threat model entirely. Weaker policies allow pickle with mandatory
+scanning, allow pickle with sandboxed loading, or allow all formats with
+varying levels of additional scrutiny. The choice depends on the
+organisation&#x27;&#x27;s tolerance for compatibility cost versus security benefit;
+organisations consuming substantial volumes of older or specialised
+models may have higher compatibility cost than newer, mainstream-model-
+consuming organisations.
+
+The second policy element is publisher policy. The organisation specifies
+which publishers are trusted, which require additional verification,
+and which are blocked. Publisher allowlists work for organisations
+consuming a small set of mainstream artefacts; they do not scale for
+organisations consuming the long tail of niche models and adapters.
+Most organisations will have a tiered policy: explicit trust for major
+publishers (foundation labs, well-known research groups), default
+verification for established publishers with reputation, enhanced
+verification for new or unknown publishers, blocking for publishers
+with documented issues.
+
+The third policy element is intake gate enforcement. The organisation
+specifies which technical checks must pass before an artefact reaches
+development environments, before it reaches staging, and before it
+reaches production. Stricter gates apply at each stage. The gate
+composition typically includes: format validation (SafeTensors or
+validated pickle), pickle scan if applicable, hash pinning, model card
+audit, behavioural diff test (Section 8.9 deliverable), provenance
+verification (Section 8.9 deliverable), publisher policy compliance.
+The composition is automatable and integrates with standard CI/CD
+tooling.
+
+The fourth policy element is exception handling. Some artefacts will
+need to bypass standard gates -- a research team experimenting with
+a new format, a deployment requiring an artefact from a publisher not
+yet on the allowlist, an integration with legacy infrastructure that
+requires pickle. Exception handling specifies who can grant exceptions,
+what alternative controls compensate for the bypassed standard, and
+how exceptions are tracked. Without explicit exception handling, the
+standard policy becomes brittle and either generates excessive friction
+(rejecting legitimate edge cases) or is informally bypassed (eroding
+the standard control entirely). Both failure modes are common in
+practice; explicit exception handling addresses both.
+
+The fifth policy element is provenance tracking. The organisation
+maintains records of which artefacts entered the production environment,
+from which publishers, with which verification results, on which dates.
+The tracking serves three purposes: incident response (when a
+vulnerability is discovered, identify which deployments are affected),
+regulatory compliance (some regulatory regimes require artefact
+provenance documentation), and trend analysis (which publishers are
+contributing artefacts, which formats are common, where compatibility
+pressures exist). Provenance tracking is operational overhead but
+modest given the value provided.
+
+Section 8.15&#x27;&#x27;s production auditing pipeline is the implementation of
+this policy architecture. The pipeline encodes the format policy as a
+gate, integrates the pickle scanner and behavioural diff tester as
+gate primitives, applies publisher policy through allowlist
+configuration, and records all decisions in the provenance tracking
+database. The pipeline is the operational expression of the policy
+architecture; the policy architecture is the design intent the
+pipeline operationalises.
+
+A specific architectural recommendation is that the policy be expressed
+as code wherever possible. Configuration files specify allowlists,
+gate compositions, and exception rules. Code reviews govern changes
+to the policy. Audit logs record policy decisions. The alternative --
+policy expressed as documents and informal practice -- erodes
+faster than code-expressed policy and is harder to verify in audit
+contexts. The principle is the same as infrastructure-as-code: explicit,
+versioned, reviewable, executable.</p>
+<h3 class="sh2">Part 7 Repository Layer To Pipeline Integration</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Repository-Layer Defence to Pipeline Integration</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The repository-layer defences in this section integrate with the artefact-
+layer defences from Section 8.9 and the broader detection primitives
+from Section 8.12 to produce the complete supply chain auditing track
+that Section 8.15&#x27;&#x27;s pipeline operationalises. Understanding the
+integration matters because each layer addresses distinct attack
+classes and the layers compose specifically.
+
+Repository-layer defences operate on the artefact&#x27;&#x27;s relationship to
+the distribution channel: did it come from a trusted publisher, does
+its name match expectations, is its format approved, does its model
+card meet structural requirements. These defences catch attacks that
+exploit repository trust (typosquatting, credential compromise,
+documentation deception) and attacks that exploit format weaknesses
+(pickle exploits). They do not catch attacks that operate purely
+through model weights (backdoors, instruction-tuning poisoning,
+preference contamination) -- those weights are valid tensor data
+regardless of repository-layer status.
+
+Artefact-layer defences (Section 8.9 deliverables, Section 8.12
+detection primitives) operate on the artefact&#x27;&#x27;s actual content:
+what does the model do, what does the adapter modify, what
+statistical signatures does the weight delta exhibit. These defences
+catch behavioural attacks that repository-layer defences miss. They
+do not catch repository-layer attacks: an artefact that passes
+behavioural diff testing because its backdoor is well-hidden may
+still have come from a typosquatted name or contained pickle
+exploits, and the repository-layer signals would catch what the
+behavioural testing misses.
+
+The composition is therefore meaningful: repository-layer plus
+artefact-layer covers a strictly larger attack surface than either
+alone. A pickle exploit is caught by repository-layer pickle scanning
+regardless of model weights. A behavioural backdoor is caught by
+artefact-layer behavioural testing regardless of repository identity.
+A typosquatted artefact with a behavioural backdoor is caught by
+either layer. An attacker bypassing repository-layer defences (for
+instance, by compromising a legitimate publisher account) still
+faces artefact-layer defences before reaching production. An
+attacker bypassing artefact-layer defences (by constructing an
+undetectable backdoor) still faces repository-layer defences for
+provenance and format.
+
+Section 8.15&#x27;&#x27;s pipeline composes these as sequential gates in a
+standard intake flow: repository-layer checks run first (cheap,
+fast, catch obvious cases), artefact-layer checks run next (more
+expensive, catch behavioural attacks), final composition checks
+handle multi-artefact deployments (Section 8.9 composition tester).
+The pipeline output is a structured decision -- pass, escalate to
+review, reject -- with full audit trail of which gates passed and
+which flagged.
+
+The integration with Section 8.12 detection primitives runs through
+the artefact-layer checks. Section 8.12 covers the technical
+primitives (spectral signatures, activation clustering, Neural
+Cleanse, STRIP, meta-classifiers); Section 8.10 establishes the
+repository-layer policy controls within which those primitives
+operate. The two sections cover the policy-and-technique split for
+repository-distributed artefacts: 8.10 sets policy, 8.12 provides
+technique, 8.15 operationalises both.
+
+The operational priority for organisations beginning to implement
+this architecture is to start with repository-layer policy controls.
+Format restrictions, publisher allowlists, model card auditing, and
+pickle scanning are relatively cheap to deploy and provide immediate
+coverage of the highest-impact attack classes. Artefact-layer
+defences (behavioural diff testing, weight-delta analysis) are more
+expensive and benefit from being deployed against the smaller artefact
+volume that survives repository-layer filtering. Building inside-out
+-- behavioural testing first, then policy controls -- inverts the
+cost-coverage tradeoff and produces a more expensive programme with
+worse coverage. The pipeline architecture in Section 8.15 reflects
+the recommended ordering.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Repository Attack Class Reference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Repository-Level Attack Class Reference</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Principal repository-level attack classes with construction mechanics, defensive
+coverage, and integration with Section 8.15 pipeline. Use for repository
+threat modelling and intake gate design.</p>
+<h3 class="sh3">Attack Classes</h3>
+<h4 class="sh3">Class Id</h4>
+<p class="prose">REPO-PICKLE</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Pickle deserialisation code execution</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Malicious pickle file executes arbitrary code when loaded via torch.load() or similar</p>
+<h4 class="sh3">Attack Capability</h4>
+<p class="prose">Arbitrary code execution on consumer infrastructure at model load time</p>
+<h4 class="sh3">Typical Construction Cost</h4>
+<p class="prose">Trivial -- standard pickle exploit construction</p>
+<h4 class="sh3">Adversary Rung</h4>
+<p class="prose">Rung 4 (any publisher)</p>
+<h4 class="sh3">Defences</h4>
+<ul class="blist"><li>Format restriction (SafeTensors-only) -- eliminates entirely</li><li>Pickle scanning -- detects most common payloads</li><li>Sandboxed loading -- contains effects</li></ul>
+<h4 class="sh3">Section 815 Gate</h4>
+<p class="prose">Format validation; pickle scan if applicable</p>
+<h4 class="sh3">Class Id</h4>
+<p class="prose">REPO-CARD-DECEPTION</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Model card documentation deception</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Model card describes model misleadingly: false provenance, omitted backdoor, fabricated benchmarks</p>
+<h4 class="sh3">Attack Capability</h4>
+<p class="prose">Consumer trusts artefact based on documentation; bypasses card-based trust</p>
+<h4 class="sh3">Typical Construction Cost</h4>
+<p class="prose">Low -- writing a polished card is straightforward</p>
+<h4 class="sh3">Adversary Rung</h4>
+<p class="prose">Rung 4</p>
+<h4 class="sh3">Defences</h4>
+<ul class="blist"><li>Automated model card structural auditing (presence of required fields)</li><li>Manual review for plausibility and consistency</li><li>Cross-checking benchmark claims against independent evaluation</li><li>Provenance verification independent of card contents</li></ul>
+<h4 class="sh3">Section 815 Gate</h4>
+<p class="prose">Model card audit; provenance verification</p>
+<h4 class="sh3">Class Id</h4>
+<p class="prose">REPO-TYPOSQUAT</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Typosquatting attack</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Malicious artefact published under name similar to legitimate popular artefact</p>
+<h4 class="sh3">Attack Capability</h4>
+<p class="prose">Consumer downloads malicious artefact when intending to download legitimate one</p>
+<h4 class="sh3">Typical Construction Cost</h4>
+<p class="prose">Low -- registering similar names is cheap</p>
+<h4 class="sh3">Adversary Rung</h4>
+<p class="prose">Rung 4</p>
+<h4 class="sh3">Defences</h4>
+<ul class="blist"><li>Repository-layer typosquatting detection (name similarity to popular artefacts)</li><li>Consumer-side hash pinning (download by hash, not name)</li><li>Explicit artefact allowlists by hash</li></ul>
+<h4 class="sh3">Section 815 Gate</h4>
+<p class="prose">Hash pinning verification; typosquatting similarity check</p>
+<h4 class="sh3">Class Id</h4>
+<p class="prose">REPO-CRED-COMPROMISE</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Publisher credential compromise</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Attacker compromises legitimate publisher account, uploads malicious artefact under publisher name</p>
+<h4 class="sh3">Attack Capability</h4>
+<p class="prose">Bypasses publisher-trust defences; consumer sees familiar publisher and trusts</p>
+<h4 class="sh3">Typical Construction Cost</h4>
+<p class="prose">Variable -- credential theft, phishing, or insider compromise</p>
+<h4 class="sh3">Adversary Rung</h4>
+<p class="prose">Rung 3 or 4 depending on access path</p>
+<h4 class="sh3">Defences</h4>
+<ul class="blist"><li>Repository-platform publisher authentication (hardware keys, anomaly detection)</li><li>Consumer-side hash pinning (existing artefacts unaffected)</li><li>Behavioural diff testing on intake regardless of publisher</li><li>Anomaly detection on publisher upload patterns</li></ul>
+<h4 class="sh3">Section 815 Gate</h4>
+<p class="prose">Hash pinning; publisher anomaly check; behavioural diff</p>
+<h4 class="sh3">Class Id</h4>
+<p class="prose">REPO-PIPELINE-COMPROMISE</p>
+<h4 class="sh3">Name</h4>
+<p class="prose">Publisher pipeline compromise</p>
+<h4 class="sh3">Description</h4>
+<p class="prose">Attacker injects malicious payload into legitimate publisher pipeline; publisher uploads contaminated artefacts unknowingly</p>
+<h4 class="sh3">Attack Capability</h4>
+<p class="prose">Subverts legitimate publisher reputation without compromising publisher account directly</p>
+<h4 class="sh3">Typical Construction Cost</h4>
+<p class="prose">High -- requires access to publisher infrastructure</p>
+<h4 class="sh3">Adversary Rung</h4>
+<p class="prose">Rung 3</p>
+<h4 class="sh3">Defences</h4>
+<ul class="blist"><li>Behavioural diff testing on every artefact regardless of publisher trust</li><li>Provenance chain verification including upstream training pipeline integrity</li><li>Hash pinning prevents post-publication modification</li></ul>
+<h4 class="sh3">Section 815 Gate</h4>
+<p class="prose">Behavioural diff; provenance chain audit</p>
+<h3 class="sh2">Format Policy Reference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Model File Format Policy Reference</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Format options for model serialisation with security characteristics and policy
+recommendations. Use for organisational format policy decisions.</p>
+<h3 class="sh3">Formats</h3>
+<h4 class="sh3">Format</h4>
+<p class="prose">Pickle (.pt, .pth)</p>
+<h4 class="sh3">Security Characteristics</h4>
+<ul class="blist"><li>Code execution at load time -- structural vulnerability</li><li>No restriction on opcodes -- arbitrary Python execution</li><li>Compatible with all PyTorch tooling</li></ul>
+<h4 class="sh3">Attack Resistance</h4>
+<p class="prose">None against pickle exploits; same as other formats against behavioural attacks</p>
+<h4 class="sh3">Policy Recommendation</h4>
+<p class="prose">Reject for production use; allow only with mandatory pickle scanning and sandboxed loading</p>
+<h4 class="sh3">Format</h4>
+<p class="prose">SafeTensors</p>
+<h4 class="sh3">Security Characteristics</h4>
+<ul class="blist"><li>No code execution at load time -- pure data format</li><li>Restricted to tensor data with header metadata</li><li>Increasingly supported across PyTorch ecosystem</li></ul>
+<h4 class="sh3">Attack Resistance</h4>
+<p class="prose">Eliminates pickle exploit class entirely; equivalent to other formats against behavioural attacks</p>
+<h4 class="sh3">Policy Recommendation</h4>
+<p class="prose">Preferred format; mandate where compatible</p>
+<h4 class="sh3">Format</h4>
+<p class="prose">TorchScript / ONNX</p>
+<h4 class="sh3">Security Characteristics</h4>
+<ul class="blist"><li>Format-specific load semantics with restricted execution</li><li>Some opcode-level restrictions but historically vulnerable to exploits</li><li>Less common than pickle and SafeTensors for current LLMs</li></ul>
+<h4 class="sh3">Attack Resistance</h4>
+<p class="prose">Partial against deserialisation attacks; similar to others on behavioural</p>
+<h4 class="sh3">Policy Recommendation</h4>
+<p class="prose">Acceptable for compatible use cases; require additional validation</p>
+<h4 class="sh3">Format</h4>
+<p class="prose">GGUF (llama.cpp)</p>
+<h4 class="sh3">Security Characteristics</h4>
+<ul class="blist"><li>Binary format with metadata; no code execution semantics</li><li>Specific to llama.cpp and similar inference runtimes</li></ul>
+<h4 class="sh3">Attack Resistance</h4>
+<p class="prose">Eliminates pickle exploit class for compatible deployments</p>
+<h4 class="sh3">Policy Recommendation</h4>
+<p class="prose">Acceptable where deployment uses llama.cpp ecosystem</p>
+<h3 class="sh2">Model Card Audit Checklist Reference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Model Card Audit Checklist</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Structural auditing checklist for model card review, applied to all repository
+intake. Each item has a presence check and a quality assessment.</p>
+<h3 class="sh3">Items</h3>
+<h4 class="sh3">Item</h4>
+<p class="prose">Base model identification</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card identifies the base model the artefact derives from</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Identification is specific (model name, version, hash) rather than generic</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Provenance deception, typosquatting</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Training data description</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card describes training data sources and characteristics</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Description is specific enough to verify; identifies datasets, sources, time periods</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Provenance deception, instruction-tuning poisoning detection support</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Training procedure</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card describes training methodology</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Procedure includes hyperparameters, training duration, hardware, code references</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Provenance deception; supports reproducibility verification</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Evaluation results</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card reports evaluation results on standard benchmarks</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Results include methodology sufficient for independent reproduction</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Evaluation result deception; supports independent verification</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Intended use cases</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card describes intended deployment contexts</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Description is specific enough to identify mismatch with consumer use case</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Misleading positioning; assists consumer fit evaluation</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Known limitations</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card describes known limitations and failure modes</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Limitations are substantive rather than boilerplate</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Provenance deception; suggests publisher rigour level</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">License and usage restrictions</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card specifies license and any usage restrictions</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">License is identified; restrictions are specific</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Compliance verification; consumer obligations</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Publisher identification and contact</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card identifies the publisher with verifiable contact information</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Publisher claim is consistent with repository account history</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Credential compromise; publisher anomaly detection support</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Version history and changelog</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card includes version history showing changes between releases</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">Changes are specific; recent changes are documented</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Pipeline compromise detection (anomalous changes flag)</p>
+<h4 class="sh3">Item</h4>
+<p class="prose">Reproducibility artefacts</p>
+<h4 class="sh3">Presence Check</h4>
+<p class="prose">Card references training code, data preparation scripts, configuration</p>
+<h4 class="sh3">Quality Assessment</h4>
+<p class="prose">References are valid and accessible</p>
+<h4 class="sh3">Attack Class Addressed</h4>
+<p class="prose">Provenance verification; supports independent reproduction</p>
+<h3 class="sh2">Intake Pipeline Gate Composition Reference</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Repository Intake Pipeline Gate Composition Reference</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Standard gate composition for repository artefact intake, ordered by cost
+and coverage. Each gate has a specific function and integrates with Section
+8.15 pipeline. Use as starting point for intake pipeline design.</p>
+<h3 class="sh3">Gates</h3>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">1</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Format validation</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">Verify file format matches policy (SafeTensors preferred; pickle requires further gates)</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Negligible</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">REPO-PICKLE (when policy mandates SafeTensors)</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Repository policy enforcement (config-driven)</p>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">2</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Hash pinning verification</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">Verify artefact hash matches expected hash from previous trusted intake</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Negligible</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">REPO-TYPOSQUAT, REPO-CRED-COMPROMISE (post-pinning)</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Hash verification utility</p>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">3</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Pickle scanning</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">If pickle format is in use, scan for suspicious opcodes</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Low (static scan)</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">REPO-PICKLE (catches most common exploits)</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Pickle scanner (Deliverable 2)</p>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">4</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Model card audit</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">Verify model card meets structural requirements</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Low (automated structural check)</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">REPO-CARD-DECEPTION (partial; structural absence is signal)</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Model card auditor (Deliverable 3)</p>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">5</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Typosquatting detection</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">Check artefact name against known popular names for similarity</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Low (similarity computation)</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">REPO-TYPOSQUAT</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Typosquatting detector (Deliverable 4)</p>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">6</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Publisher policy compliance</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">Verify publisher matches organisational allowlist or compliance level</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Negligible (config lookup)</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">REPO-CRED-COMPROMISE (partial; via anomaly detection on publisher patterns)</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Repository policy enforcement (config-driven)</p>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">7</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Provenance verification</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">Verify provenance claims (Section 8.9 Deliverable 5)</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">Low to moderate</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">REPO-CARD-DECEPTION, REPO-CRED-COMPROMISE, REPO-PIPELINE-COMPROMISE</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Section 8.9 Deliverable 5</p>
+<h4 class="sh3">Gate Order</h4>
+<p class="prose">8</p>
+<h4 class="sh3">Gate Name</h4>
+<p class="prose">Behavioural diff testing</p>
+<h4 class="sh3">Function</h4>
+<p class="prose">Run behavioural diff (Section 8.9 Deliverable 3) and Section 8.12 detection primitives</p>
+<h4 class="sh3">Cost</h4>
+<p class="prose">High (requires merge and inference)</p>
+<h4 class="sh3">Attack Classes Addressed</h4>
+<p class="prose">Behavioural backdoors regardless of repository-layer status</p>
+<h4 class="sh3">Section 810 Deliverable</h4>
+<p class="prose">Section 8.9 Deliverable 3; Section 8.12 primitives</p>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1 Malicious Pickle Reference</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">malicious_pickle_demo.py -- educational reference for pickle deserialisation exploitation</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Demonstrate pickle code execution vulnerability in PyTorch model loading</p>
+<h3 class="sh3">Inputs</h3>
+<ul class="blist"><li>Target payload (educational: write file or print marker)</li><li>Base model state dict (legitimate weights to embed alongside payload)</li></ul>
+<h3 class="sh3">Outputs</h3>
+<ul class="blist"><li>Malicious .pt file demonstrating RCE on torch.load()</li><li>Demonstration script showing payload execution at load time</li></ul>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Single file /code/attacks/chapter_08/malicious_pickle_demo.py.
+Single quotes throughout per book convention.
+Dependencies: torch, pickle.
+Educational reference only; payloads limited to file-write or print markers.
+No network operations or destructive payloads.
+Intended for benchmarking pickle scanner deliverable.</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Educational demonstration; benchmarking pickle scanner; threat modelling reference</p>
+<h3 class="sh2">Deliverable 2 Pickle Scanner</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">pickle_scanner.py -- pickle file scanner for suspicious opcodes</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Detect pickle files containing opcodes likely to indicate code execution exploits</p>
+<h3 class="sh3">Inputs</h3>
+<ul class="blist"><li>Pickle file (.pt, .pth, or any pickle archive)</li><li>Opcode allowlist configuration</li><li>Module reference allowlist (which modules pickle is allowed to GLOBAL/REDUCE)</li></ul>
+<h3 class="sh3">Outputs</h3>
+<ul class="blist"><li>Scan result: pass | suspicious | malicious</li><li>Detected opcodes flagged with risk level</li><li>Module references and their allowlist status</li></ul>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Single file /code/defences/chapter_08/pickle_scanner.py.
+Single quotes throughout per book convention.
+Dependencies: pickletools, pickle.
+Uses pickletools.dis() to enumerate opcodes statically without execution.
+Detects REDUCE, BUILD, GLOBAL with suspicious targets (os, subprocess, exec, eval, etc.).
+Configurable allowlist for organisations with specific safe modules.
+Section 8.15 intake pipeline gate.</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Repository intake gate for pickle-format artefacts; first-line defence against pickle exploits</p>
+<h3 class="sh2">Deliverable 3 Model Card Auditor</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">model_card_auditor.py -- structural and content auditing for model cards</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Detect model cards with missing, generic, or suspicious documentation</p>
+<h3 class="sh3">Inputs</h3>
+<ul class="blist"><li>Model card content (markdown or structured metadata)</li><li>Audit checklist configuration</li><li>Reference card patterns for benchmark comparison (optional)</li></ul>
+<h3 class="sh3">Outputs</h3>
+<ul class="blist"><li>Audit report: present fields, missing fields, quality assessments</li><li>Flag recommendations: pass | review | reject</li><li>Consistency checks: claims vs verifiable artefact properties</li></ul>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Single file /code/defences/chapter_08/model_card_auditor.py.
+Single quotes throughout per book convention.
+Dependencies: pyyaml, markdown, jsonschema.
+Implements model_card_audit_checklist_reference items.
+Detects boilerplate-only cards (negative signal); checks reproducibility references.
+Section 8.15 intake pipeline gate.</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Repository intake gate; documentation deception detection</p>
+<h3 class="sh2">Deliverable 4 Typosquatting Detector</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">typosquatting_detector.py -- repository name similarity analysis</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Detect artefact names suspiciously similar to known popular legitimate names</p>
+<h3 class="sh3">Inputs</h3>
+<ul class="blist"><li>Candidate artefact name</li><li>Popular artefact name database</li><li>Similarity threshold configuration</li></ul>
+<h3 class="sh3">Outputs</h3>
+<ul class="blist"><li>Similarity scores against popular artefact names</li><li>Flag recommendations for names exceeding similarity threshold</li><li>Specific similarity types detected (transposition, substitution, namespace confusion)</li></ul>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Single file /code/defences/chapter_08/typosquatting_detector.py.
+Single quotes throughout per book convention.
+Dependencies: python-Levenshtein, unicodedata.
+Implements multiple similarity metrics (edit distance, visual similarity, namespace patterns).
+Includes Unicode confusables detection.
+Section 8.15 intake pipeline gate.</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Repository intake gate; supply chain attack defence</p>
+<h3 class="sh2">Deliverable 5 Repository Intake Pipeline</h3>
+<h3 class="sh3">Artifact</h3>
+<p class="prose">repository_intake_pipeline.py -- composed intake pipeline with policy enforcement</p>
+<h3 class="sh3">Purpose</h3>
+<p class="prose">Reference implementation of complete repository intake pipeline composing Section 8.10 deliverables and Section 8.9 deliverables</p>
+<h3 class="sh3">Inputs</h3>
+<ul class="blist"><li>Artefact metadata: name, format, publisher, hash, model card</li><li>Artefact file</li><li>Organisational policy configuration</li></ul>
+<h3 class="sh3">Outputs</h3>
+<ul class="blist"><li>Pipeline execution log with per-gate results</li><li>Final decision: admit | escalate | reject</li><li>Audit record for provenance tracking</li></ul>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Single file /code/defences/chapter_08/repository_intake_pipeline.py.
+Single quotes throughout per book convention.
+Dependencies: previous Section 8.9, 8.10 deliverables.
+Composes pickle_scanner, model_card_auditor, typosquatting_detector, adapter_integrity_verifier, behavioural_diff_tester, adapter_provenance_auditor.
+Configuration-driven policy; audit log output.
+Reference for Section 8.15 production pipeline track for repository intake.</p>
+<h3 class="sh3">Usage</h3>
+<p class="prose">Reference architecture; integration test substrate; Section 8.15 pipeline foundation</p>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1 Treating Safetensors As Complete Defence</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Adopting SafeTensors-only policy and treating the supply chain threat as addressed</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">SafeTensors adoption produces a clear, demonstrable security improvement.
+Pickle exploits are eliminated. The threat model is visibly simpler. Teams
+conclude that the supply chain threat has been addressed. The conclusion
+is wrong: SafeTensors addresses code execution, not behavioural compromise.
+A backdoored model is fully expressible in SafeTensors. A preference-
+contaminated model transits through SafeTensors as readily as through
+pickle.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Organisations adopt SafeTensors and stop investing in artefact-layer defences. Behavioural attacks pass through unchecked because the team believes SafeTensors handled the threat.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Adopt SafeTensors as one control among many. SafeTensors handles code execution; behavioural diff testing handles backdoors; provenance verification handles supply chain identity attacks. Each control addresses distinct attack classes; the ensemble is what produces meaningful coverage.</p>
+<h3 class="sh2">Mistake 2 Trusting Model Cards As Documentation</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating model cards as authoritative documentation rather than as publisher claims requiring verification</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Model cards look like documentation. They have headings, structure, and
+formal language. Consumer cognitive patterns established for reading
+documentation apply by default. The cognitive pattern is wrong: cards are
+publisher claims that the platform does not validate substantively.
+Treating them as authoritative imports trust that has not been
+established.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Consumers download artefacts based on card claims. Misleading or fabricated cards lead consumers to trust artefacts that do not match their stated properties. The trust is unverified and the artefact may not match documentation.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat cards as one signal in a verification process, not as the verification itself. Cross-check card claims against artefact behaviour. Treat structural absence of card information as a stronger negative signal than card presence is a positive one.</p>
+<h3 class="sh2">Mistake 3 Publisher Allowlist Without Artefact Pinning</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Allowlisting trusted publishers without pinning specific artefact hashes</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Publisher-level allowlisting is convenient: trust this publisher, accept
+anything they upload. The convenience scales: organisations cannot
+hash-pin every artefact. The mistake is that publisher allowlists assume
+publisher account integrity, which credential compromise and pipeline
+compromise both violate. A trusted publisher with a compromised account
+uploads malicious artefacts, and consumers accept them based on
+publisher trust.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Credential compromise of trusted publishers produces successful attacks because the consumer trust model has no resistance. The familiar publisher account uploads a malicious artefact and the consumer downloads it without further verification.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Combine publisher allowlists with hash pinning for known-good artefacts and behavioural verification for new artefacts even from trusted publishers. Treat publisher trust as one signal, not as exemption from verification.</p>
+<h3 class="sh2">Mistake 4 Skipping Pickle Scan For Familiar Publishers</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Skipping pickle scanning when the artefact comes from a trusted publisher</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Trusted publishers presumably do not embed pickle exploits. Scanning their
+artefacts feels like overhead. Teams add publisher exemptions to pickle
+scanning gates. The mistake is that the publisher trust does not address
+the attack class -- pipeline compromise of a trusted publisher produces
+malicious pickles in their artefacts, which the exemption permits.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Publisher pipeline compromise produces successful pickle exploit attacks because the scanner exemption let the malicious payload through. The trusted publisher relationship became an attack vector rather than a defence.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Apply pickle scanning to all pickle-format intake regardless of publisher. The scan is cheap; the coverage benefit is significant; the false positive rate against legitimate artefacts is low. Publisher trust does not exempt artefacts from technical verification.</p>
+<h3 class="sh2">Mistake 5 Documenting Policy Without Implementing It</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Writing repository intake policy as documents without operationalising it as automated pipeline gates</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Policy documents are easier to produce than CI/CD pipelines. Teams write
+policy describing what intake should look like, distribute it to relevant
+groups, and consider the work done. The policy describes correct
+behaviour; the actual behaviour depends on whether the policy is enforced
+automatically or relies on individual compliance.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Policy documents describe controls that are not actually enforced. Individual practitioners may follow them, may not, may forget under pressure, may negotiate exemptions informally. The documented control becomes aspirational; the real intake behaviour depends on individual diligence.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Operationalise policy as automated CI/CD gates wherever possible. The gate enforces the control; the documentation describes the gate; exceptions go through documented processes. Section 8.15 pipeline implements this; Section 8.10 Deliverable 5 is a reference architecture.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Model repositories distribute artefacts under trust models the platforms do not
+fully underwrite. The principal repository-level attack classes are pickle
+deserialisation code execution (a decade-old vulnerability persisting because
+pickle remains the dominant model format outside SafeTensors deployments),
+model card deception (documentation that consumers treat as authoritative
+while the platform validates only structural conformance), typosquatting and
+credential compromise (supply chain identity attacks), and publisher pipeline
+compromise (subverting legitimate publishers without compromising their accounts).
+SafeTensors addresses pickle code execution entirely but addresses no
+behavioural attack class -- backdoored models, instruction-tuning poisoning,
+and preference contamination all transit through SafeTensors as readily as
+through pickle. Repository-layer defences (format restriction, pickle
+scanning, card auditing, typosquatting detection, hash pinning, publisher
+policy) compose with artefact-layer defences (Section 8.9 deliverables) and
+detection primitives (Section 8.12) to produce the complete supply chain
+auditing track. The composition matters because each layer addresses
+distinct attack classes; relying on any single layer produces structural
+gaps. Organisational controls operationalise policy as code via CI/CD
+intake gates, with Section 8.10 Deliverable 5 as the reference architecture.
+Section 8.15 wires the complete pipeline. The defensive responsibility
+distribution is explicit: the platform handles infrastructure and basic
+validation; the publisher handles artefact correctness within their stated
+claims; the consumer handles verification that those claims match required
+properties.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Pickle deserialisation is a decade-old code execution vulnerability that remains the dominant model serialisation format outside SafeTensors deployments</li><li>SafeTensors eliminates pickle code execution entirely but addresses no behavioural attack class</li><li>Model cards are publisher claims, not platform-validated documentation; treat structural absence as stronger negative signal than presence is positive</li><li>Typosquatting and credential compromise exploit repository identity trust; hash pinning and behavioural verification mitigate</li><li>Publisher pipeline compromise subverts legitimate publishers without account compromise; behavioural verification is the defence</li><li>Repository-layer defences compose with artefact-layer defences (Section 8.9) and detection primitives (Section 8.12); each addresses distinct attack classes</li><li>Organisational controls (format policy, intake gates, allowlists, exception handling, provenance tracking) operationalise as code via CI/CD</li><li>Section 8.15 pipeline integrates repository-layer and artefact-layer defences as composed sequential gates with full audit trail</li></ul>
+<h2 class="sh1">Preview Section 11</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Dataset Provenance and Pre-Training Corpus Contamination</p>
+<h3 class="sh2">Connection</h3>
+<p class="prose">Sections 8.9 and 8.10 covered the artefact and repository layers of the supply
+chain. Section 8.11 covers the data layer: pre-training corpus contamination
+via Common Crawl, Wikipedia, GitHub, and community datasets. Pre-training
+contamination operates on different economics than artefact-level attacks --
+lower per-sample leverage but accessible scale through normal web ecosystem
+participation -- and produces effects that propagate through to foundation
+models that consumers later inherit. The defensive challenge is that most
+organisations do not conduct pre-training and therefore cannot apply
+standard data poisoning controls; the threat reaches them through foundation
+model adoption. Section 8.11 covers the controls available at each layer:
+pre-training-time controls for foundation labs, foundation-model auditing
+for consuming organisations, and the SBOM-style dataset provenance
+discipline that ties them together. Together with Sections 8.9 and 8.10,
+Section 8.11 completes the supply chain coverage that Section 8.15
+operationalises.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Section File</h3>
+<p class="prose">section_08_10_huggingface_repository_risks.yaml</p>
+<h3 class="sh2">Chapter</h3>
+<p class="prose">8</p>
+<h3 class="sh2">Section</h3>
+<p class="prose">10</p>
+<h3 class="sh2">Author</h3>
+<p class="prose">Raghav Dinesh</p>
+<h3 class="sh2">Created</h3>
+<p class="prose">2026-04-22</p>
+<h3 class="sh2">Book Version</h3>
+<p class="prose">1.0</p>
+<h3 class="sh2">Estimated Pages</h3>
+<p class="prose">7</p>
+<h3 class="sh2">Estimated Word Count</h3>
+<p class="prose">9100</p>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 8.1: training-time threat model and adversary access ladder</li><li>Section 8.5: backdoor fundamentals (the payload many repository attacks deliver)</li><li>Section 8.7: instruction-tuning poisoning (model-level attacks transiting via repository)</li><li>Section 8.8: preference contamination (alignment-level attacks transiting via repository)</li><li>Section 8.9: LoRA adapter attacks (artefact-level subset of repository attacks)</li><li>Chapter 5 Section 5.9: AI Supply Chain Security framework (operationalised across 8.9, 8.10)</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 8.11: dataset provenance and pre-training corpus contamination (data-layer supply chain)</li><li>Section 8.12: detection primitives (artefact-layer defences composed with repository-layer in pipeline)</li><li>Section 8.15: production auditing pipeline (integrates repository-layer pipeline as standard intake track)</li></ul>
+</article>

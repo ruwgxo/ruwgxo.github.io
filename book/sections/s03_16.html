@@ -1,0 +1,996 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 16 · ~7 pages</div>
+<h1>BERT: Bidirectional Encoder Representations</h1>
+<div class="tags"><span class="tag">bert</span><span class="tag">encoder-only</span><span class="tag">masked-language-model</span><span class="tag">mlm</span><span class="tag">pre-training</span><span class="tag">fine-tuning</span><span class="tag">transfer-learning</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">BERT: Bidirectional Encoder Representations</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.16</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">BERT (Devlin et al., 2018) revolutionized NLP by introducing bidirectional pre-training 
+for language understanding. Unlike GPT&#x27;s left-to-right language modeling, BERT uses 
+masked language modeling (MLM) - randomly masking tokens and predicting them from 
+bidirectional context. This encoder-only architecture learns rich representations that 
+transfer effectively to downstream tasks through fine-tuning.
+
+BERT introduced the paradigm of &quot;pre-train then fine-tune&quot; that dominates modern NLP. 
+Pre-train on massive unlabeled text using self-supervised objectives (MLM + NSP), then 
+fine-tune on specific tasks with small labeled datasets. This transfer learning approach 
+achieves state-of-the-art performance across question answering, sentiment analysis, 
+named entity recognition, and more.
+
+For security engineers: BERT&#x27;s bidirectional context makes hiding information harder - 
+the model sees full context from both directions. MLM pre-training can memorize sensitive 
+training data, extractable through careful prompting. Fine-tuning creates backdoor 
+vulnerabilities where task-specific poisoning affects the pre-trained model. Understanding 
+BERT reveals representation-based attacks and transfer learning vulnerabilities.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand BERT&#x27;s encoder-only architecture (no decoder)</li><li>Grasp masked language modeling: predict masked tokens from context</li><li>Learn special tokens: [CLS], [SEP], [MASK] and their roles</li><li>See pre-training objectives: MLM and Next Sentence Prediction</li><li>Compare pre-training vs fine-tuning stages</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement BERT encoder architecture</li><li>Build masked language model pre-training</li><li>Create MLM masking strategy (15% masking)</li><li>Implement fine-tuning for classification</li><li>Extract contextualized embeddings from BERT</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Extract memorized training data via MLM probing</li><li>Analyze fine-tuning backdoor vulnerabilities</li><li>Understand representation leakage in BERT embeddings</li><li>Exploit bidirectional context for information extraction</li><li>Audit BERT models for sensitive data memorization</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.12: Transformer encoder</li><li>Section 3.15: Training techniques (Adam, warmup)</li><li>Understanding of transfer learning</li><li>Self-supervised learning concepts</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>Transformer encoder implementation</li><li>Training loop construction</li><li>Loss computation for multiple objectives</li><li>Fine-tuning pre-trained models</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 15</h3>
+<p class="prose">Section 3.15 covered training techniques for transformers. Now we apply these to 
+BERT - an encoder-only model that uses masked language modeling for self-supervised 
+pre-training on massive unlabeled text.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.17 will cover GPT and decoder-only transformers - the opposite approach 
+from BERT. Instead of bidirectional understanding, GPT uses unidirectional 
+generation for language modeling and few-shot learning.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">BERT Architecture: Encoder-Only Design</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">BERT uses only the encoder from the original transformer - no decoder, no cross-attention. 
+The architecture is a stack of transformer encoder layers with bidirectional self-
+attention. Input is tokenized using WordPiece, special tokens mark sequence boundaries, 
+and the [CLS] token&#x27;s representation serves as the sentence embedding.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Encoder Only Architecture</h3>
+<h4 class="sh3">Why No Decoder</h4>
+<p class="prose">BERT is for understanding, not generation:
+- Goal: Learn contextual representations
+- Bidirectional context critical for understanding
+- No need for causal masking (not generating)
+
+→ Use only encoder (bidirectional self-attention)</p>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Input: Tokenized text with special tokens
+↓
+Embeddings: Token + Position + Segment
+↓
+Encoder Stack: N transformer encoder layers
+↓
+Output: Contextualized representations per token</p>
+<h4 class="sh3">Bert Configurations</h4>
+<h4 class="sh3">Bert Base</h4>
+<h4 class="sh3">Layers</h4>
+<p class="prose">12 encoder layers</p>
+<h4 class="sh3">Hidden Size</h4>
+<p class="prose">768 (d_model)</p>
+<h4 class="sh3">Attention Heads</h4>
+<p class="prose">12</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">110M</p>
+<h4 class="sh3">Bert Large</h4>
+<h4 class="sh3">Layers</h4>
+<p class="prose">24 encoder layers</p>
+<h4 class="sh3">Hidden Size</h4>
+<p class="prose">1024</p>
+<h4 class="sh3">Attention Heads</h4>
+<p class="prose">16</p>
+<h4 class="sh3">Parameters</h4>
+<p class="prose">340M</p>
+<h3 class="sh3">Special Tokens</h3>
+<h4 class="sh3">Cls Token</h4>
+<h4 class="sh3">Symbol</h4>
+<p class="prose">[CLS]</p>
+<h4 class="sh3">Position</h4>
+<p class="prose">First token of every sequence</p>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Aggregate sequence representation for classification</p>
+<h4 class="sh3">Usage</h4>
+<p class="prose">[CLS] representation = sentence embedding
+Feed to classifier for sentence-level tasks</p>
+<h4 class="sh3">Sep Token</h4>
+<h4 class="sh3">Symbol</h4>
+<p class="prose">[SEP]</p>
+<h4 class="sh3">Position</h4>
+<p class="prose">Separates segments in input</p>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Mark boundaries between sentences</p>
+<h4 class="sh3">Usage</h4>
+<p class="prose">Single sequence: [CLS] tokens [SEP]
+Pair: [CLS] sentence_A [SEP] sentence_B [SEP]</p>
+<h4 class="sh3">Mask Token</h4>
+<h4 class="sh3">Symbol</h4>
+<p class="prose">[MASK]</p>
+<h4 class="sh3">Position</h4>
+<p class="prose">Replaces masked tokens during MLM training</p>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Indicate positions to predict</p>
+<h4 class="sh3">Usage</h4>
+<p class="prose">Original: &quot;The cat sat on the mat&quot;
+Masked: &quot;The [MASK] sat on the [MASK]&quot;
+Predict: cat, mat</p>
+<h3 class="sh3">Input Embeddings</h3>
+<h4 class="sh3">Three Embedding Types</h4>
+<h4 class="sh3">Token Embeddings</h4>
+<p class="prose">WordPiece token → embedding
+Vocabulary: ~30K tokens</p>
+<h4 class="sh3">Position Embeddings</h4>
+<p class="prose">Position index → embedding
+Learned (not sinusoidal)
+Max length: 512</p>
+<h4 class="sh3">Segment Embeddings</h4>
+<p class="prose">Segment A (0) or Segment B (1) → embedding
+Helps distinguish sentence pairs</p>
+<h4 class="sh3">Combination</h4>
+<p class="prose">final_embedding = token_emb + position_emb + segment_emb
+
+Then: LayerNorm + Dropout</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Input: [CLS] The cat [SEP] sat down [SEP]
+
+Tokens:    [CLS] The  cat [SEP] sat down [SEP]
+Token IDs: [101, 138, 4937, 102, 1115, 2090, 102]
+Positions: [0,   1,   2,    3,   4,    5,    6]
+Segments:  [0,   0,   0,    0,   1,    1,    1]</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Bert Encoder</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+class BERTEncoder:
+    &quot;&quot;&quot;
+    BERT encoder-only transformer.
+    
+    Architecture:
+    - Token + Position + Segment embeddings
+    - Stack of transformer encoder layers
+    - No decoder, bidirectional self-attention
+    &quot;&quot;&quot;
+    
+    def __init__(self,
+                vocab_size: int,
+                max_len: int = 512,
+                num_layers: int = 12,
+                d_model: int = 768,
+                num_heads: int = 12,
+                d_ff: int = 3072,
+                dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Vocabulary size (including special tokens)
+            max_len: Maximum sequence length
+            num_layers: Number of encoder layers
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.max_len = max_len
+        self.d_model = d_model
+        
+        # Embeddings
+        self.token_embeddings = np.random.randn(vocab_size, d_model) * 0.02
+        self.position_embeddings = np.random.randn(max_len, d_model) * 0.02
+        self.segment_embeddings = np.random.randn(2, d_model) * 0.02  # A/B
+        
+        # Encoder stack (from Section 3.12)
+        from section_3_12_transformer_encoder import TransformerEncoder
+        self.encoder = TransformerEncoder(
+            num_layers, d_model, num_heads, d_ff, dropout
+        )
+        
+        # Layer norm for embeddings
+        from section_3_11_layer_norm_residuals import LayerNormalization
+        self.embed_norm = LayerNormalization(d_model)
+        
+        self.dropout = dropout
+    
+    def embed(self,
+             token_ids: np.ndarray,
+             segment_ids: np.ndarray = None) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Create BERT embeddings: token + position + segment.
+        
+        Args:
+            token_ids: Token IDs (batch, seq_len)
+            segment_ids: Segment IDs (batch, seq_len), 0 or 1
+        
+        Returns:
+            embeddings: (batch, seq_len, d_model)
+        &quot;&quot;&quot;
+        batch_size, seq_len = token_ids.shape
+        
+        # Token embeddings
+        token_emb = self.token_embeddings[token_ids]
+        
+        # Position embeddings
+        positions = np.arange(seq_len)
+        position_emb = self.position_embeddings[positions]
+        
+        # Segment embeddings
+        if segment_ids is None:
+            segment_ids = np.zeros_like(token_ids)
+        segment_emb = self.segment_embeddings[segment_ids]
+        
+        # Combine
+        embeddings = token_emb + position_emb + segment_emb
+        
+        # LayerNorm + Dropout
+        embeddings = self.embed_norm(embeddings)
+        
+        return embeddings
+    
+    def forward(self,
+               token_ids: np.ndarray,
+               segment_ids: np.ndarray = None,
+               mask: np.ndarray = None,
+               training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Forward pass through BERT encoder.
+        
+        Args:
+            token_ids: Token IDs (batch, seq_len)
+            segment_ids: Segment IDs (batch, seq_len)
+            mask: Attention mask
+            training: Whether in training mode
+        
+        Returns:
+            output: Encoder output (batch, seq_len, d_model)
+        &quot;&quot;&quot;
+        # Embed input
+        x = self.embed(token_ids, segment_ids)
+        
+        # Pass through encoder
+        output, _ = self.encoder(x, mask, training)
+        
+        return output
+    
+    def __call__(self, token_ids: np.ndarray,
+                segment_ids: np.ndarray = None,
+                mask: np.ndarray = None,
+                training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(token_ids, segment_ids, mask, training)
+
+
+# Example usage
+print(&quot;=== BERT Encoder ===\n&quot;)
+
+vocab_size = 30522  # BERT WordPiece vocab
+max_len = 512
+num_layers = 12
+d_model = 768
+num_heads = 12
+d_ff = 3072
+
+bert = BERTEncoder(vocab_size, max_len, num_layers, d_model, num_heads, d_ff)
+
+# Sample input with special tokens
+# [CLS] The cat [SEP] sat down [SEP]
+batch_size = 2
+seq_len = 7
+
+token_ids = np.random.randint(0, vocab_size, (batch_size, seq_len))
+token_ids[:, 0] = 101  # [CLS] token
+token_ids[:, 3] = 102  # [SEP] token
+token_ids[:, 6] = 102  # [SEP] token
+
+segment_ids = np.array([[0, 0, 0, 0, 1, 1, 1]] * batch_size)
+
+# Forward pass
+output = bert(token_ids, segment_ids, training=False)
+
+print(f&quot;BERT-base configuration:&quot;)
+print(f&quot;  Vocabulary: {vocab_size:,}&quot;)
+print(f&quot;  Layers: {num_layers}&quot;)
+print(f&quot;  Hidden size: {d_model}&quot;)
+print(f&quot;  Attention heads: {num_heads}&quot;)
+print(f&quot;  Parameters: ~110M&quot;)
+print()
+print(f&quot;Input:&quot;)
+print(f&quot;  Token IDs: {token_ids.shape}&quot;)
+print(f&quot;  Segment IDs: {segment_ids.shape}&quot;)
+print()
+print(f&quot;Output:&quot;)
+print(f&quot;  Encodings: {output.shape}&quot;)
+print()
+print(&quot;Special tokens:&quot;)
+print(&quot;  [CLS]: Position 0 → sentence representation&quot;)
+print(&quot;  [SEP]: Separates segments&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Cls Token Information Leakage</h3>
+<p class="prose">[CLS] aggregates sequence information:
+- Contains compressed representation of entire input
+- Can leak information about full sequence
+- Adversary can extract sentence-level info from [CLS]
+- Defense: Sanitize [CLS] representations, limit access</p>
+<h3 class="sh3">Bidirectional Context Harder To Hide</h3>
+<p class="prose">BERT sees full context (both directions):
+- Cannot hide information via position (unlike GPT)
+- Model infers masked content from surrounding tokens
+- Harder to obfuscate sensitive data
+- Defense: Remove sensitive content entirely, don&#x27;t just mask</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Masked Language Modeling: Self-Supervised Pre-training</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Masked Language Modeling (MLM) is BERT&#x27;s core pre-training objective. Randomly mask 
+15% of tokens and train the model to predict them from bidirectional context. This 
+self-supervised task requires no labels - just raw text. The masking strategy is 
+sophisticated: 80% replaced with [MASK], 10% replaced with random token, 10% unchanged.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Mlm Objective</h3>
+<h4 class="sh3">Core Idea</h4>
+<p class="prose">Learn to predict masked tokens from context:
+
+Original: &quot;The cat sat on the mat&quot;
+Masked:   &quot;The [MASK] sat on the [MASK]&quot;
+Predict:  cat, mat</p>
+<h4 class="sh3">Why Mlm Works</h4>
+<p class="prose">Bidirectional context enables deep understanding:
+- Left context: &quot;The ___&quot;
+- Right context: &quot;___ sat on the ___&quot;
+- Combined: Strong signal for &quot;cat&quot;
+
+Forces model to learn:
+- Syntax (grammatical patterns)
+- Semantics (word meanings)
+- World knowledge (common sense)</p>
+<h4 class="sh3">Contrast With Language Modeling</h4>
+<p class="prose">GPT (left-to-right LM):
+- Predict next token given left context only
+- Unidirectional
+
+BERT (MLM):
+- Predict masked token given full context
+- Bidirectional
+
+→ BERT better for understanding, GPT better for generation</p>
+<h3 class="sh3">Masking Strategy</h3>
+<h4 class="sh3">Random 15 Percent</h4>
+<p class="prose">For each sequence:
+1. Randomly select 15% of tokens
+2. Apply masking strategy to selected tokens
+3. Train to predict original tokens</p>
+<h4 class="sh3">Three Way Masking</h4>
+<h4 class="sh3">Eighty Percent Mask</h4>
+<p class="prose">80% of time: Replace with [MASK]
+&quot;The cat sat&quot; → &quot;The [MASK] sat&quot;</p>
+<h4 class="sh3">Ten Percent Random</h4>
+<p class="prose">10% of time: Replace with random token
+&quot;The cat sat&quot; → &quot;The dog sat&quot;
+
+Purpose: Model can&#x27;t rely on [MASK] being present</p>
+<h4 class="sh3">Ten Percent Unchanged</h4>
+<p class="prose">10% of time: Keep original token
+&quot;The cat sat&quot; → &quot;The cat sat&quot;
+
+Purpose: Model learns to copy when appropriate</p>
+<h4 class="sh3">Why Not Always Mask</h4>
+<p class="prose">If always use [MASK]:
+- [MASK] token only appears in training
+- At fine-tuning: No [MASK] tokens
+- Train-test mismatch
+
+Solution: Mix in random tokens and unchanged tokens</p>
+<h3 class="sh3">Mlm Loss</h3>
+<h4 class="sh3">Formula</h4>
+<p class="prose">For each masked position i:
+loss_i = -log P(token_i | context)
+
+Total loss = sum over all masked positions</p>
+<h4 class="sh3">Only Predict Masked</h4>
+<p class="prose">IMPORTANT: Only compute loss on masked tokens
+
+Not masked → no loss contribution
+Masked → predict original token</p>
+<h4 class="sh3">Example</h4>
+<p class="prose">Input:  &quot;The [MASK] sat on the [MASK]&quot;
+Output logits: (seq_len, vocab_size)
+
+Loss only at positions 1 and 5 (where [MASK])
+Positions 0, 2, 3, 4, 6: No loss</p>
+<h3 class="sh3">Next Sentence Prediction</h3>
+<h4 class="sh3">Auxiliary Task</h4>
+<p class="prose">In addition to MLM, BERT uses Next Sentence Prediction:
+
+Given two sentences A and B:
+- 50%: B follows A in corpus (label: IsNext)
+- 50%: B is random sentence (label: NotNext)
+
+Train to predict relationship</p>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Learn sentence-level relationships:
+- Coherence
+- Discourse structure
+- Paragraph understanding</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code>Use [CLS] token representation
+→ Feed to binary classifier
+→ Predict IsNext vs NotNext</code></pre>
+<h4 class="sh3">Controversy</h4>
+<p class="prose">Later work (RoBERTa) found NSP not essential
+→ MLM alone often sufficient
+→ NSP removed in some BERT variants</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Mlm Masker</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class MLMMasker:
+    &quot;&quot;&quot;
+    Masked Language Model masking strategy.
+    
+    15% masking: 80% [MASK], 10% random, 10% unchanged
+    &quot;&quot;&quot;
+    
+    def __init__(self,
+                vocab_size: int,
+                mask_token_id: int = 103,
+                cls_token_id: int = 101,
+                sep_token_id: int = 102,
+                mask_prob: float = 0.15):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Vocabulary size
+            mask_token_id: [MASK] token ID
+            cls_token_id: [CLS] token ID
+            sep_token_id: [SEP] token ID
+            mask_prob: Probability of masking each token
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.mask_token_id = mask_token_id
+        self.cls_token_id = cls_token_id
+        self.sep_token_id = sep_token_id
+        self.mask_prob = mask_prob
+        
+        # Special tokens that should never be masked
+        self.special_tokens = {cls_token_id, sep_token_id}
+    
+    def mask(self, token_ids: np.ndarray) -&gt; tuple:
+        &quot;&quot;&quot;
+        Apply MLM masking strategy.
+        
+        Args:
+            token_ids: Original token IDs (batch, seq_len)
+        
+        Returns:
+            masked_ids: Token IDs with masking applied
+            labels: Original token IDs for masked positions (-100 for non-masked)
+        &quot;&quot;&quot;
+        batch_size, seq_len = token_ids.shape
+        
+        # Copy inputs
+        masked_ids = token_ids.copy()
+        labels = np.full_like(token_ids, -100)  # -100 = ignore in loss
+        
+        for i in range(batch_size):
+            for j in range(seq_len):
+                token = token_ids[i, j]
+                
+                # Don&#x27;t mask special tokens
+                if token in self.special_tokens:
+                    continue
+                
+                # Randomly select 15% of tokens
+                if np.random.random() &lt; self.mask_prob:
+                    labels[i, j] = token  # Save original for loss
+                    
+                    rand = np.random.random()
+                    
+                    if rand &lt; 0.8:
+                        # 80%: Replace with [MASK]
+                        masked_ids[i, j] = self.mask_token_id
+                    elif rand &lt; 0.9:
+                        # 10%: Replace with random token
+                        random_token = np.random.randint(0, self.vocab_size)
+                        masked_ids[i, j] = random_token
+                    # else: 10%: Keep unchanged
+        
+        return masked_ids, labels
+
+
+# Example usage
+print(&quot;\n=== MLM Masking Strategy ===\n&quot;)
+
+vocab_size = 30522
+masker = MLMMasker(vocab_size)
+
+# Sample input
+# [CLS] The cat sat on mat [SEP]
+original_ids = np.array([
+    [101, 138, 4937, 1115, 2006, 13523, 102],
+    [101, 1996, 4937, 1005, 1055, 2204, 102]
+])
+
+# Apply masking
+masked_ids, labels = masker.mask(original_ids)
+
+print(&quot;Original tokens:&quot;)
+print(original_ids)
+print()
+print(&quot;Masked tokens:&quot;)
+print(masked_ids)
+print()
+print(&quot;Labels (original tokens for masked positions, -100 for others):&quot;)
+print(labels)
+print()
+print(&quot;Masking strategy:&quot;)
+print(&quot;  1. Select 15% of tokens randomly&quot;)
+print(&quot;  2. Of selected tokens:&quot;)
+print(&quot;     - 80%: Replace with [MASK] (103)&quot;)
+print(&quot;     - 10%: Replace with random token&quot;)
+print(&quot;     - 10%: Keep unchanged&quot;)
+print(&quot;  3. Never mask [CLS] or [SEP]&quot;)</code></pre>
+<h3 class="sh3">Mlm Training</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def train_mlm_step(bert: BERTEncoder,
+                  token_ids: np.ndarray,
+                  learning_rate: float = 1e-4) -&gt; float:
+    &quot;&quot;&quot;
+    Single MLM training step.
+    
+    Args:
+        bert: BERT encoder model
+        token_ids: Original token IDs (batch, seq_len)
+        learning_rate: Learning rate
+    
+    Returns:
+        loss: MLM loss
+    &quot;&quot;&quot;
+    # Apply masking
+    masker = MLMMasker(bert.vocab_size)
+    masked_ids, labels = masker.mask(token_ids)
+    
+    # Forward pass
+    encoder_output = bert(masked_ids, training=True)
+    # (batch, seq_len, d_model)
+    
+    # Project to vocabulary (simplified - would be learned layer)
+    vocab_logits = np.dot(encoder_output, 
+                         bert.token_embeddings.T)
+    # (batch, seq_len, vocab_size)
+    
+    # Compute loss only on masked positions
+    batch_size, seq_len, vocab_size = vocab_logits.shape
+    
+    total_loss = 0.0
+    num_masked = 0
+    
+    for i in range(batch_size):
+        for j in range(seq_len):
+            if labels[i, j] != -100:  # Masked position
+                # Softmax
+                logits = vocab_logits[i, j]
+                logits_max = np.max(logits)
+                exp_logits = np.exp(logits - logits_max)
+                probs = exp_logits / np.sum(exp_logits)
+                
+                # Cross-entropy
+                target = labels[i, j]
+                loss = -np.log(probs[target] + 1e-10)
+                
+                total_loss += loss
+                num_masked += 1
+    
+    # Average over masked tokens
+    if num_masked &gt; 0:
+        loss = total_loss / num_masked
+    else:
+        loss = 0.0
+    
+    # Backward pass (simplified - would compute gradients)
+    # update_parameters(bert, gradients, learning_rate)
+    
+    return loss
+
+
+print(&quot;\n=== MLM Training ===\n&quot;)
+
+bert = BERTEncoder(30522)
+
+# Sample batch
+batch_size = 4
+seq_len = 64
+token_ids = np.random.randint(0, 30522, (batch_size, seq_len))
+
+# Training step
+loss = train_mlm_step(bert, token_ids)
+
+print(f&quot;Batch size: {batch_size}&quot;)
+print(f&quot;Sequence length: {seq_len}&quot;)
+print(f&quot;MLM loss: {loss:.4f}&quot;)
+print()
+print(&quot;MLM pre-training:&quot;)
+print(&quot;  1. Mask 15% of tokens&quot;)
+print(&quot;  2. Predict original tokens from context&quot;)
+print(&quot;  3. Loss only on masked positions&quot;)
+print(&quot;  4. Bidirectional context enables deep understanding&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Mlm Data Extraction</h3>
+<p class="prose">MLM can be exploited to extract training data:
+- Adversary crafts partial sequences
+- Model fills in masked tokens with training data
+- Can recover sensitive information from corpus
+- Example: &quot;[MASK] SSN is 123-45-6789&quot; → Model predicts &quot;John&#x27;s&quot;
+- Defense: Differential privacy, output filtering</p>
+<h3 class="sh3">Memorization Via Mlm</h3>
+<p class="prose">MLM encourages memorization:
+- Model learns to predict exact tokens from context
+- Repeated sequences in training data → memorized
+- Can verbatim reproduce training text
+- Defense: Deduplication, privacy auditing</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Fine-tuning and Transfer Learning</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">After MLM pre-training, BERT is fine-tuned on downstream tasks with small labeled 
+datasets. The pre-trained representations transfer effectively across tasks: add a 
+task-specific head (classifier, tagger, etc.), fine-tune the entire model end-to-end. 
+This paradigm achieves state-of-the-art with minimal task-specific data.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Pre Train Then Fine Tune</h3>
+<h4 class="sh3">Pre Training Stage</h4>
+<h4 class="sh3">Objective</h4>
+<p class="prose">Self-supervised (MLM + NSP)</p>
+<h4 class="sh3">Data</h4>
+<p class="prose">Large unlabeled corpus (Wikipedia, books)</p>
+<h4 class="sh3">Duration</h4>
+<p class="prose">Days to weeks on TPUs/GPUs</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">General-purpose representations</p>
+<h4 class="sh3">Fine Tuning Stage</h4>
+<h4 class="sh3">Objective</h4>
+<p class="prose">Task-specific supervised learning</p>
+<h4 class="sh3">Data</h4>
+<p class="prose">Small labeled dataset for task</p>
+<h4 class="sh3">Duration</h4>
+<p class="prose">Hours (3-4 epochs typical)</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Task-optimized model</p>
+<h4 class="sh3">Why This Works</h4>
+<p class="prose">Pre-training learns general language understanding
+→ Strong initialization for downstream tasks
+→ Small amounts of task data sufficient
+→ Transfer learning paradigm</p>
+<h3 class="sh3">Fine Tuning For Different Tasks</h3>
+<h4 class="sh3">Sentence Classification</h4>
+<h4 class="sh3">Example</h4>
+<p class="prose">Sentiment analysis, spam detection</p>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">[CLS] representation → Linear layer → Softmax</p>
+<h4 class="sh3">Procedure</h4>
+<p class="prose">1. Feed sentence through BERT
+2. Extract [CLS] token representation
+3. Project to class logits
+4. Cross-entropy loss</p>
+<h4 class="sh3">Token Classification</h4>
+<h4 class="sh3">Example</h4>
+<p class="prose">Named entity recognition, POS tagging</p>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Each token representation → Linear layer → Softmax</p>
+<h4 class="sh3">Procedure</h4>
+<p class="prose">1. Feed sentence through BERT
+2. For each token, extract representation
+3. Project each to class logits
+4. Cross-entropy per token</p>
+<h4 class="sh3">Question Answering</h4>
+<h4 class="sh3">Example</h4>
+<p class="prose">SQuAD (extractive QA)</p>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">[CLS] Question [SEP] Context [SEP]
+→ Token representations
+→ Predict start and end positions</p>
+<h4 class="sh3">Procedure</h4>
+<p class="prose">1. Concatenate question and context
+2. BERT encodes combined sequence
+3. Two classifiers: start position, end position
+4. Extract span from context</p>
+<h4 class="sh3">Sentence Pair Classification</h4>
+<h4 class="sh3">Example</h4>
+<p class="prose">Entailment, paraphrase detection</p>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">[CLS] Sentence A [SEP] Sentence B [SEP]
+→ [CLS] representation → Classifier</p>
+<h4 class="sh3">Procedure</h4>
+<p class="prose">1. Feed sentence pair through BERT
+2. Extract [CLS] representation
+3. Classify relationship</p>
+<h3 class="sh3">Fine Tuning Best Practices</h3>
+<h4 class="sh3">Learning Rate</h4>
+<p class="prose">Lower than pre-training (2e-5 to 5e-5 typical)
+→ Avoid catastrophic forgetting</p>
+<h4 class="sh3">Epochs</h4>
+<p class="prose">3-4 epochs typical (more = overfitting)</p>
+<h4 class="sh3">Batch Size</h4>
+<p class="prose">16 or 32 (depends on GPU memory)</p>
+<h4 class="sh3">Layer Specific Lr</h4>
+<p class="prose">Optional: Different LR per layer
+- Lower layers: Smaller LR (general features)
+- Upper layers: Larger LR (task-specific)</p>
+<h4 class="sh3">Warmup</h4>
+<p class="prose">10% of training steps (like pre-training)</p>
+<h3 class="sh3">Bert Variants</h3>
+<h4 class="sh3">Roberta</h4>
+<h4 class="sh3">Changes</h4>
+<p class="prose">- Remove NSP objective (MLM only)
+- Dynamic masking (different each epoch)
+- Larger batches, more data
+- Byte-level BPE tokenization</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Improved performance over BERT</p>
+<h4 class="sh3">Albert</h4>
+<h4 class="sh3">Changes</h4>
+<p class="prose">- Parameter sharing across layers
+- Factorized embeddings (reduce params)
+- Sentence Order Prediction (replace NSP)</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Smaller, faster, comparable performance</p>
+<h4 class="sh3">Distilbert</h4>
+<h4 class="sh3">Changes</h4>
+<p class="prose">- Distillation from BERT (student-teacher)
+- 6 layers instead of 12
+- 40% smaller, 60% faster</p>
+<h4 class="sh3">Result</h4>
+<p class="prose">Retain 97% of BERT performance</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Bert Classifier</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class BERTClassifier:
+    &quot;&quot;&quot;
+    BERT for sequence classification.
+    
+    Architecture:
+    - BERT encoder (pre-trained)
+    - Classification head on [CLS] token
+    &quot;&quot;&quot;
+    
+    def __init__(self, bert: BERTEncoder, num_classes: int):
+        &quot;&quot;&quot;
+        Args:
+            bert: Pre-trained BERT encoder
+            num_classes: Number of output classes
+        &quot;&quot;&quot;
+        self.bert = bert
+        self.num_classes = num_classes
+        
+        # Classification head
+        self.classifier = np.random.randn(bert.d_model, num_classes) * 0.02
+        self.bias = np.zeros(num_classes)
+    
+    def forward(self,
+               token_ids: np.ndarray,
+               segment_ids: np.ndarray = None,
+               training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Forward pass for classification.
+        
+        Args:
+            token_ids: Token IDs (batch, seq_len)
+            segment_ids: Segment IDs
+            training: Whether in training mode
+        
+        Returns:
+            logits: Class logits (batch, num_classes)
+        &quot;&quot;&quot;
+        # Encode with BERT
+        encoder_output = self.bert(token_ids, segment_ids, training=training)
+        # (batch, seq_len, d_model)
+        
+        # Extract [CLS] token representation (position 0)
+        cls_repr = encoder_output[:, 0, :]  # (batch, d_model)
+        
+        # Project to class logits
+        logits = np.dot(cls_repr, self.classifier) + self.bias
+        # (batch, num_classes)
+        
+        return logits
+    
+    def __call__(self, token_ids: np.ndarray,
+                segment_ids: np.ndarray = None,
+                training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(token_ids, segment_ids, training)
+
+
+# Example usage
+print(&quot;\n=== BERT Fine-tuning for Classification ===\n&quot;)
+
+# Pre-trained BERT
+bert = BERTEncoder(30522, num_layers=12, d_model=768)
+
+# Add classification head
+num_classes = 2  # Binary classification (e.g., sentiment)
+classifier = BERTClassifier(bert, num_classes)
+
+# Sample input
+batch_size = 4
+seq_len = 64
+token_ids = np.random.randint(0, 30522, (batch_size, seq_len))
+token_ids[:, 0] = 101  # [CLS]
+
+# Forward pass
+logits = classifier(token_ids, training=False)
+
+print(f&quot;Task: Sentiment analysis (positive/negative)&quot;)
+print(f&quot;Batch size: {batch_size}&quot;)
+print(f&quot;Sequence length: {seq_len}&quot;)
+print()
+print(f&quot;Output logits shape: {logits.shape}&quot;)
+print()
+print(&quot;Fine-tuning process:&quot;)
+print(&quot;  1. Load pre-trained BERT (110M params)&quot;)
+print(&quot;  2. Add task-specific head (1.5K params)&quot;)
+print(&quot;  3. Fine-tune end-to-end on labeled data&quot;)
+print(&quot;  4. Low LR (2e-5), 3-4 epochs&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Fine Tuning Backdoors</h3>
+<p class="prose">Fine-tuning creates backdoor vulnerabilities:
+- Adversary poisons fine-tuning dataset
+- Backdoor inserted into pre-trained model
+- Triggers activate on specific inputs
+- Defense: Audit fine-tuning data, monitor performance</p>
+<h3 class="sh3">Catastrophic Forgetting Exploitation</h3>
+<p class="prose">Fine-tuning can erase safety mechanisms:
+- Pre-trained model may have safety filters
+- Fine-tuning on adversarial data removes filters
+- Model &quot;forgets&quot; safety constraints
+- Defense: Regularize to preserve pre-trained behavior</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">BERT is encoder-only: no decoder, bidirectional self-attention</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Optimized for understanding, not generation</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">MLM pre-training: predict masked tokens from bidirectional context</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Self-supervised learning on massive unlabeled text</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">15% masking: 80% [MASK], 10% random, 10% unchanged</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Sophisticated strategy prevents train-test mismatch</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">[CLS] token aggregates sequence representation for classification</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Enables sentence-level tasks via single token</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Pre-train then fine-tune: general → task-specific</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Transfer learning paradigm dominating modern NLP</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement BERT encoder with token + position + segment embeddings</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Three embedding types combined, LayerNorm + Dropout</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Build MLM masking with 15% strategy</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">80/10/10 split, skip special tokens, labels for masked only</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Create MLM training loop</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Mask tokens, predict originals, loss on masked positions</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement fine-tuning for classification</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">[CLS] representation → classifier, low LR, 3-4 epochs</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Extract contextualized embeddings from BERT</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Per-token representations from encoder output</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">[CLS] token aggregates and can leak sequence information</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary extracts sentence-level info from [CLS] embeddings</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Bidirectional context makes hiding information harder</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Model infers masked content from both directions</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">MLM enables training data extraction via probing</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Craft partial sequences, extract memorized completions</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">MLM encourages verbatim memorization of repeated sequences</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Can reproduce training text exactly</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Fine-tuning creates backdoor insertion vulnerabilities</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Poison task data to inject backdoors into pre-trained model</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Always masking with [MASK] token (no random/unchanged)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use 80/10/10 strategy to prevent train-test mismatch</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Computing loss on all positions (not just masked)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Loss ONLY on masked positions (labels = -100 for others)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Masking special tokens ([CLS], [SEP])</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Never mask special tokens, only regular tokens</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using high learning rate for fine-tuning (1e-4+)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Low LR (2e-5 to 5e-5) to avoid catastrophic forgetting</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Fine-tuning too many epochs (10+)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">3-4 epochs typical, more leads to overfitting</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 12</h3>
+<ul class="blist"><li>Transformer encoder (BERT&#x27;s architecture)</li><li>Bidirectional self-attention</li></ul>
+<h3 class="sh3">From Section 3 15</h3>
+<ul class="blist"><li>Training techniques (Adam, warmup, dropout)</li><li>Optimization strategies</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.17: GPT and decoder-only transformers</li><li>Unidirectional generation vs bidirectional understanding</li><li>Language modeling objective</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>GPT decoder-only architecture</li><li>Autoregressive language modeling</li><li>Few-shot learning capabilities</li><li>Scaling laws and emergent abilities</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Implement GPT-style decoder</li><li>Train language models</li><li>Use in-context learning</li><li>Scale transformers effectively</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">BERT (Devlin et al., 2018) revolutionized NLP through bidirectional pre-training for 
+understanding tasks. By using only the transformer encoder with bidirectional self-
+attention, BERT learns rich contextual representations that see full context from both 
+directions - unlike GPT&#x27;s left-to-right generation. This encoder-only design optimized 
+for comprehension, not generation.
+
+Masked Language Modeling (MLM) is BERT&#x27;s core innovation: randomly mask 15% of tokens 
+and train to predict them from bidirectional context. The sophisticated masking strategy 
+(80% [MASK], 10% random, 10% unchanged) prevents train-test mismatch while enabling 
+self-supervised learning on massive unlabeled text. MLM forces the model to learn syntax, 
+semantics, and world knowledge to predict masked tokens accurately.
+
+Special tokens enable various architectures: [CLS] aggregates sequence representation 
+for classification, [SEP] separates segments in sentence pairs, [MASK] indicates positions 
+to predict. The [CLS] token&#x27;s final representation serves as the sentence embedding, 
+feeding task-specific classifiers for sentiment analysis, question answering, and more.
+
+The pre-train then fine-tune paradigm dominates modern NLP: pre-train BERT on massive 
+unlabeled corpora using MLM, then fine-tune on specific tasks with small labeled datasets. 
+This transfer learning achieves state-of-the-art performance with minimal task data. 
+Fine-tuning uses low learning rates (2e-5 to 5e-5) for 3-4 epochs to avoid catastrophic 
+forgetting of pre-trained knowledge.
+
+From a security perspective: BERT&#x27;s bidirectional context makes hiding information 
+harder - the model sees and can infer from both directions. MLM can be exploited to 
+extract memorized training data through careful probing. The [CLS] token aggregates 
+and can leak sequence-level information. Fine-tuning creates backdoor vulnerabilities 
+where poisoned task data inserts triggers into the pre-trained model. Understanding 
+BERT reveals representation-based attacks and transfer learning security challenges.
+
+Next: Section 3.17 covers GPT and decoder-only transformers - the opposite approach 
+from BERT. Instead of bidirectional understanding through MLM, GPT uses unidirectional 
+left-to-right language modeling for powerful generation capabilities and few-shot learning.</p>
+</article>

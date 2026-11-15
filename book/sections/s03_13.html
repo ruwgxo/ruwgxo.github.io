@@ -1,0 +1,966 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 13 · ~7 pages</div>
+<h1>Transformer Decoder: Autoregressive Generation</h1>
+<div class="tags"><span class="tag">transformer-decoder</span><span class="tag">masked-attention</span><span class="tag">cross-attention</span><span class="tag">autoregressive-generation</span><span class="tag">decoder-architecture</span><span class="tag">causal-masking</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Transformer Decoder: Autoregressive Generation</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.13</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">The transformer decoder generates output sequences token-by-token in autoregressive 
+fashion. Unlike the encoder&#x27;s bidirectional attention, the decoder uses masked (causal) 
+self-attention - each position can only attend to previous positions, preventing 
+&quot;looking ahead.&quot; The decoder also has cross-attention to attend to encoder outputs, 
+enabling translation, summarization, and other sequence-to-sequence tasks.
+
+A decoder layer has three sublayers: (1) masked self-attention, (2) encoder-decoder 
+cross-attention, and (3) feed-forward network. Multiple decoder layers (6-12 typical) 
+are stacked, with final output projected to vocabulary for next-token prediction. This 
+architecture powers GPT, T5 decoders, and machine translation systems.
+
+For security engineers: Decoders generate text token-by-token, creating opportunities 
+for generation manipulation and prompt injection. Causal masking can be exploited by 
+positioning adversarial tokens. Cross-attention reveals source-target alignments, 
+useful for auditing but also for extraction attacks. Understanding decoder mechanics 
+is critical for securing generation systems.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand masked self-attention: prevent attending to future positions</li><li>Grasp cross-attention: decoder attends to encoder outputs</li><li>Learn decoder layer: masked self-attn → cross-attn → FFN</li><li>See autoregressive generation: predict one token at a time</li><li>Compare greedy vs sampling decoding strategies</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement masked self-attention with causal masking</li><li>Build encoder-decoder cross-attention</li><li>Create complete decoder layer from scratch</li><li>Stack multiple decoder layers</li><li>Implement greedy and sampling decoders</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Exploit causal masking for position-based attacks</li><li>Extract information via cross-attention patterns</li><li>Manipulate generation through prompt injection</li><li>Analyze autoregressive vulnerabilities</li><li>Audit decoder outputs for data leakage</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.12: Transformer encoder (provides encoder outputs)</li><li>Section 3.11: Layer normalization and residuals</li><li>Section 3.8: Multi-head attention</li><li>Section 3.7: Causal masking</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>All previous transformer component implementations</li><li>Understanding of sequence generation</li><li>Masking techniques</li><li>Autoregressive modeling concepts</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 12</h3>
+<p class="prose">Section 3.12 built the transformer encoder for understanding. Now we build the 
+decoder for generation - using masked attention to maintain autoregressive property 
+and cross-attention to condition on encoder outputs.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.14 will assemble encoder and decoder into the complete transformer, 
+covering training with teacher forcing, beam search, and full sequence-to-sequence 
+modeling.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Masked Self-Attention: Preventing Future Leakage</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The decoder&#x27;s first sublayer uses masked (causal) self-attention. Unlike encoder&#x27;s 
+bidirectional attention, decoder positions can only attend to previous positions 
+(including self). This maintains the autoregressive property: when predicting token t, 
+the model sees only tokens 0...t-1, preventing &quot;cheating&quot; by looking at future tokens.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Why Masking Is Necessary</h3>
+<h4 class="sh3">Autoregressive Generation</h4>
+<p class="prose">Decoder generates tokens sequentially:
+
+Step 1: Predict token₁ (given &lt;START&gt;)
+Step 2: Predict token₂ (given &lt;START&gt;, token₁)
+Step 3: Predict token₃ (given &lt;START&gt;, token₁, token₂)
+...</p>
+<h4 class="sh3">Training Inference Mismatch Without Masking</h4>
+<p class="prose">Training WITHOUT masking:
+- Decoder sees all output tokens simultaneously
+- Can &quot;cheat&quot; by looking at token₃ when predicting token₂
+- Learns to copy, not to predict
+
+Inference:
+- Generates one token at a time
+- Cannot see future tokens
+
+→ Mismatch: model trained with future info, tested without
+→ Poor generation quality</p>
+<h4 class="sh3">Solution Causal Masking</h4>
+<p class="prose">Apply causal mask during training:
+- Position t can see positions 0...t (not t+1...n)
+- Training matches inference conditions
+- Model learns proper conditional distributions</p>
+<h3 class="sh3">Causal Mask Structure</h3>
+<h4 class="sh3">Lower Triangular Matrix</h4>
+<p class="prose">For sequence length n, causal mask is lower triangular:
+
+Position:  0  1  2  3  4
+       0: [1  0  0  0  0]  ← Can see position 0 only
+       1: [1  1  0  0  0]  ← Can see positions 0-1
+       2: [1  1  1  0  0]  ← Can see positions 0-2
+       3: [1  1  1  1  0]  ← Can see positions 0-3
+       4: [1  1  1  1  1]  ← Can see positions 0-4</p>
+<h4 class="sh3">Implementation</h4>
+<pre class="code"><code># NumPy
+causal_mask = np.tril(np.ones((seq_len, seq_len)))
+
+# Applied before softmax
+scores = QK^T / √d_k
+scores = where(causal_mask == 0, -∞, scores)
+attention_weights = softmax(scores)</code></pre>
+<h4 class="sh3">Effect</h4>
+<p class="prose">Masked positions get score = -∞
+→ After softmax, weight = 0
+→ No information flows from future to past</p>
+<h3 class="sh3">Masked Self Attention Vs Encoder</h3>
+<p class="prose">Encoder self-attention:
+  - Bidirectional (all positions see all positions)
+  - No masking needed
+  - Better for understanding tasks
+  
+  Example: Position 2 attends to [0, 1, 2, 3, 4]
+
+Decoder masked self-attention:
+  - Unidirectional/causal (position t sees 0...t)
+  - Causal masking required
+  - Necessary for generation tasks
+  
+  Example: Position 2 attends to [0, 1, 2] only</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Masked Self Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+def create_causal_mask(seq_len: int) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    Create causal mask for decoder self-attention.
+    
+    Args:
+        seq_len: Sequence length
+    
+    Returns:
+        mask: (seq_len, seq_len) lower triangular matrix
+             1 = can attend, 0 = masked
+    &quot;&quot;&quot;
+    mask = np.tril(np.ones((seq_len, seq_len)))
+    return mask.astype(bool)
+
+
+class MaskedSelfAttention:
+    &quot;&quot;&quot;
+    Masked self-attention for decoder.
+    
+    Uses causal masking to prevent attending to future positions.
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, num_heads: int):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension
+            num_heads: Number of attention heads
+        &quot;&quot;&quot;
+        # Use MultiHeadAttention from Section 3.8
+        from section_3_08_multi_head_attention import MultiHeadAttention
+        self.attention = MultiHeadAttention(d_model, num_heads)
+    
+    def forward(self, x: np.ndarray, training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;
+        Apply masked self-attention.
+        
+        Args:
+            x: Input (batch, seq_len, d_model)
+            training: Whether in training mode
+        
+        Returns:
+            output: (batch, seq_len, d_model)
+            attention_weights: (batch, num_heads, seq_len, seq_len)
+        &quot;&quot;&quot;
+        batch_size, seq_len, d_model = x.shape
+        
+        # Create causal mask
+        causal_mask = create_causal_mask(seq_len)
+        
+        # Expand mask for batch and heads
+        # (seq_len, seq_len) → (batch, 1, seq_len, seq_len)
+        mask_expanded = causal_mask[np.newaxis, np.newaxis, :, :]
+        mask_expanded = np.broadcast_to(mask_expanded, 
+                                        (batch_size, 1, seq_len, seq_len))
+        
+        # Self-attention: Q, K, V all from same input
+        output, attn_weights = self.attention(x, x, x, mask=mask_expanded)
+        
+        return output, attn_weights
+    
+    def __call__(self, x: np.ndarray, training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x, training)
+
+
+# Example usage
+print(&quot;=== Masked Self-Attention ===\n&quot;)
+
+d_model = 512
+num_heads = 8
+seq_len = 5
+batch_size = 1
+
+masked_attn = MaskedSelfAttention(d_model, num_heads)
+
+# Input
+x = np.random.randn(batch_size, seq_len, d_model)
+
+# Forward pass
+output, attn_weights = masked_attn(x)
+
+print(f&quot;Input shape: {x.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print(f&quot;Attention weights shape: {attn_weights.shape}&quot;)
+print()
+
+# Show causal mask structure
+mask = create_causal_mask(seq_len)
+print(&quot;Causal mask (lower triangular):&quot;)
+print(mask.astype(int))
+print()
+print(&quot;Meaning:&quot;)
+for i in range(seq_len):
+    can_attend = [j for j in range(seq_len) if mask[i, j]]
+    print(f&quot;  Position {i} can attend to positions: {can_attend}&quot;)</code></pre>
+<h3 class="sh3">Visualize Masked Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_masked_attention_pattern():
+    &quot;&quot;&quot;Visualize decoder masked self-attention pattern.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Decoder Masked Self-Attention Pattern ===\n&quot;)
+    
+    tokens = [&quot;&lt;START&gt;&quot;, &quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;down&quot;]
+    n = len(tokens)
+    
+    # Simulate masked attention weights
+    np.random.seed(42)
+    attention = np.random.rand(n, n)
+    
+    # Apply causal mask
+    causal_mask = create_causal_mask(n)
+    attention = attention * causal_mask  # Zero out future positions
+    
+    # Normalize (row-wise)
+    row_sums = attention.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1  # Avoid division by zero
+    attention = attention / row_sums
+    
+    print(&quot;Causal (masked) self-attention:&quot;)
+    print(&quot;Each position attends only to current and previous positions\n&quot;)
+    print(&quot;Query →     &quot;, &quot;  &quot;.join(f&quot;{t:8s}&quot; for t in tokens))
+    print(&quot;-&quot; * (12 + 10 * len(tokens)))
+    
+    for i, query_token in enumerate(tokens):
+        weights_str = &quot;  &quot;.join(
+            f&quot;{attention[i, j]:8.2f}&quot; if causal_mask[i, j] else &quot;    --  &quot;
+            for j in range(n)
+        )
+        print(f&quot;{query_token:8s}:  {weights_str}&quot;)
+    
+    print()
+    print(&quot;Notice: Upper triangle is masked (--)&quot;)
+    print(&quot;  → Cannot attend to future positions&quot;)
+    print(&quot;  → Maintains autoregressive property&quot;)
+
+visualize_masked_attention_pattern()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Position Based Attacks</h3>
+<p class="prose">Causal masking creates position-dependent vulnerabilities:
+- Early positions (0-2): Limited context, easier to manipulate
+- Late positions (n-3 to n): See full context, harder to fool
+- Adversary places payloads early to exploit limited context
+- Defense: Position-aware input validation</p>
+<h3 class="sh3">Prompt Injection Via Causality</h3>
+<p class="prose">Causal structure enables prompt injection:
+- Model only sees left context when generating
+- Adversary crafts prefix that controls generation
+- Example: &quot;Ignore previous instructions. [malicious prompt]&quot;
+- Defense: Input sanitization, output filtering</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Cross-Attention: Connecting Decoder to Encoder</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">The decoder&#x27;s second sublayer uses cross-attention (encoder-decoder attention). Here, 
+queries come from decoder, but keys and values come from encoder outputs. This allows 
+the decoder to attend to relevant parts of the input sequence when generating each 
+output token. Cross-attention creates the encoder-decoder connection in translation, 
+summarization, and other seq2seq tasks.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Cross Attention Explained</h3>
+<h4 class="sh3">What Is Cross Attention</h4>
+<p class="prose">Cross-attention: Q from one sequence, K and V from different sequence
+
+Decoder cross-attention:
+- Queries: From decoder (current generation state)
+- Keys &amp; Values: From encoder (input sequence representation)
+- Decoder asks: &quot;What input is relevant for current output?&quot;</p>
+<h4 class="sh3">Contrast With Self Attention</h4>
+<p class="prose">Self-attention: Q, K, V all from SAME sequence
+Cross-attention: Q from decoder, K/V from encoder</p>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Enables decoder to &quot;look at&quot; encoder outputs:
+- When translating, decoder sees source sentence
+- When summarizing, decoder sees full document
+- Creates alignment between input and output</p>
+<h3 class="sh3">Cross Attention Mechanics</h3>
+<h4 class="sh3">Query From Decoder</h4>
+<p class="prose">Q = decoder_state × W^Q
+
+Decoder asks: &quot;What input info do I need for current position?&quot;</p>
+<h4 class="sh3">Keys Values From Encoder</h4>
+<p class="prose">K = encoder_output × W^K
+V = encoder_output × W^V
+
+Encoder provides: &quot;Here&#x27;s what the input contains&quot;</p>
+<h4 class="sh3">Attention Computation</h4>
+<p class="prose">Attention(Q_decoder, K_encoder, V_encoder)
+= softmax(Q_decoder × K_encoder^T / √d_k) × V_encoder
+
+Result: Decoder retrieves relevant encoder information</p>
+<h4 class="sh3">No Masking Needed</h4>
+<p class="prose">Cross-attention doesn&#x27;t need causal mask:
+- Encoder outputs are fixed (already computed)
+- Decoder can attend to ANY encoder position
+- Input sequence is complete (not being generated)</p>
+<h3 class="sh3">Alignment Interpretation</h3>
+<h4 class="sh3">Translation Example</h4>
+<p class="prose">Source (encoder): &quot;The cat sat on the mat&quot;
+Target (decoder): &quot;Le chat s&#x27;est assis sur le tapis&quot;
+
+When generating &quot;chat&quot;:
+- Decoder attends strongly to encoder&#x27;s &quot;cat&quot;
+- Cross-attention creates source-target alignment</p>
+<h4 class="sh3">Attention Weights As Alignment</h4>
+<p class="prose">Cross-attention weights show which source positions
+influence each target position
+
+→ Visualization reveals translation decisions
+→ Useful for interpretability and debugging</p>
+<h3 class="sh3">Dimensions And Shapes</h3>
+<h4 class="sh3">Decoder Queries</h4>
+<p class="prose">Q: (batch, target_len, d_model)</p>
+<h4 class="sh3">Encoder Keys</h4>
+<p class="prose">K: (batch, source_len, d_model)</p>
+<h4 class="sh3">Encoder Values</h4>
+<p class="prose">V: (batch, source_len, d_model)</p>
+<h4 class="sh3">Attention Scores</h4>
+<p class="prose">(batch, target_len, source_len)</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">(batch, target_len, d_model)</p>
+<h4 class="sh3">Note</h4>
+<p class="prose">target_len and source_len can differ!</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Cross Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class CrossAttention:
+    &quot;&quot;&quot;
+    Encoder-decoder cross-attention.
+    
+    Queries from decoder, keys and values from encoder.
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, num_heads: int):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension
+            num_heads: Number of attention heads
+        &quot;&quot;&quot;
+        from section_3_08_multi_head_attention import MultiHeadAttention
+        self.attention = MultiHeadAttention(d_model, num_heads)
+    
+    def forward(self, decoder_state: np.ndarray, 
+               encoder_output: np.ndarray,
+               encoder_mask: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;
+        Apply cross-attention.
+        
+        Args:
+            decoder_state: Decoder queries (batch, target_len, d_model)
+            encoder_output: Encoder keys/values (batch, source_len, d_model)
+            encoder_mask: Optional encoder padding mask
+        
+        Returns:
+            output: (batch, target_len, d_model)
+            attention_weights: (batch, num_heads, target_len, source_len)
+        &quot;&quot;&quot;
+        # Cross-attention: Q from decoder, K and V from encoder
+        output, attn_weights = self.attention(
+            Q=decoder_state,
+            K=encoder_output,
+            V=encoder_output,
+            mask=encoder_mask
+        )
+        
+        return output, attn_weights
+    
+    def __call__(self, decoder_state: np.ndarray,
+                encoder_output: np.ndarray,
+                encoder_mask: np.ndarray = None) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(decoder_state, encoder_output, encoder_mask)
+
+
+# Example usage
+print(&quot;\n=== Cross-Attention (Encoder-Decoder) ===\n&quot;)
+
+d_model = 512
+num_heads = 8
+batch_size = 1
+source_len = 7  # Encoder sequence length
+target_len = 5  # Decoder sequence length
+
+cross_attn = CrossAttention(d_model, num_heads)
+
+# Decoder state (queries)
+decoder_state = np.random.randn(batch_size, target_len, d_model)
+
+# Encoder output (keys and values)
+encoder_output = np.random.randn(batch_size, source_len, d_model)
+
+# Forward pass
+output, attn_weights = cross_attn(decoder_state, encoder_output)
+
+print(f&quot;Decoder state shape: {decoder_state.shape}&quot;)
+print(f&quot;Encoder output shape: {encoder_output.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print(f&quot;Attention weights shape: {attn_weights.shape}&quot;)
+print()
+print(&quot;Cross-attention mechanism:&quot;)
+print(&quot;  Queries: From decoder (what do I need?)&quot;)
+print(&quot;  Keys &amp; Values: From encoder (here&#x27;s the input)&quot;)
+print(&quot;  → Decoder attends to relevant encoder positions&quot;)</code></pre>
+<h3 class="sh3">Visualize Cross Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def visualize_cross_attention_alignment():
+    &quot;&quot;&quot;Visualize cross-attention as source-target alignment.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Cross-Attention Alignment ===\n&quot;)
+    
+    # Translation example
+    source = [&quot;The&quot;, &quot;cat&quot;, &quot;sat&quot;, &quot;on&quot;, &quot;mat&quot;]
+    target = [&quot;Le&quot;, &quot;chat&quot;, &quot;assis&quot;]
+    
+    # Simulate cross-attention weights (target × source)
+    # Each target position attends to source positions
+    cross_attn = np.array([
+        [0.70, 0.10, 0.05, 0.10, 0.05],  # &quot;Le&quot; → &quot;The&quot;
+        [0.10, 0.75, 0.05, 0.05, 0.05],  # &quot;chat&quot; → &quot;cat&quot;
+        [0.05, 0.10, 0.70, 0.10, 0.05],  # &quot;assis&quot; → &quot;sat&quot;
+    ])
+    
+    print(&quot;Cross-attention weights (target → source):&quot;)
+    print()
+    print(&quot;Target  ↓   &quot;, &quot;  &quot;.join(f&quot;{s:6s}&quot; for s in source))
+    print(&quot;-&quot; * (12 + 8 * len(source)))
+    
+    for i, target_word in enumerate(target):
+        weights_str = &quot;  &quot;.join(f&quot;{cross_attn[i, j]:6.2f}&quot; for j in range(len(source)))
+        print(f&quot;{target_word:8s}:  {weights_str}&quot;)
+    
+    print()
+    print(&quot;Interpretation:&quot;)
+    print(&quot;  &#x27;Le&#x27; attends most to &#x27;The&#x27; (0.70)&quot;)
+    print(&quot;  &#x27;chat&#x27; attends most to &#x27;cat&#x27; (0.75)&quot;)
+    print(&quot;  &#x27;assis&#x27; attends most to &#x27;sat&#x27; (0.70)&quot;)
+    print(&quot;  → Cross-attention creates source-target alignment!&quot;)
+
+visualize_cross_attention_alignment()</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Alignment Extraction</h3>
+<p class="prose">Cross-attention weights reveal source-target relationships:
+- Adversary can extract which input influenced which output
+- Reveals model&#x27;s decision-making process
+- Useful for auditing BUT also for reverse-engineering
+- Defense: Limit access to attention weights in production</p>
+<h3 class="sh3">Encoder Output Manipulation</h3>
+<p class="prose">Cross-attention depends on encoder outputs:
+- Adversary can manipulate encoder via input poisoning
+- Corrupted encoder outputs → corrupted decoder generation
+- Example: Inject misleading info in source → decoder generates it
+- Defense: Validate encoder outputs, sanitize inputs</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Decoder Layer and Stack Architecture</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">A complete decoder layer has three sublayers: (1) masked self-attention, (2) encoder-
+decoder cross-attention, and (3) feed-forward network. Each has residual connections 
+and layer normalization. Multiple decoder layers (6-12) are stacked, with final output 
+projected to vocabulary for next-token prediction.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Decoder Layer Architecture</h3>
+<h4 class="sh3">Three Sublayers</h4>
+<h4 class="sh3">Sublayer 1 Masked Self Attention</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Aggregate past decoder tokens (causal)</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">Current decoder state</p>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Masked self-attention (Q, K, V from decoder)</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Contextualized past</p>
+<h4 class="sh3">Sublayer 2 Cross Attention</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Attend to encoder outputs</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">Decoder state + encoder outputs</p>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Cross-attention (Q from decoder, K/V from encoder)</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Encoder-informed representation</p>
+<h4 class="sh3">Sublayer 3 Feed Forward</h4>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Position-wise transformation</p>
+<h4 class="sh3">Input</h4>
+<p class="prose">Cross-attended representation</p>
+<h4 class="sh3">Operation</h4>
+<p class="prose">Two-layer FFN with GELU</p>
+<h4 class="sh3">Output</h4>
+<p class="prose">Final layer output</p>
+<h4 class="sh3">Complete Decoder Layer Prenorm</h4>
+<p class="prose"># Sublayer 1: Masked self-attention
+x1 = x + MaskedSelfAttention(LayerNorm(x))
+
+# Sublayer 2: Cross-attention to encoder
+x2 = x1 + CrossAttention(LayerNorm(x1), encoder_output)
+
+# Sublayer 3: Feed-forward network
+x3 = x2 + FFN(LayerNorm(x2))
+
+return x3</p>
+<h3 class="sh3">Decoder Vs Encoder Layer</h3>
+<h4 class="sh3">Encoder Layer</h4>
+<p class="prose">1. Self-attention (bidirectional)
+2. Feed-forward network
+
+→ 2 sublayers</p>
+<h4 class="sh3">Decoder Layer</h4>
+<p class="prose">1. Masked self-attention (causal)
+2. Cross-attention (to encoder)
+3. Feed-forward network
+
+→ 3 sublayers (one more than encoder!)</p>
+<h3 class="sh3">Stacking Decoder Layers</h3>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Decoder input → Layer 1 → Layer 2 → ... → Layer N → Output
+
+Each layer:
+- Refines decoder representation
+- Attends to encoder at every layer</p>
+<h4 class="sh3">Typical Depths</h4>
+<h4 class="sh3">Original Transformer</h4>
+<p class="prose">6 decoder layers</p>
+<h4 class="sh3">Gpt2</h4>
+<p class="prose">12-48 decoder layers (decoder-only, no encoder)</p>
+<h4 class="sh3">T5</h4>
+<p class="prose">12-24 decoder layers</p>
+<h4 class="sh3">Encoder Output Reuse</h4>
+<p class="prose">Encoder outputs computed ONCE
+→ Reused by ALL decoder layers
+→ Efficient (don&#x27;t recompute encoder)</p>
+<h3 class="sh3">Output Projection Layer</h3>
+<h4 class="sh3">Purpose</h4>
+<p class="prose">Project decoder output to vocabulary logits</p>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Final decoder output: (batch, target_len, d_model)
+
+Linear projection: W_out ∈ (d_model, vocab_size)
+
+Logits = decoder_output @ W_out  # (batch, target_len, vocab_size)</p>
+<h4 class="sh3">Next Token Prediction</h4>
+<p class="prose">For position t:
+logits_t = decoder_output[t] @ W_out  # (vocab_size,)
+probs_t = softmax(logits_t)
+next_token = argmax(probs_t) or sample(probs_t)</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Decoder Layer</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class TransformerDecoderLayer:
+    &quot;&quot;&quot;
+    Single transformer decoder layer (pre-norm).
+    
+    Architecture:
+    1. Masked self-attention
+    2. Cross-attention to encoder
+    3. Feed-forward network
+    &quot;&quot;&quot;
+    
+    def __init__(self, d_model: int, num_heads: int, d_ff: int,
+                dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.d_model = d_model
+        
+        # Sublayer 1: Masked self-attention
+        self.masked_self_attn = MaskedSelfAttention(d_model, num_heads)
+        self.self_attn_norm = LayerNormalization(d_model)
+        
+        # Sublayer 2: Cross-attention
+        self.cross_attn = CrossAttention(d_model, num_heads)
+        self.cross_attn_norm = LayerNormalization(d_model)
+        
+        # Sublayer 3: Feed-forward network
+        from section_3_10_feed_forward_networks import PositionWiseFeedForwardGELU
+        self.ffn = PositionWiseFeedForwardGELU(d_model, d_ff)
+        self.ffn_norm = LayerNormalization(d_model)
+        
+        self.dropout = dropout
+    
+    def forward(self, x: np.ndarray, encoder_output: np.ndarray,
+               encoder_mask: np.ndarray = None,
+               training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;
+        Forward pass through decoder layer.
+        
+        Args:
+            x: Decoder input (batch, target_len, d_model)
+            encoder_output: Encoder output (batch, source_len, d_model)
+            encoder_mask: Optional encoder padding mask
+            training: Whether in training mode
+        
+        Returns:
+            output: (batch, target_len, d_model)
+            self_attn_weights: Masked self-attention weights
+            cross_attn_weights: Cross-attention weights
+        &quot;&quot;&quot;
+        # Sublayer 1: Masked self-attention
+        normalized = self.self_attn_norm(x)
+        self_attn_out, self_attn_weights = self.masked_self_attn(normalized, training)
+        
+        if training and self.dropout &gt; 0:
+            self_attn_out = self._dropout(self_attn_out, self.dropout)
+        x1 = x + self_attn_out
+        
+        # Sublayer 2: Cross-attention to encoder
+        normalized = self.cross_attn_norm(x1)
+        cross_attn_out, cross_attn_weights = self.cross_attn(
+            normalized, encoder_output, encoder_mask
+        )
+        
+        if training and self.dropout &gt; 0:
+            cross_attn_out = self._dropout(cross_attn_out, self.dropout)
+        x2 = x1 + cross_attn_out
+        
+        # Sublayer 3: Feed-forward network
+        normalized = self.ffn_norm(x2)
+        ffn_out = self.ffn(normalized)
+        
+        if training and self.dropout &gt; 0:
+            ffn_out = self._dropout(ffn_out, self.dropout)
+        x3 = x2 + ffn_out
+        
+        return x3, self_attn_weights, cross_attn_weights
+    
+    def _dropout(self, x: np.ndarray, rate: float) -&gt; np.ndarray:
+        &quot;&quot;&quot;Apply dropout.&quot;&quot;&quot;
+        mask = np.random.binomial(1, 1 - rate, x.shape) / (1 - rate)
+        return x * mask
+    
+    def __call__(self, x: np.ndarray, encoder_output: np.ndarray,
+                encoder_mask: np.ndarray = None,
+                training: bool = False) -&gt; tuple:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(x, encoder_output, encoder_mask, training)
+
+
+# Example usage
+print(&quot;\n=== Transformer Decoder Layer ===\n&quot;)
+
+d_model = 512
+num_heads = 8
+d_ff = 2048
+batch_size = 1
+target_len = 5
+source_len = 7
+
+decoder_layer = TransformerDecoderLayer(d_model, num_heads, d_ff)
+
+# Decoder input
+decoder_input = np.random.randn(batch_size, target_len, d_model)
+
+# Encoder output
+encoder_output = np.random.randn(batch_size, source_len, d_model)
+
+# Forward pass
+output, self_attn, cross_attn = decoder_layer(
+    decoder_input, encoder_output, training=False
+)
+
+print(f&quot;Decoder input shape: {decoder_input.shape}&quot;)
+print(f&quot;Encoder output shape: {encoder_output.shape}&quot;)
+print(f&quot;Output shape: {output.shape}&quot;)
+print()
+print(&quot;Decoder layer structure:&quot;)
+print(&quot;  1. Masked self-attention (causal)&quot;)
+print(&quot;  2. Cross-attention to encoder&quot;)
+print(&quot;  3. Feed-forward network&quot;)
+print(&quot;  Each with: LayerNorm + residual connection&quot;)</code></pre>
+<h3 class="sh3">Complete Decoder Stack</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>class TransformerDecoder:
+    &quot;&quot;&quot;
+    Multi-layer transformer decoder.
+    
+    Stacks N decoder layers with output projection to vocabulary.
+    &quot;&quot;&quot;
+    
+    def __init__(self, vocab_size: int, max_len: int, num_layers: int,
+                d_model: int, num_heads: int, d_ff: int,
+                dropout: float = 0.1):
+        &quot;&quot;&quot;
+        Args:
+            vocab_size: Vocabulary size
+            max_len: Maximum sequence length
+            num_layers: Number of decoder layers
+            d_model: Model dimension
+            num_heads: Number of attention heads
+            d_ff: Feed-forward hidden dimension
+            dropout: Dropout rate
+        &quot;&quot;&quot;
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        
+        # Token embeddings
+        self.token_embeddings = np.random.randn(vocab_size, d_model) * 0.01
+        
+        # Positional encoding
+        from section_3_09_positional_encoding import SinusoidalPositionalEncoding
+        self.positional_encoding = SinusoidalPositionalEncoding(d_model, max_len)
+        
+        # Decoder layers
+        self.layers = []
+        for _ in range(num_layers):
+            layer = TransformerDecoderLayer(d_model, num_heads, d_ff, dropout)
+            self.layers.append(layer)
+        
+        # Output projection to vocabulary
+        self.output_projection = np.random.randn(d_model, vocab_size) * 0.01
+    
+    def embed(self, target_ids: np.ndarray) -&gt; np.ndarray:
+        &quot;&quot;&quot;Embed target tokens with positional encoding.&quot;&quot;&quot;
+        token_emb = self.token_embeddings[target_ids]
+        seq_len = target_ids.shape[1]
+        pos_enc = self.positional_encoding(seq_len)
+        return token_emb + pos_enc
+    
+    def forward(self, target_ids: np.ndarray, encoder_output: np.ndarray,
+               encoder_mask: np.ndarray = None,
+               training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;
+        Forward pass through decoder.
+        
+        Args:
+            target_ids: Target token IDs (batch, target_len)
+            encoder_output: Encoder output (batch, source_len, d_model)
+            encoder_mask: Optional encoder padding mask
+            training: Whether in training mode
+        
+        Returns:
+            logits: (batch, target_len, vocab_size)
+        &quot;&quot;&quot;
+        # Embed target tokens
+        x = self.embed(target_ids)
+        
+        # Pass through decoder layers
+        for layer in self.layers:
+            x, _, _ = layer(x, encoder_output, encoder_mask, training)
+        
+        # Project to vocabulary
+        logits = np.matmul(x, self.output_projection)
+        
+        return logits
+    
+    def __call__(self, target_ids: np.ndarray, encoder_output: np.ndarray,
+                encoder_mask: np.ndarray = None,
+                training: bool = False) -&gt; np.ndarray:
+        &quot;&quot;&quot;Alias for forward.&quot;&quot;&quot;
+        return self.forward(target_ids, encoder_output, encoder_mask, training)
+
+
+print(&quot;\n=== Complete Transformer Decoder ===\n&quot;)
+
+vocab_size = 30000
+max_len = 512
+num_layers = 6
+d_model = 512
+num_heads = 8
+d_ff = 2048
+
+decoder = TransformerDecoder(
+    vocab_size, max_len, num_layers, d_model, num_heads, d_ff
+)
+
+# Input
+batch_size = 1
+target_len = 5
+source_len = 7
+
+target_ids = np.random.randint(0, vocab_size, (batch_size, target_len))
+encoder_output = np.random.randn(batch_size, source_len, d_model)
+
+# Forward pass
+logits = decoder(target_ids, encoder_output, training=False)
+
+print(f&quot;Target IDs shape: {target_ids.shape}&quot;)
+print(f&quot;Encoder output shape: {encoder_output.shape}&quot;)
+print(f&quot;Logits shape: {logits.shape}&quot;)
+print()
+print(&quot;Complete decoder pipeline:&quot;)
+print(&quot;  1. Embed target tokens + positional encoding&quot;)
+print(&quot;  2. Pass through decoder layers (6)&quot;)
+print(&quot;  3. Project to vocabulary logits&quot;)
+print(&quot;  4. Apply softmax for token probabilities&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Layer Specific Manipulation</h3>
+<p class="prose">Different decoder layers serve different purposes:
+- Early layers: Process recent tokens
+- Middle layers: Integrate encoder information
+- Late layers: Make final predictions
+- Adversary can target specific layers for different effects
+- Defense: Monitor all layers, not just output</p>
+<h3 class="sh3">Cross Attention At Every Layer</h3>
+<p class="prose">Encoder outputs influence every decoder layer:
+- Single encoder manipulation affects entire decoder
+- Adversary can poison encoder to control all decoder layers
+- Defense: Validate encoder outputs, limit encoder influence</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Decoder layer has 3 sublayers: masked self-attn, cross-attn, FFN</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">One more sublayer than encoder (cross-attention)</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Masked self-attention uses causal masking (lower triangular)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Prevents looking ahead, maintains autoregressive property</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Cross-attention: Q from decoder, K/V from encoder</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Connects decoder to encoder, enables seq2seq tasks</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Encoder outputs computed once, reused by all decoder layers</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Efficient - don&#x27;t recompute encoder for each decoder step</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Output projection maps d_model → vocab_size for next-token prediction</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Final step converting decoder state to token probabilities</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement masked self-attention with causal masking</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Lower triangular mask prevents future attention</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Build encoder-decoder cross-attention</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Q from decoder, K/V from encoder</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Create complete decoder layer with 3 sublayers</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Masked self-attn → cross-attn → FFN</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Stack multiple decoder layers</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Sequential processing, encoder output reused</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Add output projection to vocabulary</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">d_model → vocab_size linear layer</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Causal masking creates position-dependent vulnerabilities</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Early positions easier to manipulate (less context)</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Cross-attention reveals source-target alignments</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Useful for auditing, exploitable for reverse-engineering</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Encoder corruption propagates to all decoder layers</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Single encoder attack affects entire generation</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Prompt injection exploits causal structure</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary controls prefix to manipulate generation</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Different decoder layers serve different purposes</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Layer-specific attacks for different effects</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using bidirectional attention in decoder (like encoder)</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Decoder MUST use causal masking (prevent future leakage)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Forgetting cross-attention sublayer</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Decoder has 3 sublayers (encoder has 2)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Recomputing encoder outputs for each decoder layer</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Compute encoder ONCE, reuse for all decoder layers</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Not applying causal mask during training</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">ALWAYS use causal mask (training and inference)</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Wrong cross-attention Q/K/V sources</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Q from decoder, K and V from encoder</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 12</h3>
+<ul class="blist"><li>Transformer encoder (provides encoder outputs)</li><li>Bidirectional self-attention (contrast with decoder&#x27;s causal)</li></ul>
+<h3 class="sh3">From Section 3 7</h3>
+<ul class="blist"><li>Causal masking (used in masked self-attention)</li><li>Attention masking mechanics</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.14: Complete transformer (encoder + decoder)</li><li>Training with teacher forcing</li><li>Beam search and decoding strategies</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Complete encoder-decoder transformer</li><li>Teacher forcing for training</li><li>Beam search for better generation</li><li>Training objectives and optimization</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Assemble complete transformer</li><li>Implement training loop</li><li>Build beam search decoder</li><li>Train transformer from scratch</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">The transformer decoder generates sequences token-by-token using autoregressive 
+prediction. Unlike the encoder&#x27;s bidirectional attention, the decoder uses masked 
+(causal) self-attention - each position can only see past positions, preventing 
+&quot;looking ahead&quot; at future tokens. This maintains the autoregressive property essential 
+for generation.
+
+The decoder layer has three sublayers (one more than encoder): (1) masked self-attention 
+for aggregating past decoder tokens, (2) cross-attention to encoder for accessing input 
+information, and (3) feed-forward network for transformation. The cross-attention 
+sublayer is the key difference - it connects decoder to encoder, with queries from 
+decoder and keys/values from encoder outputs.
+
+Stacking 6-12 decoder layers builds the complete decoder, with encoder outputs computed 
+once and reused by all layers for efficiency. Final decoder output is projected to 
+vocabulary logits for next-token prediction. This architecture powers machine translation 
+(original transformer), text generation (GPT when decoder-only), and summarization.
+
+From a security perspective: causal masking creates position-dependent vulnerabilities 
+(early positions have less context, easier to manipulate). Cross-attention reveals 
+source-target alignments useful for auditing but exploitable for extraction. Prompt 
+injection exploits the causal structure - adversary controls prefix to manipulate 
+generation. Encoder corruption propagates to all decoder layers through cross-attention. 
+Understanding decoder mechanics is critical for securing generation systems.
+
+Next: Section 3.14 assembles encoder and decoder into the complete transformer, covering 
+training with teacher forcing, beam search for better generation, and full sequence-to-
+sequence modeling that powers modern NLP systems.</p>
+</article>

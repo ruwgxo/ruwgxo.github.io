@@ -1,0 +1,219 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 18 · Section 5 · ~6 pages</div>
+<h1>Case Study 4: PII Leakage Prevention</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The fourth case, a composite: the PII scanner and output monitoring against real PII leakage on both inputs and outputs in a healthcare deployment, where the distinctive challenge is not catching leaks -- the scanner does that -- but the low-false-positive requirement at scale, because a healthcare assistant must legitimately handle PII constantly, so a scanner that over-flags disrupts the exact clinical work the system exists to support, making the balance between catching leaks and permitting legitimate handling the heart of the case.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Every prior case has been about catching an attack. This one is about a subtler and, in a regulated domain, harder problem: catching leaks without blocking legitimate use, where legitimate use itself involves the very data being scanned for. In a healthcare deployment, PII is not an anomaly to be flagged wherever it appears -- it is the substance of the work. A clinical assistant handles patient identifiers, diagnoses, and records constantly and legitimately, so a PII scanner tuned like an attack detector, flagging PII wherever it sees it, would flag almost everything and make the assistant unusable. The case exists to examine that balance, which is the defining difficulty of PII detection in a domain where PII handling is the point.
+
+This reframes what the PII scanner of Chapter 15 has to do. It is not enough to detect PII with high recall; the scanner must distinguish leakage -- PII going somewhere it should not, to someone who should not receive it, through a channel that should not carry it -- from legitimate handling, where the same PII is used exactly as intended. The distinction is contextual, not lexical: the identical patient identifier is a leak in one context and appropriate clinical data in another. The case works both surfaces of leakage: PII on inputs, where a user provides data that should not enter the system or should be handled with special care, and PII on outputs, where the model produces data it should not have surfaced -- the more dangerous surface, because an output leak is the system itself disclosing protected data. And it works the whole thing under healthcare compliance, where a leak is a reportable regulatory event and an over-flag is a disruption to care, so both kinds of error carry real cost. As established in 18.01, the leaks and the clinical traffic are representative composites, not specific proprietary incidents.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 18.05 is the fourth case study, returning to the healthcare compliance dimension introduced in the enterprise case (18.02) and developing it in depth around one attack class. It exercises the Chapter 15 PII scanner and output monitoring, foregrounds the low-false-positive-at-scale balance that distinguishes PII detection from attack detection, and produces the PII-prevention architecture recommendation and compliance-aware playbook. It sets up the final case (18.06), where the threat shifts from data leakage to coordinated abuse.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 18 Section 18.01: the case study method and composite evidence convention</li><li>Chapter 18 Section 18.02: the healthcare compliance dimension this case develops in depth</li><li>Chapter 15 Section 15.04: the PII scanner this case exercises</li><li>Chapter 15: the output monitoring that catches PII the model surfaces</li><li>Chapter 16: the SIEM integration carrying the compliance-aware PII-leak response</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Scenario: PII Where PII Is the Work</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The scenario is a composite healthcare deployment -- a clinical assistant used by care providers, handling patient data as the ordinary substance of its work. This is what makes the PII case categorically different from the attack cases. When the injection detector flags injection, it is flagging something that should never be there; injection is always anomalous, always unwanted, and a detector that catches all of it is doing exactly right. PII in a healthcare assistant is the opposite: it is supposed to be there, constantly, because the work is clinical and clinical work is made of patient data. A provider asking the assistant to summarise a patient&#x27;s history, draft a referral, or check a medication is handling PII legitimately and necessarily. A PII scanner that treated every appearance of a patient identifier as a problem would flag the entire workload and make the assistant useless for the purpose it was deployed for.
+
+So the PII case is not really about whether PII can be detected -- the scanner of Chapter 15 detects PII well, and detection is the easy part. It is about distinguishing the small fraction of PII appearances that are leaks from the overwhelming majority that are legitimate handling. This is a needle-in-a-needlestack problem: not finding PII in a haystack of non-PII, but finding the misplaced PII in a haystack of correctly-placed PII. It inverts the usual detection posture. Where an attack detector wants high recall on a rare bad thing against a benign background, the PII scanner in a healthcare setting needs to find the rare misuse of a thing that is overwhelmingly used correctly, and it must do so without disrupting the correct use. The base-rate problem the book has returned to throughout appears here in a new form: leaks are rare among PII appearances, so the false-positive cost is not just analyst fatigue but direct disruption to clinical care, and that raises the stakes on precision far above the usual.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Leakage Versus Legitimate Handling: A Contextual Distinction</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The core analytical move of the case is recognising that leakage is not a property of the data but of its context. The exact same patient identifier -- the same name, the same record number, the same diagnosis -- is legitimate clinical data in one context and a leak in another. It is legitimate when the provider handling it is authorised, the purpose is clinical, and the channel is appropriate; it is a leak when it flows to someone unauthorised, for a purpose outside care, or through a channel that should not carry it. Nothing about the PII itself distinguishes the two cases. The distinction is entirely contextual, which means a scanner that works lexically -- flagging on the presence of PII patterns -- cannot make it, and will necessarily either miss leaks (if tuned permissively) or flag legitimate handling (if tuned aggressively). The lexical scanner is looking at the wrong thing.
+
+What the case shows is that effective PII leakage prevention requires the scanner to be contextual: to consider not just whether PII is present but where it is going, who is handling it, and whether that flow is appropriate. This draws the PII detection into the behavioural context the book built -- the entity handling the data, the session it occurs in, the authorisation and purpose that make a flow legitimate or not. A PII appearance is evaluated against the context of its flow, so the same identifier that passes in an authorised clinical summary is flagged when it appears in an output heading to an unauthorised destination. This is why the PII case, despite centring on a per-request scanner, still exercises the behavioural layer: the context that distinguishes leak from legitimate use is exactly the entity-and-session context the behavioural layer maintains. Catching PII is a lexical problem the scanner solves; distinguishing a leak from legitimate handling is a contextual problem that requires the surrounding system.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Input PII and Output PII</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The case works two surfaces of PII leakage, and the distinction between them is consequential. Input PII is data arriving in a request -- a user providing patient information to the assistant. Some input PII is entirely legitimate (the provider gives the assistant the data it needs to do clinical work), and some is problematic: data that should not enter the system at all, data provided by someone not authorised to handle it, or data that entered through an inappropriate channel. The input PII scanner examines what comes in, catching the problematic inflows while permitting the legitimate ones -- and permitting the legitimate ones is the hard part, because the legitimate inflows are the bulk of the traffic. Input PII detection is largely about access and appropriateness: is this person, in this context, permitted to bring this data in.
+
+Output PII is the graver surface, and the case treats it as such. Output PII is data the model produces -- and when the model surfaces PII it should not have, that is the system itself disclosing protected data, which is a categorically more serious event than a user bringing in data they had access to anyway. An output leak means the assistant told someone something protected they should not have learned: it surfaced one patient&#x27;s data in another&#x27;s context, produced information the requester was not authorised to receive, or reconstructed protected data the model had absorbed. Output monitoring is therefore essential and distinct from input scanning -- it watches what the model says, not just what it is told, because the model can leak data that was never in the input, drawn from its training or from context it should have kept separate. The case shows both surfaces monitored, with output leakage treated as the higher-severity event, because the difference between a user mishandling data they already had and the system disclosing data it should have protected is the difference between a policy violation and a breach.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Compliance-Shaped Response and the Cost of Both Errors</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Under healthcare compliance, the PII-leak response is shaped by regulation exactly as the enterprise case established, but the PII case sharpens a point that the balance makes unavoidable: both errors carry real cost, so the response must be calibrated rather than maximally aggressive. A missed leak -- a false negative -- is a compliance event, potentially a reportable breach with regulatory and patient-harm consequences. But an over-flag -- a false positive -- is not a harmless abundance of caution here; it is a disruption to clinical care, blocking or delaying a provider doing legitimate work with patient data, and in a clinical setting that disruption has its own real cost. This is unlike the attack cases, where a false positive is mostly wasted analyst time; in the PII case, a false positive can impede care. The response must therefore be precise, and the playbook reflects a calibrated posture rather than a block-everything one.
+
+When a genuine leak is caught, the response is the full compliance-shaped sequence: contain the leak, preserve the record to the regulatory standard, assess against reporting thresholds, escalate to the compliance function, and trigger the reporting obligation if the thresholds are met -- the healthcare version of the enterprise playbook, with the reporting stakes at their highest because a PII breach is squarely what the regulations exist to govern. But the playbook also has to handle the ambiguous case gracefully: a flagged flow that might be a leak or might be legitimate handling should be escalated for rapid human judgement rather than automatically blocked, because auto-blocking a false positive impedes care and auto-permitting a false negative risks a breach -- neither error is acceptable to make silently. The SIEM integration of Chapter 16 carries the leak detection into operations with the context that lets a responder make that judgement quickly: the entity, the flow, the authorisation, the reason it was flagged. The case shows that PII response under compliance is a precision exercise, calibrated against two costly errors, in a way the attack responses are not.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Lessons and Architecture Recommendations</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The PII case validates the scanner and output monitoring against real leakage under the hardest constraint -- a domain where PII handling is routine -- and yields architecture recommendations centred on the low-false-positive balance. The first is contextual detection: a PII scanner in a PII-native domain must evaluate the context of a flow, not just the presence of PII, because leakage is contextual and a lexical scanner cannot separate leak from legitimate use. This means integrating the scanner with the behavioural context -- entity, authorisation, purpose, channel -- so the same identifier is judged by where it is going. The second is output-surface priority: output monitoring must be treated as first-class and higher-severity than input scanning, because an output leak is the system disclosing protected data, the graver event. The third is calibrated response: because both a missed leak and an over-flag carry real cost in a clinical setting, the response must be precise and route ambiguous cases to rapid human judgement rather than auto-blocking, so it neither impedes care nor risks a silent breach.
+
+The deeper lesson is about the inverted detection posture the PII case reveals. Every attack case sought a rare bad thing against a benign background, where high recall is the priority and a false positive is cheap. The PII case seeks the rare misuse of a thing that is overwhelmingly used correctly, where precision is the priority and a false positive is expensive -- it disrupts the legitimate work the system exists to support. This inversion is the case&#x27;s contribution to the chapter: it shows that detection is not one posture but several, and that a detector&#x27;s tuning must follow the cost structure of its domain, not a generic recall-maximising default. A PII scanner tuned like an attack detector fails in healthcare not because it detects badly but because it detects with the wrong posture for a domain where the thing it detects is mostly legitimate. It validates that the Chapter 15 PII scanner, integrated with context and tuned for its domain&#x27;s cost structure, prevents leakage without disrupting care -- and it sets up the final case, where the threat returns to coordinated attack, distributed across a network of entities that the graph analysis must catch.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Why PII Detection Inverts the Usual Posture</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">In a healthcare deployment, PII handling is the work, so the detection posture inverts from the attack cases.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li></li><li>Attack detection</li><li>PII detection in healthcare</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>The target is</li><li>A rare bad thing in a benign background</li><li>The rare misuse of a mostly-legitimate thing</li></ul>
+<ul class="blist"><li>Priority</li><li>High recall on the rare bad thing</li><li>High precision -- do not disrupt legitimate use</li></ul>
+<ul class="blist"><li>A false positive costs</li><li>Wasted analyst time</li><li>Disruption to clinical care</li></ul>
+<ul class="blist"><li>PII is</li><li>Anomalous, always unwanted</li><li>The substance of the work, mostly legitimate</li></ul>
+<ul class="blist"><li>The problem is</li><li>Finding a needle in a haystack</li><li>Finding a misplaced needle in a needlestack</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Leakage Versus Legitimate Handling</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Leakage is a property of context, not of the data. The identical PII is a leak or legitimate depending on the flow.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Factor</li><li>Legitimate handling</li><li>Leakage</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Who handles it</li><li>An authorised provider</li><li>An unauthorised party</li></ul>
+<ul class="blist"><li>For what purpose</li><li>Clinical care</li><li>A purpose outside care</li></ul>
+<ul class="blist"><li>Through what channel</li><li>An appropriate channel</li><li>A channel that should not carry it</li></ul>
+<ul class="blist"><li>The PII itself</li><li>Identical</li><li>Identical</li></ul>
+<ul class="blist"><li>What distinguishes them</li><li>The context of the flow</li><li>The context of the flow</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Input PII versus Output PII</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Two surfaces of leakage. Output leakage is the graver surface because it is the system itself disclosing protected data.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li></li><li>Input PII</li><li>Output PII</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>The data is</li><li>Arriving in a request</li><li>Produced by the model</li></ul>
+<ul class="blist"><li>A leak means</li><li>Data enters that should not, or via an unauthorised party</li><li>The system discloses protected data it should have kept</li></ul>
+<ul class="blist"><li>Caught by</li><li>Input PII scanner</li><li>Output monitoring</li></ul>
+<ul class="blist"><li>Can leak data not in the input</li><li>No</li><li>Yes -- from training or cross-context</li></ul>
+<ul class="blist"><li>Severity</li><li>Serious</li><li>Graver -- a system disclosure, not a user mishandling</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PII Leakage Prevention Architecture Recommendations</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The transferable recommendations the case yields, centred on the low-false-positive balance.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Recommendation</li><li>What it means</li><li>Why</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Contextual detection</li><li>Judge PII by the context of its flow, not its presence</li><li>Leakage is contextual; a lexical scanner cannot separate leak from legitimate use</li></ul>
+<ul class="blist"><li>Output-surface priority</li><li>Treat output monitoring as first-class and higher-severity</li><li>An output leak is the system disclosing protected data</li></ul>
+<ul class="blist"><li>Calibrated response</li><li>Route ambiguous flows to rapid human judgement, not auto-block</li><li>Both a missed leak and an over-flag carry real cost in care</li></ul>
+<ul class="blist"><li>Domain-tuned posture</li><li>Tune for precision, not generic recall-maximising</li><li>PII handling is the work; over-flagging disrupts it</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">PII-Leakage Case Analysis</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">(case analysis -- incident, detection, response, lessons)</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The full incident-detection-response-lessons analysis of the PII-leakage case: the healthcare scenario where PII handling is routine, the low-false-positive balance as the distinctive challenge, leakage as a contextual rather than lexical distinction, input and output PII with output as the graver surface, the compliance-shaped and calibrated response, and the lessons on the inverted detection posture. Presented as the structured analysis in the prose and reference tables.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">No runnable code: a case analysis in the chapter&#x27;s deliverable form. It follows the 18.01 method, foregrounding how the Chapter 15 PII scanner must integrate with the behavioural context to distinguish leakage from legitimate handling, and why output monitoring is the higher-severity surface.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># Section 18.05 deliverable: PII-Leakage Case Analysis.
+#
+#   INCIDENT   Composite healthcare deployment where PII handling is the routine
+#              work; the rare misuse must be found among mostly-legitimate PII.
+#   DETECTION  Catching PII is the easy part (Ch15 scanner). The hard part is
+#              distinguishing LEAKAGE from LEGITIMATE HANDLING, which is
+#              CONTEXTUAL, not lexical -- the same identifier is a leak or not
+#              depending on who/where/why. This draws in the behavioural context
+#              (entity, authorisation, purpose, channel) from Ch13.
+#              Input PII  -&gt; input scanner (access/appropriateness).
+#              Output PII -&gt; output monitoring (the graver, system-disclosure surface).
+#   RESPONSE   Compliance-shaped AND calibrated: contain + audit + assess-thresholds
+#              + report; route AMBIGUOUS flows to rapid human judgement rather than
+#              auto-block, because both errors cost (missed leak = breach;
+#              over-flag = disrupted care).
+#   LESSONS    The detection posture INVERTS: precision over recall, because the
+#              thing detected is mostly legitimate. A PII scanner tuned like an
+#              attack detector fails in a PII-native domain.
+print(&#x27;Section 18.05: PII-leakage case analysis -- see prose and tables.&#x27;)</code></pre>
+<h3 class="sh3">Note</h3>
+<p class="prose">Deliverable is a structured case analysis, not code.</p>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Compliance-Aware PII-Leak Response Playbook</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">(response playbook -- PII leak under healthcare compliance)</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The response playbook for a PII leak under healthcare compliance, following the 18.01 template but calibrated against two costly errors: the trigger, the calibrated containment (block confirmed leaks, route ambiguous flows to rapid human judgement), the enrichment with flow context, the compliance escalation with reporting assessment, the recovery, and the review. The playbook that meets a PII leak&#x27;s regulatory stakes without disrupting the legitimate care the false-positive would impede.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">No runnable code: a response playbook in the chapter&#x27;s deliverable form. It extends the enterprise compliance playbook of 18.02 with the calibrated, precision-oriented handling the PII balance requires, depending on the Chapter 16 integration to carry the flow context a human judgement needs.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># Section 18.05 deliverable: Compliance-Aware PII-Leak Response Playbook.
+#
+#   TRIGGER   PII scanner or output monitoring flags a PII flow.
+#   CONTAIN   Confirmed leak -&gt; block and preserve the record under access control.
+#             Ambiguous flow -&gt; do NOT auto-block; route to rapid human judgement
+#             (auto-block impedes care; auto-permit risks a breach).
+#   ENRICH    Attach the flow context -- entity, authorisation, purpose, channel,
+#             input vs output surface -- via the Ch16 integration.
+#   ESCALATE  For a confirmed leak: audit-log to standard, assess against
+#             reporting thresholds, escalate to compliance, trigger reporting if met.
+#             Output leaks escalate at higher severity than input leaks.
+#   RECOVER   Confirm the leak is contained; restore normal handling; ensure
+#             legitimate care flows are not left blocked.
+#   REVIEW    Disposition into the Ch17 tuning loop, tuning for precision so the
+#             scanner does not drift toward disrupting legitimate handling.
+print(&#x27;Section 18.05: compliance-aware PII-leak response playbook -- see prose.&#x27;)</code></pre>
+<h3 class="sh3">Note</h3>
+<p class="prose">Deliverable is a response playbook, not code.</p>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Tuning a PII scanner like an attack detector in a PII-native domain</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The scanner is a detector, so it is tuned for high recall on PII the way an attack detector is tuned for high recall on attacks.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">In a healthcare deployment where PII handling is routine, the recall-maximising scanner flags the bulk of the legitimate workload and makes the assistant unusable for clinical work.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Tune for precision, following the domain&#x27;s cost structure: the target is the rare misuse of a mostly-legitimate thing, so over-flagging disrupts the work the system exists to support.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Detecting leakage lexically, on the presence of PII patterns</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">PII has recognisable patterns, so flagging on those patterns looks like a direct way to catch leaks.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A lexical scanner cannot separate a leak from legitimate handling, because the identical PII is both depending on context, so it either misses leaks or floods on legitimate use.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Detect leakage contextually -- judging the flow&#x27;s destination, handler, purpose, and channel -- by integrating the scanner with the behavioural context that defines whether a flow is legitimate.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Monitoring input PII but not output PII</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Input scanning catches data coming in, which feels like the natural place to stop leaks -- at the door.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Output leakage goes uncaught, and the model can disclose protected data that was never in the input -- from training or cross-context -- which is the graver, system-disclosure surface.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat output monitoring as first-class and higher-severity than input scanning, because an output leak is the system itself disclosing protected data.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Auto-blocking every flagged PII flow to be safe</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Blocking anything flagged seems like the cautious, compliance-safe default for protected data.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">In a clinical setting a false-positive block impedes legitimate care, so an aggressive auto-block trades a compliance risk for a direct disruption to the work -- both are costly.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Calibrate the response: block confirmed leaks, but route ambiguous flows to rapid human judgement, because both a missed leak and an over-flag carry real cost in care.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Section 18.05 returns to the healthcare compliance dimension in depth around PII leakage, and its distinctive contribution is that it is the one case not fundamentally about catching an attack but about catching leaks without blocking legitimate use -- in a domain where the data being scanned for is the substance of the work. In a clinical assistant, PII handling is routine and necessary, so a scanner tuned like an attack detector, flagging PII wherever it appears, would flag the entire workload and make the system unusable. The real problem is not detecting PII, which the Chapter 15 scanner does well, but distinguishing the rare leak from the overwhelming majority of legitimate handling -- a needle in a needlestack rather than a needle in a haystack, which inverts the usual detection posture from recall-priority to precision-priority. The central analytical move is that leakage is contextual, not lexical: the identical patient identifier is a leak or legitimate depending on who handles it, for what purpose, through what channel, so a lexical scanner cannot make the distinction and must integrate with the behavioural context -- entity, authorisation, purpose -- that defines a flow as appropriate or not. The case works both surfaces: input PII, largely about access and appropriateness, and output PII, the graver surface, because an output leak is the system itself disclosing protected data rather than a user mishandling data they already had. Under healthcare compliance both errors carry real cost -- a missed leak is a reportable breach, an over-flag is a disruption to care -- so the response is calibrated rather than maximally aggressive, blocking confirmed leaks but routing ambiguous flows to rapid human judgement. The recommendations centre on the balance: contextual detection, output-surface priority, calibrated response, and domain-tuned precision. The deeper lesson is that detection posture must follow the domain&#x27;s cost structure, not a generic recall-maximising default.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>In a PII-native domain like healthcare, PII handling is the work, so flagging PII wherever it appears makes the system unusable</li><li>The challenge is not catching PII but distinguishing rare leaks from mostly-legitimate handling -- a precision, not recall, problem</li><li>Leakage is contextual, not lexical: the identical PII is a leak or legitimate depending on the flow&#x27;s who, why, and how</li><li>Output PII leakage is the graver surface, because it is the system itself disclosing protected data</li><li>Under compliance both a missed leak and an over-flag carry real cost, so the response is calibrated and routes ambiguity to humans</li><li>The deeper lesson is that detection posture must follow the domain&#x27;s cost structure, not a generic recall-maximising default</li></ul>
+<h2 class="sh1">Preview Section 18 06</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Case Study 5: Model Abuse Detection</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 18.06 takes the final case to model abuse in an e-commerce context, where the threat is not a single attacker but a coordinated network. It shows the rate-based, coverage, and graph detection of Chapter 13 against real exfiltration, enumeration, and coordinated abuse -- the exfiltration campaign of individually-benign queries, the enumeration sweep, and the Sybil and bot networks of individually-clean accounts that only aggregate detection can catch -- and draws the architecture recommendations for entity and graph detection in production, completing the case studies before the book conclusion.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 18 Section 18.01: the case study method and composite evidence convention this case applies</li><li>Chapter 18 Section 18.02: the healthcare compliance dimension this case develops in depth</li><li>Chapter 15 Section 15.04: the PII scanner this case exercises</li><li>Chapter 13: the behavioural context that distinguishes leakage from legitimate handling</li><li>Chapter 16: the SIEM integration carrying the calibrated, compliance-aware PII response</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 18.06: model abuse detection, where the threat becomes coordinated and multi-entity</li><li>Section 18.07: the consolidated lessons, where the inverted posture becomes a best practice</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>case-study</li><li>pii-leakage-prevention</li><li>healthcare-compliance</li><li>low-false-positive</li><li>contextual-detection</li><li>input-pii</li><li>output-pii</li><li>legitimate-handling</li><li>calibrated-response</li><li>detection-posture</li><li>architecture-recommendation</li><li>real-world</li><li>part-4-chapter-4</li></ul>
+</article>

@@ -1,0 +1,919 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 3 · Section 19 · ~6 pages</div>
+<h1>Context Windows and Memory Management</h1>
+<div class="tags"><span class="tag">context-window</span><span class="tag">attention-complexity</span><span class="tag">sliding-window</span><span class="tag">sparse-attention</span><span class="tag">efficient-transformers</span><span class="tag">memory-management</span></div>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Context Windows and Memory Management</p>
+<h3 class="sh2">Number</h3>
+<p class="prose">3.19</p>
+<h3 class="sh2">Purpose</h3>
+<p class="prose">Transformer context windows determine how much text the model can process at once. Standard 
+self-attention has O(n²) complexity in sequence length - quadratic scaling that quickly 
+becomes prohibitive. BERT handles 512 tokens, GPT-2 extends to 1024, GPT-3 reaches 2048, 
+but longer contexts require fundamentally different approaches. This section covers why 
+context windows matter, the computational barriers, and efficient attention mechanisms 
+that enable longer context.
+
+The O(n²) complexity comes from computing attention scores between all token pairs: for 
+n tokens, we compute n×n scores. At 512 tokens, that&#x27;s 262K comparisons. At 4096 tokens, 
+16.7M comparisons. Memory and compute grow quadratically, creating hard limits on context 
+length. Solutions include sliding window attention, sparse attention patterns, and hybrid 
+approaches like Longformer and BigBird.
+
+For security engineers: Context window limits create vulnerabilities where adversaries 
+place payloads knowing they&#x27;ll push security-relevant information out of context. Long 
+inputs enable DoS attacks through quadratic complexity. Context truncation strategies 
+affect what the model sees and misses. Understanding context management reveals both 
+defensive truncation approaches and offensive context manipulation techniques.</p>
+<h3 class="sh2">Learning Objectives</h3>
+<h3 class="sh3">Conceptual</h3>
+<ul class="blist"><li>Understand O(n²) attention complexity and its implications</li><li>Grasp context window limits: 512, 1024, 2048, 4096+ tokens</li><li>Learn sliding window attention: local context windows</li><li>See sparse attention: predetermined sparsity patterns</li><li>Compare efficient attention mechanisms and trade-offs</li></ul>
+<h3 class="sh3">Practical</h3>
+<ul class="blist"><li>Implement sliding window attention</li><li>Build sparse attention pattern generator</li><li>Analyze context length vs complexity trade-offs</li><li>Create context truncation strategies</li><li>Demonstrate long-context handling techniques</li></ul>
+<h3 class="sh3">Security Focused</h3>
+<ul class="blist"><li>Exploit context window limits for payload placement</li><li>Launch DoS attacks via long inputs</li><li>Manipulate context truncation to hide information</li><li>Analyze what gets pushed out of context</li><li>Audit context management for security vulnerabilities</li></ul>
+<h3 class="sh2">Prerequisites</h3>
+<h3 class="sh3">Knowledge</h3>
+<ul class="blist"><li>Section 3.6-3.8: Self-attention mechanism</li><li>Understanding of computational complexity</li><li>Memory and compute trade-offs</li><li>Basic linear algebra (matrix operations)</li></ul>
+<h3 class="sh3">Skills</h3>
+<ul class="blist"><li>Attention implementation</li><li>Complexity analysis</li><li>Memory profiling</li><li>Algorithm optimization</li></ul>
+<h3 class="sh2">Key Transitions</h3>
+<h3 class="sh3">From Section 3 18</h3>
+<p class="prose">Section 3.18 covered T5 and architectural variants. Now we examine a fundamental 
+constraint shared by all transformers: context window limitations from O(n²) attention 
+complexity and approaches to extend context length.</p>
+<h3 class="sh3">To Next Section</h3>
+<p class="prose">Section 3.20 will cover LLM security comprehensively - attacks like prompt injection, 
+jailbreaking, data extraction, and defenses. Context window manipulation will be one 
+of many attack vectors examined.</p>
+<h2 class="sh1">Topics</h2>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">1</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Attention Complexity and Context Window Limits</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Standard self-attention computes attention scores between all token pairs, resulting 
+in O(n²) complexity in sequence length n. This quadratic scaling limits practical 
+context windows. Memory requirements also grow quadratically, creating hard constraints 
+on maximum sequence length even with unlimited compute.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Quadratic Complexity Explained</h3>
+<h4 class="sh3">Attention Computation</h4>
+<p class="prose">Self-attention formula:
+Attention(Q, K, V) = softmax(QK^T / √d_k) × V
+
+Key operation: QK^T
+- Q: (n, d_k) query matrix
+- K^T: (d_k, n) key matrix transposed
+- Result: (n, n) attention scores
+
+→ n² computations!</p>
+<h4 class="sh3">Complexity Breakdown</h4>
+<h4 class="sh3">Matrix Multiply</h4>
+<p class="prose">O(n² × d_k) for QK^T</p>
+<h4 class="sh3">Softmax</h4>
+<p class="prose">O(n²) over attention scores</p>
+<h4 class="sh3">Value Multiply</h4>
+<p class="prose">O(n² × d_v) for attention × V</p>
+<h4 class="sh3">Total</h4>
+<p class="prose">O(n² × d_model)</p>
+<h4 class="sh3">Scaling Example</h4>
+<p class="prose">Sequence length 512: 512² = 262,144 attention scores
+Sequence length 1024: 1,024² = 1,048,576 (4× more)
+Sequence length 2048: 2,048² = 4,194,304 (16× more)
+Sequence length 4096: 4,096² = 16,777,216 (64× more)
+
+→ Doubling length = 4× compute!</p>
+<h3 class="sh3">Memory Requirements</h3>
+<h4 class="sh3">Attention Matrix Storage</h4>
+<p class="prose">Attention scores: (n, n) matrix
+Batch size b, h heads: (b, h, n, n)
+
+FP32: 4 bytes per float
+Memory = b × h × n² × 4 bytes</p>
+<h4 class="sh3">Memory Examples</h4>
+<h4 class="sh3">Bert Base</h4>
+<p class="prose">Batch 32, 12 heads, 512 length
+Memory = 32 × 12 × 512² × 4 = 402MB (just attention!)</p>
+<h4 class="sh3">Long Context</h4>
+<p class="prose">Batch 8, 12 heads, 4096 length
+Memory = 8 × 12 × 4096² × 4 = 6.4GB (attention only!)</p>
+<h4 class="sh3">Catastrophic Scaling</h4>
+<p class="prose">Sequence 16K, batch 4, 16 heads
+Memory = 4 × 16 × 16384² × 4 = 68GB
+→ Doesn&#x27;t fit on single GPU!</p>
+<h4 class="sh3">Total Memory</h4>
+<p class="prose">Model parameters
++ Optimizer states (2× params for Adam)
++ Activations (all layer outputs)
++ Attention matrices (largest for long sequences)
++ Gradients (same size as activations)</p>
+<h3 class="sh3">Context Window Limits In Practice</h3>
+<h4 class="sh3">Bert</h4>
+<p class="prose">512 tokens (original)</p>
+<h4 class="sh3">Gpt 2</h4>
+<p class="prose">1024 tokens</p>
+<h4 class="sh3">Gpt 3</h4>
+<p class="prose">2048 tokens (davinci)</p>
+<h4 class="sh3">Gpt 3 5 Turbo</h4>
+<p class="prose">4096 tokens</p>
+<h4 class="sh3">Gpt 4</h4>
+<p class="prose">8K tokens (standard), 32K tokens (extended)</p>
+<h4 class="sh3">Claude 2</h4>
+<p class="prose">100K tokens</p>
+<h4 class="sh3">Claude 3</h4>
+<p class="prose">200K tokens</p>
+<h4 class="sh3">Why Limits Exist</h4>
+<p class="prose">1. Memory constraints (quadratic growth)
+2. Compute cost (quadratic operations)
+3. Training time (longer sequences = slower)
+4. Position encoding limits (learned embeddings)</p>
+<h3 class="sh3">Truncation Strategies</h3>
+<h4 class="sh3">First K Tokens</h4>
+<p class="prose">Keep first k tokens, discard rest
+→ Loses end of document</p>
+<h4 class="sh3">Last K Tokens</h4>
+<p class="prose">Keep last k tokens, discard beginning
+→ Loses context, keeps recent</p>
+<h4 class="sh3">Sliding Window</h4>
+<p class="prose">Keep most recent k tokens
+→ Window slides as new tokens arrive</p>
+<h4 class="sh3">Head Tail</h4>
+<p class="prose">Keep first k/2 and last k/2 tokens
+→ Preserves beginning and end, loses middle</p>
+<h4 class="sh3">Importance Based</h4>
+<p class="prose">Score tokens by importance
+→ Keep top-k important tokens
+→ Complex, expensive</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Complexity Analyzer</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>import numpy as np
+
+def analyze_attention_complexity(seq_len: int,
+                                d_model: int = 768,
+                                num_heads: int = 12,
+                                batch_size: int = 1) -&gt; dict:
+    &quot;&quot;&quot;
+    Analyze computational and memory complexity of self-attention.
+    
+    Args:
+        seq_len: Sequence length
+        d_model: Model dimension
+        num_heads: Number of attention heads
+        batch_size: Batch size
+    
+    Returns:
+        metrics: Complexity metrics
+    &quot;&quot;&quot;
+    d_k = d_model // num_heads
+    
+    # Computational complexity
+    # QK^T: (n, d_k) @ (d_k, n) = O(n² × d_k)
+    qk_flops = batch_size * num_heads * seq_len * seq_len * d_k
+    
+    # Softmax: O(n²)
+    softmax_flops = batch_size * num_heads * seq_len * seq_len
+    
+    # Attention × V: (n, n) @ (n, d_v) = O(n² × d_v)
+    attn_v_flops = batch_size * num_heads * seq_len * seq_len * d_k
+    
+    total_flops = qk_flops + softmax_flops + attn_v_flops
+    
+    # Memory requirements (FP32)
+    # Attention matrix: (batch, heads, n, n)
+    attention_memory = batch_size * num_heads * seq_len * seq_len * 4  # bytes
+    
+    # Q, K, V matrices: 3 × (batch, heads, n, d_k)
+    qkv_memory = 3 * batch_size * num_heads * seq_len * d_k * 4
+    
+    total_memory = attention_memory + qkv_memory
+    
+    return {
+        &#x27;seq_len&#x27;: seq_len,
+        &#x27;total_flops&#x27;: total_flops,
+        &#x27;flops_billions&#x27;: total_flops / 1e9,
+        &#x27;attention_memory_mb&#x27;: attention_memory / (1024**2),
+        &#x27;total_memory_mb&#x27;: total_memory / (1024**2),
+        &#x27;attention_scores&#x27;: seq_len * seq_len
+    }
+
+
+# Example analysis
+print(&quot;=== Attention Complexity Analysis ===\n&quot;)
+
+lengths = [512, 1024, 2048, 4096, 8192]
+
+print(f&quot;{&#x27;Length&#x27;:&gt;6} | {&#x27;Attn Scores&#x27;:&gt;12} | {&#x27;FLOPs (B)&#x27;:&gt;10} | {&#x27;Memory (MB)&#x27;:&gt;12}&quot;)
+print(&quot;-&quot; * 60)
+
+for seq_len in lengths:
+    metrics = analyze_attention_complexity(seq_len)
+    print(f&quot;{seq_len:6,} | {metrics[&#x27;attention_scores&#x27;]:12,} | &quot;
+          f&quot;{metrics[&#x27;flops_billions&#x27;]:10.2f} | &quot;
+          f&quot;{metrics[&#x27;attention_memory_mb&#x27;]:12.1f}&quot;)
+
+print()
+print(&quot;Key observations:&quot;)
+print(&quot;  - Doubling length → 4× attention scores&quot;)
+print(&quot;  - Doubling length → 4× memory&quot;)
+print(&quot;  - 4096 tokens: ~17M attention scores, ~6.4GB memory&quot;)
+print(&quot;  - 8192 tokens: ~67M attention scores, ~25GB memory&quot;)
+print(&quot;  → Quadratic scaling creates hard limits!&quot;)</code></pre>
+<h3 class="sh3">Truncation Demo</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def demonstrate_truncation_strategies(text_tokens: np.ndarray,
+                                     max_len: int = 512):
+    &quot;&quot;&quot;Demonstrate different truncation strategies.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Context Truncation Strategies ===\n&quot;)
+    
+    original_len = len(text_tokens)
+    print(f&quot;Original length: {original_len} tokens&quot;)
+    print(f&quot;Max context: {max_len} tokens&quot;)
+    print(f&quot;Must remove: {original_len - max_len} tokens\n&quot;)
+    
+    # Strategy 1: First k
+    first_k = text_tokens[:max_len]
+    print(f&quot;1. First-k truncation:&quot;)
+    print(f&quot;   Keep: tokens 0-{max_len-1}&quot;)
+    print(f&quot;   Lose: tokens {max_len}-{original_len-1}&quot;)
+    print(f&quot;   Effect: Lose end of document\n&quot;)
+    
+    # Strategy 2: Last k
+    last_k = text_tokens[-max_len:]
+    print(f&quot;2. Last-k truncation:&quot;)
+    print(f&quot;   Keep: tokens {original_len-max_len}-{original_len-1}&quot;)
+    print(f&quot;   Lose: tokens 0-{original_len-max_len-1}&quot;)
+    print(f&quot;   Effect: Lose beginning, keep recent\n&quot;)
+    
+    # Strategy 3: Head-tail
+    head_size = max_len // 2
+    tail_size = max_len - head_size
+    head_tail = np.concatenate([
+        text_tokens[:head_size],
+        text_tokens[-tail_size:]
+    ])
+    print(f&quot;3. Head-tail truncation:&quot;)
+    print(f&quot;   Keep: tokens 0-{head_size-1} and {original_len-tail_size}-{original_len-1}&quot;)
+    print(f&quot;   Lose: middle {original_len - max_len} tokens&quot;)
+    print(f&quot;   Effect: Preserve beginning and end\n&quot;)
+    
+    return {
+        &#x27;first_k&#x27;: first_k,
+        &#x27;last_k&#x27;: last_k,
+        &#x27;head_tail&#x27;: head_tail
+    }
+
+
+# Example
+text_tokens = np.arange(2000)  # Simulate 2000 tokens
+max_len = 512
+
+strategies = demonstrate_truncation_strategies(text_tokens, max_len)
+
+print(&quot;Security implications:&quot;)
+print(&quot;  - Adversary knows truncation strategy&quot;)
+print(&quot;  - Can place payload where it won&#x27;t be truncated&quot;)
+print(&quot;  - First-k: payload at beginning survives&quot;)
+print(&quot;  - Last-k: payload at end survives&quot;)
+print(&quot;  - Head-tail: payload in middle gets removed&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Context Overflow Attacks</h3>
+<p class="prose">Adversary exploits context limits:
+- Place malicious payload at start
+- Flood with benign tokens
+- Security-relevant info pushed out of context
+- Model never sees warnings/constraints
+- Defense: Critical info first, validate within window</p>
+<h3 class="sh3">Dos Via Long Inputs</h3>
+<p class="prose">Quadratic complexity enables DoS:
+- Send very long sequences (8K, 16K tokens)
+- O(n²) computation overwhelms server
+- Memory requirements cause OOM crashes
+- Defense: Hard input length limits, rate limiting</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">2</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Efficient Attention Mechanisms</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Efficient attention reduces O(n²) complexity through sparsity - not all tokens need 
+to attend to all others. Sliding window attention limits each token to local neighbors. 
+Sparse attention uses predetermined patterns (strided, dilated). Longformer and BigBird 
+combine local, global, and random attention for linear complexity while maintaining 
+long-range dependencies.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Sliding Window Attention</h3>
+<h4 class="sh3">Concept</h4>
+<p class="prose">Each token attends only to w neighbors:
+
+Position i attends to: i-w/2 ... i ... i+w/2
+
+Window size w (e.g., 256)
+→ Only local context, not full sequence</p>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">Standard attention: O(n²)
+Sliding window: O(n × w)
+
+If w is constant (e.g., 256):
+→ O(n) linear complexity!</p>
+<h4 class="sh3">Advantages</h4>
+<ul class="blist"><li>Linear complexity in sequence length</li><li>Constant memory per token</li><li>Can handle very long sequences</li></ul>
+<h4 class="sh3">Disadvantages</h4>
+<ul class="blist"><li>No long-range dependencies</li><li>Information flows slowly across distance</li><li>Token at position 0 can&#x27;t directly see position 1000</li></ul>
+<h3 class="sh3">Sparse Attention Patterns</h3>
+<h4 class="sh3">Strided Attention</h4>
+<p class="prose">Attend to every k-th token:
+Position i attends to: i-k, i-2k, i-3k, ...
+
+Reduces attention from n to n/k positions</p>
+<h4 class="sh3">Dilated Attention</h4>
+<p class="prose">Like strided but with gaps:
+Position i attends to: i-1, i-2, i-4, i-8, i-16, ...
+
+Logarithmic coverage of history</p>
+<h4 class="sh3">Fixed Patterns</h4>
+<p class="prose">Predefined sparsity patterns:
+- Attend to first token (global)
+- Attend to local window
+- Attend to strided positions
+
+Combine patterns for coverage + efficiency</p>
+<h3 class="sh3">Longformer</h3>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Combines three attention patterns:
+
+1. Local attention: Sliding window (w=512)
+2. Global attention: Some tokens attend to all
+3. Dilated attention: Strided pattern</p>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(n × w) with small w → O(n) linear</p>
+<h4 class="sh3">Max Length</h4>
+<p class="prose">4096 tokens (standard), up to 16K+</p>
+<h4 class="sh3">Use Cases</h4>
+<p class="prose">Long document understanding
+Document QA
+Summarization</p>
+<h3 class="sh3">Bigbird</h3>
+<h4 class="sh3">Architecture</h4>
+<p class="prose">Sparse attention with three components:
+
+1. Random attention: Random token pairs
+2. Window attention: Local neighborhood
+3. Global attention: Special global tokens</p>
+<h4 class="sh3">Theoretical Result</h4>
+<p class="prose">BigBird is universal approximator:
+→ Can approximate any sequence function
+→ Despite sparsity!</p>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(n) linear</p>
+<h4 class="sh3">Max Length</h4>
+<p class="prose">4096 tokens standard</p>
+<h3 class="sh3">Attention Comparison</h3>
+<h4 class="sh3">Full Attention</h4>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(n²)</p>
+<h4 class="sh3">Max Practical Length</h4>
+<p class="prose">2048 tokens</p>
+<h4 class="sh3">Dependencies</h4>
+<p class="prose">All-to-all</p>
+<h4 class="sh3">Sliding Window</h4>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(n × w)</p>
+<h4 class="sh3">Max Practical Length</h4>
+<p class="prose">16K+ tokens</p>
+<h4 class="sh3">Dependencies</h4>
+<p class="prose">Local only</p>
+<h4 class="sh3">Longformer</h4>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(n)</p>
+<h4 class="sh3">Max Practical Length</h4>
+<p class="prose">16K+ tokens</p>
+<h4 class="sh3">Dependencies</h4>
+<p class="prose">Local + global + dilated</p>
+<h4 class="sh3">Bigbird</h4>
+<h4 class="sh3">Complexity</h4>
+<p class="prose">O(n)</p>
+<h4 class="sh3">Max Practical Length</h4>
+<p class="prose">8K+ tokens</p>
+<h4 class="sh3">Dependencies</h4>
+<p class="prose">Local + random + global</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Sliding Window Attention</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def sliding_window_attention_mask(seq_len: int,
+                                 window_size: int = 256) -&gt; np.ndarray:
+    &quot;&quot;&quot;
+    Create sliding window attention mask.
+    
+    Args:
+        seq_len: Sequence length
+        window_size: Window size (total, centered on position)
+    
+    Returns:
+        mask: (seq_len, seq_len) attention mask
+    &quot;&quot;&quot;
+    # Initialize mask (1 = can attend, 0 = masked)
+    mask = np.zeros((seq_len, seq_len), dtype=bool)
+    
+    half_window = window_size // 2
+    
+    for i in range(seq_len):
+        # Position i attends to window around itself
+        start = max(0, i - half_window)
+        end = min(seq_len, i + half_window + 1)
+        mask[i, start:end] = True
+    
+    return mask
+
+
+# Example usage
+print(&quot;\n=== Sliding Window Attention ===\n&quot;)
+
+seq_len = 1024
+window_size = 256
+
+mask = sliding_window_attention_mask(seq_len, window_size)
+
+# Count attended positions per token
+attended_per_token = mask.sum(axis=1)
+
+print(f&quot;Sequence length: {seq_len}&quot;)
+print(f&quot;Window size: {window_size}&quot;)
+print(f&quot;Standard attention: {seq_len:,} positions per token&quot;)
+print(f&quot;Sliding window: ~{int(attended_per_token.mean())} positions per token&quot;)
+print()
+
+# Complexity comparison
+standard_ops = seq_len * seq_len
+sliding_ops = seq_len * window_size
+
+print(f&quot;Operations comparison:&quot;)
+print(f&quot;  Standard: {standard_ops:,} (n²)&quot;)
+print(f&quot;  Sliding:  {sliding_ops:,} (n×w)&quot;)
+print(f&quot;  Reduction: {standard_ops // sliding_ops}× fewer operations&quot;)
+print()
+
+# Visualize pattern (small example)
+small_len = 16
+small_window = 4
+small_mask = sliding_window_attention_mask(small_len, small_window)
+
+print(&quot;Sliding window pattern (16 tokens, window=4):&quot;)
+print(&quot;  0 = masked, 1 = can attend\n&quot;)
+for i in range(small_len):
+    row = &quot;&quot;.join(&quot;█&quot; if small_mask[i, j] else &quot;·&quot; for j in range(small_len))
+    print(f&quot;  {i:2}: {row}&quot;)</code></pre>
+<h3 class="sh3">Sparse Attention Patterns</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def create_sparse_attention_patterns(seq_len: int) -&gt; dict:
+    &quot;&quot;&quot;Create various sparse attention patterns.&quot;&quot;&quot;
+    
+    patterns = {}
+    
+    # 1. Strided attention (attend every 64 positions)
+    stride = 64
+    strided = np.zeros((seq_len, seq_len), dtype=bool)
+    for i in range(seq_len):
+        for j in range(0, i+1, stride):
+            strided[i, j] = True
+        strided[i, i] = True  # Always attend to self
+    patterns[&#x27;strided&#x27;] = strided
+    
+    # 2. Dilated attention (exponential spacing)
+    dilated = np.zeros((seq_len, seq_len), dtype=bool)
+    for i in range(seq_len):
+        # Attend to i, i-1, i-2, i-4, i-8, i-16, ...
+        offset = 1
+        while i - offset &gt;= 0:
+            dilated[i, i - offset] = True
+            offset *= 2
+        dilated[i, i] = True
+    patterns[&#x27;dilated&#x27;] = dilated
+    
+    # 3. Block sparse (blocks of size 64)
+    block_size = 64
+    block_sparse = np.zeros((seq_len, seq_len), dtype=bool)
+    for i in range(seq_len):
+        block_start = (i // block_size) * block_size
+        block_end = min(block_start + block_size, seq_len)
+        block_sparse[i, block_start:block_end] = True
+    patterns[&#x27;block_sparse&#x27;] = block_sparse
+    
+    return patterns
+
+
+print(&quot;\n=== Sparse Attention Patterns ===\n&quot;)
+
+seq_len = 512
+patterns = create_sparse_attention_patterns(seq_len)
+
+full_attention = seq_len * seq_len
+
+print(f&quot;Sequence length: {seq_len}&quot;)
+print(f&quot;Full attention: {full_attention:,} connections\n&quot;)
+
+for name, pattern in patterns.items():
+    connections = pattern.sum()
+    sparsity = 1 - (connections / full_attention)
+    
+    print(f&quot;{name.capitalize()}:&quot;)
+    print(f&quot;  Connections: {int(connections):,}&quot;)
+    print(f&quot;  Sparsity: {sparsity:.1%}&quot;)
+    print(f&quot;  Reduction: {full_attention // connections}× fewer\n&quot;)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Sparse Attention Information Leakage</h3>
+<p class="prose">Sparse patterns reveal model behavior:
+- Adversary knows which positions can interact
+- Can place related malicious tokens at interacting positions
+- Sliding window: payload spread across window
+- Defense: Randomize patterns, validate dependencies</p>
+<h3 class="sh3">Local Attention Bypass</h3>
+<p class="prose">Local attention limits information flow:
+- Security constraint at position 0
+- Malicious payload at position 1000
+- No direct path, information doesn&#x27;t propagate
+- Adversary exploits locality to bypass checks
+- Defense: Global attention on security tokens</p>
+<h3 class="sh2">Topic Number</h3>
+<p class="prose">3</p>
+<h3 class="sh2">Title</h3>
+<p class="prose">Long-Context Transformers and Memory</p>
+<h3 class="sh2">Overview</h3>
+<p class="prose">Extending context beyond 4096 tokens requires architectural innovation. Approaches 
+include memory augmentation (external memory), recurrence (process chunks sequentially), 
+compression (summarize past context), and hybrid methods. Each trades off between 
+context length, computational efficiency, and model capability.</p>
+<h3 class="sh2">Content</h3>
+<h3 class="sh3">Memory Augmented Transformers</h3>
+<h4 class="sh3">Compressive Transformer</h4>
+<p class="prose">Maintains two memory banks:
+1. Short-term memory: Recent tokens (standard attention)
+2. Long-term memory: Compressed past (learned compression)
+
+Old tokens compressed and stored
+→ Access to very long history with constant memory</p>
+<h4 class="sh3">Memorizing Transformer</h4>
+<p class="prose">External key-value memory:
+- Store past (key, value) pairs
+- Retrieve k-nearest neighbors
+- Attend to retrieved memories
+
+→ Effectively infinite context (retrieval-based)</p>
+<h4 class="sh3">Recurrent Memory Transformer</h4>
+<p class="prose">Segment-level recurrence:
+- Process document in chunks
+- Pass hidden state between chunks
+- Each chunk has standard attention
+
+→ Linear memory, but recurrent (slower)</p>
+<h3 class="sh3">Context Compression</h3>
+<h4 class="sh3">Summarization Based</h4>
+<p class="prose">Periodically summarize past context:
+- Every 1024 tokens, generate summary
+- Replace old tokens with summary
+- Continue with compressed history</p>
+<h4 class="sh3">Learned Compression</h4>
+<p class="prose">Trainable compression module:
+- Learn to compress past into fixed-size vector
+- Query compressed representation
+- Gradients train what to remember</p>
+<h4 class="sh3">Attention Pooling</h4>
+<p class="prose">Pool attention patterns:
+- Compress attention to representative tokens
+- Subsequent layers attend to pooled tokens
+- Hierarchical compression</p>
+<h3 class="sh3">Practical Approaches</h3>
+<h4 class="sh3">Chunking And Sliding</h4>
+<p class="prose">Process long documents in overlapping chunks:
+- Chunk 1: tokens 0-512
+- Chunk 2: tokens 256-768 (50% overlap)
+- Chunk 3: tokens 512-1024
+...
+
+Aggregate results across chunks</p>
+<h4 class="sh3">Hierarchical Processing</h4>
+<p class="prose">Process at multiple granularities:
+- Sentence-level attention within paragraph
+- Paragraph-level attention within document
+- Document-level attention across corpus</p>
+<h4 class="sh3">Retrieval Augmentation</h4>
+<p class="prose">Don&#x27;t put everything in context:
+- Retrieve relevant passages
+- Add only relevant context to prompt
+- RAG (Retrieval-Augmented Generation)</p>
+<h3 class="sh3">Context Length Progression</h3>
+<h4 class="sh3">Timeline</h4>
+<h4 class="sh3">Bert 2018</h4>
+<p class="prose">512 tokens</p>
+<h4 class="sh3">Gpt 2 2019</h4>
+<p class="prose">1024 tokens</p>
+<h4 class="sh3">Gpt 3 2020</h4>
+<p class="prose">2048 tokens</p>
+<h4 class="sh3">Longformer 2020</h4>
+<p class="prose">4096 tokens</p>
+<h4 class="sh3">Gpt 3 5 2022</h4>
+<p class="prose">4096 tokens</p>
+<h4 class="sh3">Claude 2 2023</h4>
+<p class="prose">100K tokens</p>
+<h4 class="sh3">Gpt 4 2023</h4>
+<p class="prose">32K tokens</p>
+<h4 class="sh3">Claude 3 2024</h4>
+<p class="prose">200K tokens</p>
+<h4 class="sh3">Gemini Pro 2024</h4>
+<p class="prose">1M tokens (claimed)</p>
+<h4 class="sh3">How 100K Possible</h4>
+<p class="prose">Combination of techniques:
+- Efficient attention (sparse patterns)
+- Better hardware (more GPU memory)
+- Compression techniques
+- Clever engineering</p>
+<h3 class="sh2">Implementation</h3>
+<h3 class="sh3">Context Length Comparison</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def compare_context_approaches(seq_len: int = 16384):
+    &quot;&quot;&quot;Compare different approaches for long context.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Long Context Approaches ===\n&quot;)
+    print(f&quot;Target sequence length: {seq_len:,} tokens\n&quot;)
+    
+    # 1. Full attention (baseline)
+    full_ops = seq_len * seq_len
+    full_mem = seq_len * seq_len * 4  # bytes
+    
+    print(&quot;1. Full Attention (O(n²)):&quot;)
+    print(f&quot;   Operations: {full_ops:,}&quot;)
+    print(f&quot;   Memory: {full_mem / (1024**3):.2f} GB&quot;)
+    print(f&quot;   Feasible: No (too expensive)\n&quot;)
+    
+    # 2. Sliding window
+    window = 512
+    sliding_ops = seq_len * window
+    sliding_mem = seq_len * window * 4
+    
+    print(f&quot;2. Sliding Window (w={window}):&quot;)
+    print(f&quot;   Operations: {sliding_ops:,}&quot;)
+    print(f&quot;   Memory: {sliding_mem / (1024**2):.1f} MB&quot;)
+    print(f&quot;   Reduction: {full_ops // sliding_ops}× vs full&quot;)
+    print(f&quot;   Feasible: Yes\n&quot;)
+    
+    # 3. Chunked processing
+    chunk_size = 2048
+    num_chunks = seq_len // chunk_size
+    chunk_ops = num_chunks * (chunk_size * chunk_size)
+    chunk_mem = chunk_size * chunk_size * 4
+    
+    print(f&quot;3. Chunked ({chunk_size} tokens/chunk):&quot;)
+    print(f&quot;   Chunks: {num_chunks}&quot;)
+    print(f&quot;   Operations: {chunk_ops:,}&quot;)
+    print(f&quot;   Memory: {chunk_mem / (1024**2):.1f} MB per chunk&quot;)
+    print(f&quot;   Reduction: {full_ops // chunk_ops}× vs full&quot;)
+    print(f&quot;   Feasible: Yes (sequential)\n&quot;)
+    
+    # 4. Sparse attention
+    connections_per_token = 256  # local + global
+    sparse_ops = seq_len * connections_per_token
+    sparse_mem = seq_len * connections_per_token * 4
+    
+    print(f&quot;4. Sparse Attention (~{connections_per_token} connections/token):&quot;)
+    print(f&quot;   Operations: {sparse_ops:,}&quot;)
+    print(f&quot;   Memory: {sparse_mem / (1024**2):.1f} MB&quot;)
+    print(f&quot;   Reduction: {full_ops // sparse_ops}× vs full&quot;)
+    print(f&quot;   Feasible: Yes\n&quot;)
+
+compare_context_approaches(16384)</code></pre>
+<h3 class="sh3">Truncation Impact Analysis</h3>
+<h4 class="sh3">Language</h4>
+<p class="prose">python</p>
+<h4 class="sh3">Code</h4>
+<pre class="code"><code>def analyze_truncation_impact(document_tokens: np.ndarray,
+                             max_context: int = 512):
+    &quot;&quot;&quot;Analyze what gets lost with different truncation strategies.&quot;&quot;&quot;
+    
+    print(&quot;\n=== Truncation Impact Analysis ===\n&quot;)
+    
+    doc_len = len(document_tokens)
+    
+    if doc_len &lt;= max_context:
+        print(f&quot;Document fits in context ({doc_len} &lt;= {max_context})&quot;)
+        return
+    
+    print(f&quot;Document: {doc_len} tokens&quot;)
+    print(f&quot;Context limit: {max_context} tokens&quot;)
+    print(f&quot;Overflow: {doc_len - max_context} tokens ({(doc_len - max_context) / doc_len * 100:.1f}%)\n&quot;)
+    
+    # Analyze different strategies
+    strategies = {
+        &#x27;first_k&#x27;: (0, max_context),
+        &#x27;last_k&#x27;: (doc_len - max_context, doc_len),
+        &#x27;head_tail&#x27;: None,  # Special case
+    }
+    
+    for name, span in strategies.items():
+        if name == &#x27;head_tail&#x27;:
+            half = max_context // 2
+            kept_indices = set(range(half)) | set(range(doc_len - half, doc_len))
+            kept_pct = (max_context / doc_len) * 100
+            lost_start = half
+            lost_end = doc_len - half
+        else:
+            start, end = span
+            kept_indices = set(range(start, end))
+            kept_pct = (max_context / doc_len) * 100
+            
+            if name == &#x27;first_k&#x27;:
+                lost_start = max_context
+                lost_end = doc_len
+            else:  # last_k
+                lost_start = 0
+                lost_end = doc_len - max_context
+        
+        print(f&quot;{name.upper()} truncation:&quot;)
+        print(f&quot;  Kept: {kept_pct:.1f}% of document&quot;)
+        print(f&quot;  Lost: positions {lost_start}-{lost_end-1}&quot;)
+        
+        # Security consideration: Where can adversary hide?
+        if name == &#x27;first_k&#x27;:
+            safe_zone = &quot;Beginning (0-511)&quot;
+            danger_zone = f&quot;End ({max_context}+)&quot;
+        elif name == &#x27;last_k&#x27;:
+            safe_zone = f&quot;End ({doc_len-max_context}+)&quot;
+            danger_zone = f&quot;Beginning (0-{doc_len-max_context-1})&quot;
+        else:
+            safe_zone = f&quot;Beginning/End&quot;
+            danger_zone = f&quot;Middle ({half}-{doc_len-half-1})&quot;
+        
+        print(f&quot;  Adversary payload survives in: {safe_zone}&quot;)
+        print(f&quot;  Adversary payload hidden in: {danger_zone}\n&quot;)
+
+# Example
+document_tokens = np.arange(2000)
+analyze_truncation_impact(document_tokens, max_context=512)</code></pre>
+<h3 class="sh2">Security Implications</h3>
+<h3 class="sh3">Context Manipulation Attacks</h3>
+<p class="prose">Adversary controls what enters context:
+- Flood with irrelevant tokens
+- Push security constraints out of window
+- Model never sees important context
+- Example: System prompt at start, payload at end (&gt;4096 tokens)
+- Defense: Critical info within guaranteed context, validate</p>
+<h3 class="sh3">Memory Extraction Via Compression</h3>
+<p class="prose">Compression must preserve information:
+- Compressed representations contain training data
+- Adversary can extract from compressed memory
+- Learned compression may leak sensitive patterns
+- Defense: Sanitize compressed representations</p>
+<h3 class="sh3">Chunking Boundary Attacks</h3>
+<p class="prose">Process in chunks creates boundaries:
+- Split malicious payload across chunks
+- Each chunk looks benign individually
+- Combined effect is malicious
+- Defense: Overlapping chunks, cross-chunk validation</p>
+<h2 class="sh1">Key Takeaways</h2>
+<h3 class="sh2">Critical Concepts</h3>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Self-attention has O(n²) complexity in sequence length</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Quadratic scaling creates hard limits on context windows</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Context window limits: 512 (BERT) → 2048 (GPT-3) → 100K+ (modern)</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Determines how much text model can process at once</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Sliding window attention reduces to O(n×w) = O(n) when w constant</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Enables linear scaling to very long sequences</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Sparse attention uses predetermined patterns for efficiency</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Trade global connectivity for computational tractability</p>
+<h3 class="sh3">Concept</h3>
+<p class="prose">Truncation strategies determine what gets seen vs lost</p>
+<h3 class="sh3">Why It Matters</h3>
+<p class="prose">Critical for security - affects what model actually processes</p>
+<h3 class="sh2">Actionable Steps</h3>
+<h3 class="sh3">Step</h3>
+<p class="prose">Analyze attention complexity for different sequence lengths</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">O(n²) scaling, quadratic memory growth</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Implement sliding window attention mask</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Each token attends to w neighbors, O(n×w) complexity</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Create sparse attention patterns (strided, dilated, block)</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Reduced connectivity, maintained coverage</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Compare truncation strategies and their effects</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">First-k, last-k, head-tail - different information loss</p>
+<h3 class="sh3">Step</h3>
+<p class="prose">Understand long-context approaches (Longformer, BigBird, chunking)</p>
+<h3 class="sh3">Verification</h3>
+<p class="prose">Different trade-offs between length, efficiency, capability</p>
+<h3 class="sh2">Security Principles</h3>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Context window limits create payload placement vulnerabilities</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary puts payload where it won&#x27;t be truncated</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">O(n²) complexity enables DoS via long inputs</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Very long sequences overwhelm compute/memory</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Truncation strategies affect what model sees and misses</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary exploits truncation to hide malicious content</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Sparse attention patterns reveal information flow paths</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Adversary places related tokens at interacting positions</p>
+<h3 class="sh3">Principle</h3>
+<p class="prose">Context overflow pushes security info out of window</p>
+<h3 class="sh3">Application</h3>
+<p class="prose">Flood with tokens to remove constraints from context</p>
+<h3 class="sh2">Common Mistakes</h3>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Assuming model sees entire document regardless of length</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Check context window limits, implement truncation strategy</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Using O(n²) attention for very long sequences</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Use sliding window, sparse attention, or chunking for &gt;4096 tokens</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Truncating without considering what gets lost</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Analyze truncation impact, preserve critical information</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Ignoring memory constraints when scaling sequence length</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Memory grows quadratically, plan for constraints</p>
+<h3 class="sh3">Mistake</h3>
+<p class="prose">Thinking sparse attention is always better</p>
+<h3 class="sh3">Fix</h3>
+<p class="prose">Sparse trades global connectivity for efficiency - choose based on task</p>
+<h3 class="sh2">Integration With Book</h3>
+<h3 class="sh3">From Section 3 6 To 3 8</h3>
+<ul class="blist"><li>Self-attention mechanism (O(n²) complexity source)</li><li>Attention score computation</li></ul>
+<h3 class="sh3">From Section 3 14</h3>
+<ul class="blist"><li>Complete transformer (context window constraints)</li><li>Encoder-decoder memory requirements</li></ul>
+<h3 class="sh3">To Next Section</h3>
+<ul class="blist"><li>Section 3.20: LLM security attacks and defenses</li><li>Context manipulation as attack vector</li><li>Comprehensive security analysis</li></ul>
+<h3 class="sh2">Looking Ahead</h3>
+<h3 class="sh3">Next Concepts</h3>
+<ul class="blist"><li>Prompt injection attacks</li><li>Jailbreaking techniques</li><li>Data extraction from pre-training</li><li>Backdoor attacks in fine-tuning</li></ul>
+<h3 class="sh3">Skills To Build</h3>
+<ul class="blist"><li>Red-team LLMs for vulnerabilities</li><li>Implement defense mechanisms</li><li>Audit models for security issues</li><li>Design secure LLM systems</li></ul>
+<h3 class="sh2">Final Thoughts</h3>
+<p class="prose">Context window limitations fundamentally constrain transformer capabilities. Standard 
+self-attention has O(n²) complexity - computing attention scores between all n token 
+pairs creates quadratic scaling in both compute and memory. At 512 tokens, that&#x27;s 262K 
+attention scores. At 4096 tokens, 16.7M scores. Doubling sequence length quadruples cost. 
+This creates hard limits on practical context windows despite unlimited compute.
+
+Memory requirements also grow quadratically: storing the (n,n) attention matrix for batch 
+8, 12 heads, 4096 tokens requires 6.4GB just for attention scores. Total memory includes 
+model parameters, optimizer states, activations, and gradients - context length is often 
+the bottleneck. BERT handles 512 tokens, GPT-3 reaches 2048, modern models extend to 
+100K+ through engineering innovations.
+
+Efficient attention mechanisms reduce complexity through sparsity. Sliding window attention 
+limits each token to w neighbors for O(n×w) = O(n) linear complexity when w is constant. 
+Sparse attention uses predetermined patterns - strided, dilated, block - to reduce 
+connections while maintaining coverage. Longformer combines local sliding window, global 
+attention on key tokens, and dilated patterns for O(n) scaling to 16K+ tokens. BigBird 
+adds random attention and proves universal approximation despite sparsity.
+
+Truncation strategies determine what fits in context: first-k keeps beginning (loses end), 
+last-k keeps end (loses beginning), head-tail preserves both (loses middle). Each has 
+different implications for information preservation and security. Long-context approaches 
+include memory augmentation (external storage), recurrence (sequential chunks), compression 
+(summarize past), and retrieval (fetch relevant context).
+
+From a security perspective: Context limits create vulnerabilities where adversaries place 
+payloads knowing they&#x27;ll survive truncation or push security info out of context. O(n²) 
+complexity enables DoS attacks via very long inputs overwhelming compute/memory. Truncation 
+strategies affect what model sees - adversary exploits this to hide malicious content. 
+Sparse patterns reveal information flow paths adversary can exploit. Context overflow 
+attacks flood with tokens to remove constraints. Understanding context management reveals 
+both defensive truncation approaches and offensive context manipulation techniques.
+
+Next: Section 3.20 covers LLM security comprehensively - prompt injection, jailbreaking, 
+data extraction, backdoors, and defenses. Context manipulation will be one of many attack 
+vectors examined for securing language models in production.</p>
+</article>

@@ -1,0 +1,527 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 15 · Section 1 · ~6 pages</div>
+<h1>Production Detector Taxonomy: From Deployed Gateway to Detector Suite</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">A deployed gateway and a populated gateway are different things: Part 3 built and deployed the gateway, and Part 4 ships the detectors that run in it. Section 15.01 is the map of that suite -- six hybrid detectors, one unified API, and one quality bar -- so every following section builds a named detector against a shared contract rather than a standalone tool.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Part 3 ended with the production detection gateway: the behavioural monitoring architecture of Chapter 13 engineered for latency, failure, availability, observability, and cost, deployed as a running service. That gateway is deployed and empty. It has the hooks where detection runs, the latency budget detection must fit, and the failure policy detection runs under, but it does not yet contain the detectors themselves. Part 4 fills it, and Chapter 15 builds the core suite.
+
+This section is the anchor for the chapter, mirroring the taxonomy anchors of 12.01, 13.01, and 14.01. It makes three commitments that every following section honours. First, the suite is six detectors -- injection, jailbreak, PII, toxicity, exfiltration, and the combined pipeline -- each mapped to a detection concept from Chapters 12 and 13 made concrete. Second, every detector is a hybrid of pattern matching and ML, the Chapter 11 layered-detection principle applied inside a single detector. Third, every detector implements one unified API and is held to one quality bar, so the six become a coherent, configurable, tested suite rather than a pile of scripts. State these once here and the rest of the chapter is a deliberate build against them.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 15.01 is the taxonomy anchor for the seven sections that follow. It is the map that makes each detector section (15.02-15.06) a response to a named entry in the suite, makes the pipeline section (15.07) the orchestration of a contract defined here, and makes the summary (15.08) a synthesis of a structure set out here. The unified API contract and the quality bar introduced in this section are the two artifacts every subsequent section depends on.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 11 Section 11.03: the layered detection principle the hybrid detectors apply</li><li>Chapter 12: the ML classifiers -- injection, jailbreak, PII -- the detectors build on</li><li>Chapter 13 Section 13.06: the canary and output-monitoring signals the exfiltration detector uses</li><li>Chapter 14 Section 14.11: the production detection gateway the detector suite deploys on</li><li>Chapter 14 Section 14.04: the sub-50ms latency budget the detectors must meet</li><li>Familiarity with abstract base classes and dataclasses as a way to define a shared contract across implementations</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">A Deployed Gateway Is Empty: The Two-Artifact Argument, Continued</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Chapter 14 ended with a running service. The production detection gateway takes the behavioural monitoring architecture of Chapter 13 and engineers it against the deployment concerns -- placement, latency, failure handling, availability, observability, cost -- so that a correct design becomes a service that survives production. It has pre-processing and post-processing hooks where detection runs. It has a latency budget that detection must fit inside. It has a failure policy that governs what happens when a detector throws. It is deployed, monitored, and affordable.
+
+It is also empty. The gateway is the place detection runs, not the detection itself. Its hooks are wired to nothing yet; its latency budget is spent by no detector; its failure policy protects against the failure of detectors that have not been written. Chapter 14 answered where and under what conditions detection runs. It did not build a single detector. That is Part 4, and this chapter is where the core suite gets built.
+
+This mirrors the two-artifact argument that opened Chapter 14, one level down. There the claim was that a logical architecture and a production service are different artifacts. Here the claim is that a deployed gateway and a populated gateway are different artifacts. A deployed gateway is complete as infrastructure and empty as a detection capability. Part 4 moves the artifact from deployed-and-empty to populated-and-detecting, and Chapter 15 builds the six detectors that do the populating. Everything in this chapter drops into the hooks Chapter 14 built, fits the budget Chapter 14 set, and runs under the policy Chapter 14 defined.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Six-Detector Suite and the Concept Each Makes Concrete</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The suite is six detectors. Five are content detectors and the sixth is the pipeline that orchestrates them, but the framing that matters is that each of the five makes concrete a detection concept that earlier chapters established in the abstract.
+
+The prompt injection detector (15.02) makes concrete the Chapter 12 injection classifier, wrapping it in a regex layer for the known instruction-override phrasings. The jailbreak detector (15.03) makes concrete the Chapter 12 jailbreak classifier and draws on the Chapter 13 session signal for multi-turn attempts, wrapped in a pattern layer for the known templates. The PII scanner (15.04) extends the Chapter 12 Section 12.09 output PII scanning into a two-sided scanner that combines regex for structured PII with NER for unstructured entities. The toxicity detector (15.05) combines a hosted classification baseline with custom models for the domain-specific toxicity the hosted service misses. The exfiltration detector (15.06) turns the Chapter 13 output-monitoring and canary signals of Section 13.06 into an output-analysis detector, combined with the Chapter 13 aggregate rate and coverage signals for the campaign.
+
+The point of this mapping is that Chapter 15 introduces almost no new detection theory. The theory is in Chapters 11 through 13. This chapter is the concretion step: it takes the classifiers, signals, and principles those chapters built and ships them as running, tested, production-grade code. A reader who has followed the detection chapters will recognise every component here; what is new is that the components are now assembled into detectors that meet a bar and share a contract.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Every Detector Is a Hybrid: Patterns and ML Inside One Detector</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The recurring structure of the suite is the hybrid. Every content detector has a pattern layer and an ML layer, and the two combine into one verdict. This is not an implementation accident; it is the central design claim of the chapter, and it is the Chapter 11 layered-detection principle applied inside a single detector rather than across a stack of them.
+
+The two layers exist because each covers what the other misses. The pattern layer -- regex, signatures, known templates -- catches the well-known attacks with high precision and near-zero latency. When an input contains a literal instruction-override phrasing, a signature match is faster and more certain than any model inference. But the pattern layer is brittle: it catches only what it has a pattern for, and an attacker who paraphrases slips past it. The ML layer covers exactly that gap. A trained classifier generalises to the novel, paraphrased, and disguised attempts the patterns never anticipated, at the cost of higher latency and lower precision on any single decision.
+
+A detector that used only patterns would be fast and precise and blind to novel attacks. A detector that used only ML would cover novel attacks and be slower and noisier on the known ones a signature would have caught cleanly. The hybrid takes the pattern layer as a high-confidence fast path and the ML layer as the coverage net beneath it, combining them into one verdict. Every detector in this chapter is built this way, and the reason is always the same: patterns give precision on the known, ML gives coverage of the unknown, and a production detector needs both.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Unified API: What Makes Six Detectors One Suite</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Six detectors are not a suite until they share a contract. Without one, the pipeline that combines them has to know the shape of each detector individually, configuration has to be written per detector, and the test framework has to special-case every one. With one, the pipeline treats all six identically, configuration and testing apply uniformly, and adding a seventh detector is a matter of implementing the contract. The unified API is what turns a collection into a system.
+
+The contract this chapter uses is deliberately small. Every detector implements a single method, detect, that takes a DetectionContext and returns a DetectorResult. The DetectionContext carries the text under inspection, whether it is an input or an output, the request and session identifiers, and a metadata bag. The DetectorResult carries a verdict -- allow, flag, or block -- a score, a confidence, the latency the detector took, and a list of evidence items explaining what fired. That is the whole interface: one method, one input type, one output type.
+
+The small size is the point. Because every detector returns the same DetectorResult, the combined pipeline of Section 15.07 can call detect on each detector, collect the results, and combine the verdicts without knowing anything about how any individual detector reached its answer. The pattern-plus-ML internals of each detector are hidden behind the contract. The verdict enum, the score, and the evidence list are rich enough to drive orchestration and explanation, and uniform enough that orchestration never branches on detector type. This contract is defined in this section precisely because everything after it depends on it.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Quality Bar: Three Targets Held Together</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">A production detector is defined not only by what it detects but by how well it runs, and the quality bar states that as three concrete targets: 95%+ accuracy, sub-50ms latency, and a sub-5% false-positive rate. The bar is what separates a production detector from a proof of concept, and the three targets are held together, not traded against one another.
+
+Accuracy is the obvious one: a detector that is wrong more than one time in twenty does not earn trust. Latency is the Chapter 14 budget made a detector requirement: the gateway has a sub-50ms inline budget, and a detector that blows it either forces the gateway over its own budget or gets moved off the hot path where it can no longer block. The false-positive rate is the one most often neglected and the one that most reliably gets a detector disabled. A detector that flags too many legitimate requests disrupts real use, and an operations team under pressure will turn it off regardless of how many true attacks it catches. That is why the false-positive rate is a first-class metric here and not a footnote to accuracy.
+
+The three are held together because a detector that hits two and misses one is not production-grade. Accurate but slow gets moved off the hot path. Accurate and fast but noisy gets disabled. Fast and quiet but inaccurate misses attacks. Only a detector that meets all three at once ships and stays shipped. The false-positive target bites hardest on the PII and toxicity detectors, where the material -- names, place words, context-dependent language -- is exactly the kind that a careless detector over-flags, and where over-flagging is most disruptive to legitimate use.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Chapter Roadmap: Five Detectors, Then the Pipeline</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The rest of Chapter 15 follows the taxonomy directly. The five content detectors come first, each in its own section, each built as a pattern-plus-ML hybrid against the unified API and the quality bar. Section 15.02 builds the prompt injection detector, 15.03 the jailbreak detector, 15.04 the PII scanner, 15.05 the toxicity detector, and 15.06 the exfiltration detector. Each section is self-contained: it names the detection concept it makes concrete, builds the pattern layer and the ML layer, combines them into one verdict, validates against a labelled corpus, and confirms the quality bar.
+
+Section 15.07 then orchestrates the five into the combined detection pipeline. Because every detector implements the unified API, the pipeline runs them uniformly -- in parallel where latency demands it, in sequence where one gates another -- combines their verdicts into one pipeline verdict, and places into the Part 3 gateway as the detector suite that gateway deploys. The same section adds configuration management and a testing framework that apply across the whole suite, so the six are configured and tested as one system. Section 15.08 synthesises the chapter and previews Chapter 16, where the deployed suite is integrated with SIEM platforms so its detections flow into security operations tooling.
+
+Read the roadmap as a single arc. The taxonomy in this section is the destination in miniature: six detectors, one contract, one bar. Every following section fills in one part of that picture, and by the end of the chapter the deployed-but-empty gateway of Chapter 14 is a populated, detecting, tested production system.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Six-Detector Suite Mapped to Detection Concepts</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Each detector in the suite, the Chapter 12 or 13 concept it makes concrete, its two hybrid layers, and the surface it scans. This is the map the rest of the chapter fills in one section at a time.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Detector</li><li>Section</li><li>Concept made concrete</li><li>Pattern layer</li><li>ML layer</li><li>Scans</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Prompt Injection</li><li>15.02</li><li>Chapter 12 injection classifier</li><li>Known override phrasings and signatures</li><li>Novel and paraphrased attempts</li><li>Input</li></ul>
+<ul class="blist"><li>Jailbreak</li><li>15.03</li><li>Chapter 12 jailbreak classifier + Ch13 session signal</li><li>Known templates and role-play framings</li><li>Novel framings</li><li>Input</li></ul>
+<ul class="blist"><li>PII Scanner</li><li>15.04</li><li>Chapter 12 Section 12.09 output PII scanning, two-sided</li><li>Structured PII: emails, cards, SSNs</li><li>Unstructured PII via NER</li><li>Input + Output</li></ul>
+<ul class="blist"><li>Toxicity</li><li>15.05</li><li>Hosted classification plus custom models</li><li>Hosted toxicity baseline</li><li>Custom domain-specific models</li><li>Input + Output</li></ul>
+<ul class="blist"><li>Data Exfiltration</li><li>15.06</li><li>Ch13 output monitoring and 13.06 canaries</li><li>Sensitive-content rules and canary hits</li><li>Aggregate rate/coverage signals</li><li>Output</li></ul>
+<ul class="blist"><li>Combined Pipeline</li><li>15.07</li><li>Orchestration via the unified API</li><li>n/a -- orchestrates the five</li><li>n/a -- orchestrates the five</li><li>Input + Output</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Deployed Gateway Versus Populated Gateway: The Two Artifacts</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The Chapter 14 deployed gateway and the Chapter 15 populated gateway are different artifacts measured on different axes, one level down from the design-versus-service distinction of Chapter 14.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Question</li><li>Deployed gateway (Chapter 14)</li><li>Populated gateway (Chapter 15)</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>What exists?</li><li>Hooks, latency budget, failure policy, observability</li><li>The six detectors that run in the hooks</li></ul>
+<ul class="blist"><li>What runs in the hooks?</li><li>Nothing yet -- the hooks are wired but empty</li><li>The detector suite, one detector per concern</li></ul>
+<ul class="blist"><li>What spends the latency budget?</li><li>No detector yet</li><li>Each detector, held to the sub-50ms bar</li></ul>
+<ul class="blist"><li>What does the failure policy protect?</li><li>Detectors not yet written</li><li>The six real detectors that can throw</li></ul>
+<ul class="blist"><li>Complete as?</li><li>Infrastructure -- 100% deployed</li><li>Detection capability -- populated and tested</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Quality Bar: Three Targets and What Each Prevents</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The three targets of the quality bar, why each is independent, and the failure that follows when a detector misses it. A detector must meet all three at once to be production-grade.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Target</li><li>Threshold</li><li>What it prevents</li><li>Failure if missed</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Accuracy</li><li>95%+ correct verdicts</li><li>A detector that is wrong too often to trust</li><li>Missed attacks and eroded confidence in every verdict</li></ul>
+<ul class="blist"><li>Latency</li><li>Sub-50ms per detector</li><li>A detector that blows the Chapter 14.04 budget</li><li>Detector moved off the hot path where it can no longer block</li></ul>
+<ul class="blist"><li>False-positive rate</li><li>Sub-5% of benign flagged</li><li>A detector that disrupts legitimate use</li><li>Detector disabled by operations regardless of true-positive rate</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Chapter 15 Section-to-Detector Roadmap</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Every section of Chapter 15 and the detector or synthesis it builds, reading the chapter as a deliberate progression from the five hybrid detectors to the orchestrating pipeline to the summary.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Section</li><li>Title</li><li>Builds</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>15.01</li><li>Production Detector Taxonomy</li><li>The suite map, the unified API, and the quality bar</li></ul>
+<ul class="blist"><li>15.02</li><li>Prompt Injection Detector</li><li>Regex-plus-ML hybrid for instruction override</li></ul>
+<ul class="blist"><li>15.03</li><li>Jailbreak Detector</li><li>Pattern-plus-classification with the session signal</li></ul>
+<ul class="blist"><li>15.04</li><li>PII Scanner</li><li>Regex for structured PII, NER for unstructured</li></ul>
+<ul class="blist"><li>15.05</li><li>Toxicity Detector</li><li>Hosted baseline plus custom domain models</li></ul>
+<ul class="blist"><li>15.06</li><li>Data Exfiltration Detector</li><li>Output analysis plus aggregate rate/coverage signals</li></ul>
+<ul class="blist"><li>15.07</li><li>Combined Detection Pipeline</li><li>Orchestration of the six via the unified API</li></ul>
+<ul class="blist"><li>15.08</li><li>Chapter Summary</li><li>Synthesis, quiz, checklist, and Chapter 16 preview</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Production Detector Taxonomy</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">production_detector_taxonomy.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The six-detector suite as data: each detector with the detection concept it makes concrete, its pattern and ML layers, the surface it scans, and its primary false-positive risk. No detection runs here -- this is the map that Sections 15.02-15.07 populate.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, dataclasses from the standard library only. The suite is a list of DetectorSpec records so it can be iterated, printed, and cross-checked against the sections that build each one.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># production_detector_taxonomy.py
+# Section 15.01: Production Detector Taxonomy
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The six-detector suite mapped to the detection concept each makes concrete,
+# the hybrid pattern-plus-ML approach, and the quality bar. No detection runs
+# here -- this is the map that Sections 15.02-15.07 populate.
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class DetectorSpec:
+    name: str
+    section: str
+    filename: str
+    detection_concept: str          # the Chapter 12/13 concept it makes concrete
+    pattern_layer: str              # what the regex/signature layer catches
+    ml_layer: str                   # what the model layer catches
+    scans: List[str]                # &#x27;input&#x27;, &#x27;output&#x27;, or both
+    primary_fp_risk: str            # where over-flagging hurts most
+
+
+SUITE: List[DetectorSpec] = [
+    DetectorSpec(
+        name=&#x27;Prompt Injection&#x27;,
+        section=&#x27;15.02&#x27;,
+        filename=&#x27;prompt_injection_detector.py&#x27;,
+        detection_concept=&#x27;Chapter 12 injection classifier made concrete&#x27;,
+        pattern_layer=&#x27;Known instruction-override phrasings and injection signatures&#x27;,
+        ml_layer=&#x27;Novel, paraphrased, and disguised injection attempts&#x27;,
+        scans=[&#x27;input&#x27;],
+        primary_fp_risk=&#x27;Benign text that quotes or discusses instructions&#x27;,
+    ),
+    DetectorSpec(
+        name=&#x27;Jailbreak&#x27;,
+        section=&#x27;15.03&#x27;,
+        filename=&#x27;jailbreak_detector.py&#x27;,
+        detection_concept=&#x27;Chapter 12 jailbreak classifier plus Chapter 13 session signal&#x27;,
+        pattern_layer=&#x27;Known jailbreak templates and role-play framings&#x27;,
+        ml_layer=&#x27;Novel framings that evade fixed templates&#x27;,
+        scans=[&#x27;input&#x27;],
+        primary_fp_risk=&#x27;Legitimate role-play and creative-writing requests&#x27;,
+    ),
+    DetectorSpec(
+        name=&#x27;PII Scanner&#x27;,
+        section=&#x27;15.04&#x27;,
+        filename=&#x27;pii_scanner.py&#x27;,
+        detection_concept=&#x27;Chapter 12 Section 12.09 PII output scanning extended two-sided&#x27;,
+        pattern_layer=&#x27;Structured PII: emails, cards, SSNs, phone numbers&#x27;,
+        ml_layer=&#x27;Unstructured PII via NER: names, locations, organisations&#x27;,
+        scans=[&#x27;input&#x27;, &#x27;output&#x27;],
+        primary_fp_risk=&#x27;Common names and place words flagged as personal data&#x27;,
+    ),
+    DetectorSpec(
+        name=&#x27;Toxicity&#x27;,
+        section=&#x27;15.05&#x27;,
+        filename=&#x27;toxicity_detector.py&#x27;,
+        detection_concept=&#x27;Hosted classification baseline plus custom domain models&#x27;,
+        pattern_layer=&#x27;Hosted toxicity classification as maintained baseline&#x27;,
+        ml_layer=&#x27;Custom models for domain-specific and context-dependent toxicity&#x27;,
+        scans=[&#x27;input&#x27;, &#x27;output&#x27;],
+        primary_fp_risk=&#x27;Context-dependent content benign in its actual context&#x27;,
+    ),
+    DetectorSpec(
+        name=&#x27;Data Exfiltration&#x27;,
+        section=&#x27;15.06&#x27;,
+        filename=&#x27;exfiltration_detector.py&#x27;,
+        detection_concept=&#x27;Output analysis plus Chapter 13 rate/coverage and 13.06 canaries&#x27;,
+        pattern_layer=&#x27;Sensitive-content rules and canary/honeytoken hits&#x27;,
+        ml_layer=&#x27;Aggregate rate and coverage signals across requests&#x27;,
+        scans=[&#x27;output&#x27;],
+        primary_fp_risk=&#x27;Legitimate responses that echo sensitive-looking strings&#x27;,
+    ),
+    DetectorSpec(
+        name=&#x27;Combined Pipeline&#x27;,
+        section=&#x27;15.07&#x27;,
+        filename=&#x27;combined_detection_pipeline.py&#x27;,
+        detection_concept=&#x27;Orchestration of the five detectors via the unified API&#x27;,
+        pattern_layer=&#x27;n/a -- orchestrates the detectors above&#x27;,
+        ml_layer=&#x27;n/a -- orchestrates the detectors above&#x27;,
+        scans=[&#x27;input&#x27;, &#x27;output&#x27;],
+        primary_fp_risk=&#x27;Verdict-combination logic that over-escalates any one hit&#x27;,
+    ),
+]
+
+
+def print_suite() -&gt; None:
+    for spec in SUITE:
+        print(f&#x27;{spec.section}  {spec.name}  ({spec.filename})&#x27;)
+        print(f&#x27;    concept : {spec.detection_concept}&#x27;)
+        print(f&#x27;    pattern : {spec.pattern_layer}&#x27;)
+        print(f&#x27;    ml      : {spec.ml_layer}&#x27;)
+        print(f&#x27;    scans   : {&quot;, &quot;.join(spec.scans)}&#x27;)
+        print(f&#x27;    fp risk : {spec.primary_fp_risk}&#x27;)
+        print()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_suite()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Unified Detector API Contract</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">detector_api_contract.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The one contract every detector in the suite implements: a Detector base class with a single detect method taking a DetectionContext and returning a DetectorResult with verdict, score, confidence, latency_ms, and evidence. This is the artifact the combined pipeline of Section 15.07 orchestrates against and the shape every detector section 15.02-15.06 implements.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, abc and dataclasses from the standard library only. Verdict is a three-value enum (allow, flag, block). A small _Timed helper shows how detectors populate latency_ms so the quality bar can be measured. ExampleAllowAll is a reference implementation of the contract shape, not a working detector.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># detector_api_contract.py
+# Section 15.01: The Unified Detector API Contract
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The one contract every detector in the suite implements. Because all six
+# share this shape, the combined pipeline (15.07) orchestrates them uniformly
+# and configuration and testing apply across the suite.
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+import time
+
+
+class Verdict(Enum):
+    ALLOW = &#x27;allow&#x27;          # nothing detected
+    FLAG = &#x27;flag&#x27;            # suspicious, surface for review, do not block
+    BLOCK = &#x27;block&#x27;          # high-confidence detection, block the request
+
+
+@dataclass
+class DetectionContext:
+    # Everything a detector needs to make one decision.
+    request_id: str
+    text: str                                   # the input or output under inspection
+    surface: str = &#x27;input&#x27;                      # &#x27;input&#x27; or &#x27;output&#x27;
+    session_id: Optional[str] = None            # for detectors that use session state
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Evidence:
+    # One piece of support for a verdict -- a rule hit or a model score.
+    source: str                                 # &#x27;pattern&#x27; or &#x27;ml&#x27; or &#x27;aggregate&#x27;
+    label: str                                  # what fired, e.g. &#x27;instruction_override&#x27;
+    detail: str = &#x27;&#x27;                            # human-readable context
+
+
+@dataclass
+class DetectorResult:
+    # The single return type of every detector in the suite.
+    detector: str                               # detector name, e.g. &#x27;prompt_injection&#x27;
+    verdict: Verdict
+    score: float                                # 0.0-1.0 detection strength
+    confidence: float                           # 0.0-1.0 confidence in the score
+    latency_ms: float                           # wall-clock time this detector took
+    evidence: List[Evidence] = field(default_factory=list)
+
+
+class Detector(ABC):
+    # The unified API. One method, one return type, for all six detectors.
+
+    name: str = &#x27;detector&#x27;
+
+    @abstractmethod
+    def detect(self, ctx: DetectionContext) -&gt; DetectorResult:
+        # Inspect ctx and return a DetectorResult. Must set latency_ms.
+        raise NotImplementedError
+
+
+class _Timed:
+    # Helper: detectors wrap their body in this to populate latency_ms.
+
+    def __enter__(self):
+        self._start = time.perf_counter()
+        return self
+
+    def __exit__(self, *exc):
+        self.elapsed_ms = (time.perf_counter() - self._start) * 1000.0
+        return False
+
+
+class ExampleAllowAll(Detector):
+    # Reference implementation showing the contract shape only.
+
+    name = &#x27;example&#x27;
+
+    def detect(self, ctx: DetectionContext) -&gt; DetectorResult:
+        with _Timed() as t:
+            pass  # a real detector runs its pattern layer then its ML layer here
+        return DetectorResult(
+            detector=self.name,
+            verdict=Verdict.ALLOW,
+            score=0.0,
+            confidence=1.0,
+            latency_ms=t.elapsed_ms,
+            evidence=[],
+        )
+
+
+if __name__ == &#x27;__main__&#x27;:
+    d = ExampleAllowAll()
+    r = d.detect(DetectionContext(request_id=&#x27;r1&#x27;, text=&#x27;hello&#x27;))
+    print(r.detector, r.verdict.value, r.score, f&#x27;{r.latency_ms:.3f}ms&#x27;)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Quality Bar</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">quality_bar.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The quality bar as code: a frozen QualityBar with the three thresholds, a DetectorMetrics record, and meets_bar and explain functions that hold a detector to all three targets at once and name which it fails. Every detector section validates against this.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, dataclasses from the standard library only. The default QualityBar encodes 95%+ accuracy, sub-50ms p99 latency, and sub-5% false-positive rate. explain returns the specific target(s) missed so a failing detector produces an actionable message rather than a bare boolean.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># quality_bar.py
+# Section 15.01: The Quality Bar
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The concrete bar that separates a production detector from a proof of
+# concept: 95%+ accuracy, sub-50ms latency, sub-5% false-positive rate. A
+# detector that misses any one of the three is not production-grade.
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class QualityBar:
+    min_accuracy: float = 0.95          # 95%+ correct verdicts
+    max_latency_ms: float = 50.0        # sub-50ms per detector (Chapter 14.04 budget)
+    max_false_positive_rate: float = 0.05   # sub-5% of benign flagged
+
+
+@dataclass
+class DetectorMetrics:
+    accuracy: float
+    p99_latency_ms: float
+    false_positive_rate: float
+
+
+def meets_bar(m: DetectorMetrics, bar: QualityBar = QualityBar()) -&gt; bool:
+    return (
+        m.accuracy &gt;= bar.min_accuracy
+        and m.p99_latency_ms &lt;= bar.max_latency_ms
+        and m.false_positive_rate &lt;= bar.max_false_positive_rate
+    )
+
+
+def explain(m: DetectorMetrics, bar: QualityBar = QualityBar()) -&gt; str:
+    reasons = []
+    if m.accuracy &lt; bar.min_accuracy:
+        reasons.append(f&#x27;accuracy {m.accuracy:.2%} below {bar.min_accuracy:.0%}&#x27;)
+    if m.p99_latency_ms &gt; bar.max_latency_ms:
+        reasons.append(f&#x27;p99 {m.p99_latency_ms:.1f}ms over {bar.max_latency_ms:.0f}ms&#x27;)
+    if m.false_positive_rate &gt; bar.max_false_positive_rate:
+        reasons.append(f&#x27;FP {m.false_positive_rate:.2%} over {bar.max_false_positive_rate:.0%}&#x27;)
+    return &#x27;meets the bar&#x27; if not reasons else &#x27;fails: &#x27; + &#x27;; &#x27;.join(reasons)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    good = DetectorMetrics(accuracy=0.97, p99_latency_ms=42.0, false_positive_rate=0.03)
+    noisy = DetectorMetrics(accuracy=0.99, p99_latency_ms=18.0, false_positive_rate=0.11)
+    print(&#x27;good :&#x27;, explain(good))
+    print(&#x27;noisy:&#x27;, explain(noisy))</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Chapter 15 Detector-to-Section Roadmap</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">chapter_15_roadmap.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The chapter roadmap as data: each section with the detector or synthesis it builds, so the chapter reads as a deliberate progression from the five hybrid detectors to the orchestrating pipeline to the summary rather than a list of tools.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, dataclasses from the standard library only. The roadmap is a list of RoadmapEntry records mirroring table_4 so the reference table and the runnable roadmap stay in sync.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># chapter_15_roadmap.py
+# Section 15.01: Chapter 15 Detector-to-Section Roadmap
+# 20260121 | AI Security Mastery -- Chapter 15 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# Reads the chapter as a deliberate progression: five hybrid detectors, then
+# the pipeline that orchestrates them, then the summary. Each section is a
+# response to one detector in the taxonomy, not a standalone topic.
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class RoadmapEntry:
+    section: str
+    title: str
+    builds: str
+
+
+ROADMAP: List[RoadmapEntry] = [
+    RoadmapEntry(&#x27;15.01&#x27;, &#x27;Production Detector Taxonomy&#x27;,
+                 &#x27;The suite map, the unified API, and the quality bar&#x27;),
+    RoadmapEntry(&#x27;15.02&#x27;, &#x27;Prompt Injection Detector&#x27;,
+                 &#x27;Regex-plus-ML hybrid for instruction override&#x27;),
+    RoadmapEntry(&#x27;15.03&#x27;, &#x27;Jailbreak Detector&#x27;,
+                 &#x27;Pattern-plus-classification with the session signal&#x27;),
+    RoadmapEntry(&#x27;15.04&#x27;, &#x27;PII Scanner&#x27;,
+                 &#x27;Regex for structured PII, NER for unstructured&#x27;),
+    RoadmapEntry(&#x27;15.05&#x27;, &#x27;Toxicity Detector&#x27;,
+                 &#x27;Hosted baseline plus custom domain models&#x27;),
+    RoadmapEntry(&#x27;15.06&#x27;, &#x27;Data Exfiltration Detector&#x27;,
+                 &#x27;Output analysis plus aggregate rate/coverage signals&#x27;),
+    RoadmapEntry(&#x27;15.07&#x27;, &#x27;Combined Detection Pipeline&#x27;,
+                 &#x27;Orchestration of the six via the unified API&#x27;),
+    RoadmapEntry(&#x27;15.08&#x27;, &#x27;Chapter Summary&#x27;,
+                 &#x27;Synthesis, quiz, checklist, and Chapter 16 preview&#x27;),
+]
+
+
+def print_roadmap() -&gt; None:
+    for e in ROADMAP:
+        print(f&#x27;{e.section}  {e.title}&#x27;)
+        print(f&#x27;        {e.builds}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_roadmap()</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating the Chapter 14 deployed gateway as a working detection system and expecting it to catch attacks before any detector is built</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The deployed gateway is a running service with hooks, a latency budget, a failure policy, and observability, so it reads as complete. The distinction between the place detection runs and the detection itself is easy to lose once the infrastructure is up and green.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The gateway is deployed and passes health checks while catching nothing, because its hooks are wired to no detector. The gap is discovered only when a real attack passes through untouched.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat the deployed gateway as 100% complete as infrastructure and empty as a detection capability, and build the six detectors of Chapter 15 to populate it. The gateway detects nothing until the suite runs in its hooks.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Building each detector as pattern-only or ML-only rather than a hybrid, choosing one layer for simplicity</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A single-layer detector is simpler to build and reason about. Pattern-only feels precise and fast; ML-only feels comprehensive. Each looks adequate against the attacks the builder happens to test.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The pattern-only detector is blind to any paraphrase of a known attack; the ML-only detector is slower and noisier on the known attacks a signature would have caught cleanly, and often misses the latency bar. Either way the detector fails on the half of the threat surface its single layer does not cover.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Build every content detector as a hybrid: a pattern layer for precision and near-zero latency on the known, an ML layer for coverage of the novel, combined into one verdict. This is the Chapter 11 layered-detection principle applied inside a single detector.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Optimising a detector for accuracy alone and ignoring latency and false positives until deployment</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Accuracy is the metric detection work naturally centres on, and it is the one reported in papers and benchmarks. Latency and false positives feel like operational details to handle later.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">An accurate but slow detector gets moved off the hot path where it can no longer block; an accurate but noisy detector gets disabled by an operations team it disrupts. In both cases a detector that scored well on accuracy stops protecting anything.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Hold every detector to the full quality bar -- accuracy, latency, and false-positive rate together -- from the start. A detector that misses any one of the three is not production-grade, and the false-positive rate is a first-class target, not a footnote to accuracy.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Giving each detector its own bespoke interface and return shape rather than a shared unified API</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Each detector is built in its own section and it is natural to return whatever shape is convenient for that detector -- a boolean here, a score there, a custom object elsewhere. The cost of divergence is not visible until the pipeline tries to combine them.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The combined pipeline has to special-case every detector, configuration is written per detector, and the test framework cannot run uniformly. Six detectors stay six tools instead of becoming one suite, and adding a seventh means rewriting the orchestration.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Define the unified API contract once -- detect(ctx) -&gt; DetectorResult -- and implement it in every detector. The shared contract is what lets the pipeline orchestrate uniformly and lets configuration and testing apply across the suite.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Reinventing detection theory in Chapter 15 instead of making concrete the classifiers and signals already built in Chapters 11 through 13</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Starting the implementation chapter can feel like a fresh start, and it is tempting to design new detection approaches rather than wire up the existing ones. The earlier chapters can fade from view once code-writing begins.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Effort goes into re-deriving detection approaches that Chapters 12 and 13 already established and validated, the new approaches are untested against the corpora the earlier work used, and the chapter drifts from concretion into unplanned research.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Treat Chapter 15 as the concretion step: take the Chapter 12 classifiers, the Chapter 13 signals, and the Chapter 11 layering principle and ship them as running, tested detectors. Each detector maps to a named concept from the detection chapters, and that mapping is the design.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Section 15.01 anchors Part 4 by mapping the production detector suite built on the Chapter 14 deployed gateway. A deployed gateway and a populated gateway are different artifacts: Chapter 14 built the hooks, the latency budget, and the failure policy, and Part 4 ships the detectors that run in them. The suite is six detectors -- injection, jailbreak, PII, toxicity, exfiltration, and the combined pipeline -- each mapped to a Chapter 12 or 13 detection concept made concrete, each a hybrid of a pattern layer for the known and an ML layer for the novel, the Chapter 11 layered-detection principle applied inside a single detector. Every detector implements one unified API -- detect(ctx) -&gt; DetectorResult with verdict, score, confidence, latency_ms, and evidence -- so the combined pipeline can orchestrate them uniformly and configuration and testing apply across the suite. Every detector is held to one quality bar -- 95%+ accuracy, sub-50ms latency, sub-5% false positives -- three targets held together, where the false-positive rate is first-class because a noisy detector is disabled regardless of accuracy. The chapter then builds the five detectors and the orchestrating pipeline, each a response to a named entry in this taxonomy.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>A deployed gateway is empty until detectors populate it; Chapter 14 built the infrastructure and Part 4 ships the detectors that run in it</li><li>The suite is six detectors, each making concrete a Chapter 12 or 13 detection concept rather than introducing new detection theory</li><li>Every content detector is a hybrid -- a pattern layer for precision on the known, an ML layer for coverage of the novel -- the Chapter 11 principle inside one detector</li><li>The unified API, detect(ctx) -&gt; DetectorResult, is what turns six detectors into one suite the pipeline can orchestrate and configuration and testing can span</li><li>The quality bar is three targets held together -- 95%+ accuracy, sub-50ms latency, sub-5% false positives -- and a detector missing any one is not production-grade</li><li>The false-positive rate is a first-class metric because a noisy detector is disabled regardless of its true-positive rate, biting hardest on the PII and toxicity detectors</li></ul>
+<h2 class="sh1">Preview Section 15 02</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Prompt Injection Detector: Regex and ML Hybrid</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 15.02 builds the first detector in the suite: prompt injection as a regex-plus-ML hybrid. The pattern layer catches the known instruction-override phrasings with precision and near-zero latency, the ML layer -- the Chapter 12 injection classifier -- catches the novel and paraphrased attempts the patterns miss, and the two combine into one verdict. The detector implements the unified API defined here, handles indirect injection through retrieved content, and is validated against a labelled corpus to the suite quality bar.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 11 Section 11.03: the layered detection principle the hybrid detectors apply, here inside a single detector</li><li>Chapter 12: the ML classifiers -- injection, jailbreak, PII -- the detectors in this suite make concrete</li><li>Chapter 13 Section 13.06: the canary and output-monitoring signals the exfiltration detector uses</li><li>Chapter 14 Section 14.11: the deployed production gateway this suite populates</li><li>Chapter 14 Section 14.04: the sub-50ms latency budget the quality bar encodes</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 15.02: the prompt injection detector, first implementation of the unified API defined here</li><li>Sections 15.03-15.06: the jailbreak, PII, toxicity, and exfiltration detectors, each a hybrid against this contract and quality bar</li><li>Section 15.07: the combined pipeline that orchestrates the six detectors through the unified API</li><li>Chapter 16: SIEM integration, where the deployed suite feeds security operations tooling</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>production-detectors</li><li>detector-suite</li><li>detector-taxonomy</li><li>unified-api</li><li>detector-result</li><li>regex-ml-hybrid</li><li>layered-detection</li><li>quality-bar</li><li>false-positive-rate</li><li>latency-budget</li><li>deployed-versus-populated-gateway</li><li>part-4-chapter-1</li><li>chapter-roadmap</li></ul>
+</article>

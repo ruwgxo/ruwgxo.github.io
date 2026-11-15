@@ -1,0 +1,1085 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 12 · Section 1 · ~6 pages</div>
+<h1>ML Detection Taxonomy: From Rules to Models in the Seven-Track Gateway</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">Rule-based detection and ML detection are complements: rules catch known signatures, ML catches novel variants -- Chapter 12 trains the ML layer that Chapter 11 designed the slots for.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Chapter 11 designed the detection framework: detection-as-code principles, the seven-track
+gateway architecture, Sigma rule templates, and the MITRE ATT&amp;CK and ATLAS coverage map.
+Everything Chapter 11 produced was structural -- the skeleton of a production detection system.
+Chapter 12 trains the muscles.
+
+Before building anything, the detection engineer needs a taxonomy of ML detection families.
+Without this map, the progression through Chapter 12 reads as an arbitrary sequence of ML
+techniques -- Isolation Forest, then Random Forest, then LSTM, then Sentence Transformers,
+then DistilBERT. With it, every section is a deliberate choice driven by three questions:
+how much labelled data is available, what is the latency budget for this gateway track, and
+what attack surface does this detector need to cover?
+
+Section 12.01 answers those three questions systematically. It establishes the five ML
+detection families, maps each to the gateway track it populates, and defines the deployment
+sequencing that tells the engineer which family to deploy first on a new threat surface.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 12.01 is the taxonomy anchor for all 17 subsequent sections. It is the map that
+makes every subsequent section a deliberate choice rather than an arbitrary technique
+selection. It mirrors the role Sections 9.01 and 10.01 played in their chapters: establishing
+the threat model and taxonomy before the implementation sections begin.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 1 Section 1.07: classification algorithms and supervised learning -- the foundation for supervised ML families</li><li>Chapter 1 Section 1.11: evaluation metrics (precision, recall, F1, ROC-AUC) -- used to compare ML family performance</li><li>Chapter 2 Section 2.17: LSTM and RNN basics -- background for the sequence model family</li><li>Chapter 3 Section 3.03: word embeddings and semantic representation -- background for the embedding detection family</li><li>Chapter 11 Section 11.02: detection-as-code principles -- the framework Chapter 12 populates with ML models</li><li>Chapter 11 Section 11.03: layered detection stack (signature, heuristic, ML, behavioural) -- Chapter 12 implements the ML layer</li><li>Chapter 11 Section 11.05: ATLAS coverage heat map -- the gaps Chapter 12 fills with ML detectors</li><li>Chapter 11 Section 11.08: detection maturity model -- the maturity ladder Section 12.01 extends to ML detectors</li><li>Chapter 11 Section 11.13: seven-track gateway architecture -- the tracks Chapter 12 populates</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Rules and Models: The Complementarity Argument</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The first instinct of a detection engineer encountering AI security threats is to write
+Sigma rules. This is correct. A Sigma rule for the DAN jailbreak prefix is fast to write,
+immediately deployable, fully explainable, and precise against the exact pattern it targets.
+When an analyst reviews an alert from that rule, they can read the rule, read the triggering
+input, and understand the detection in thirty seconds. This is a significant operational
+advantage that no ML model currently matches.
+
+The problem is coverage. Sigma rules detect what they describe. An adversary who reads the
+rule rewrites the payload to avoid it. A DAN rule that triggers on &#x27;ignore all previous
+instructions&#x27; is defeated by &#x27;disregard every prior directive&#x27;. A jailbreak rule that catches
+&#x27;you are now DAN&#x27; is defeated by &#x27;you have been promoted to a different operational mode&#x27;.
+The rule library grows with each bypass, and each new rule is one step behind the adversary
+who wrote the bypass. This is not a flaw in Sigma -- it is the inherent coverage ceiling of
+signature-based detection against an adaptive adversary.
+
+ML classifiers generalise. A Random Forest trained on 1,000 labelled jailbreak examples
+learns the feature patterns that distinguish jailbreak prompts from benign ones -- not the
+specific tokens, but the structural characteristics: instruction override markers, persona
+invocation, fictional framing, system prompt boundary markers. When an adversary creates a
+novel jailbreak that shares none of the training set&#x27;s exact tokens but does share its
+structural characteristics, the classifier flags it. The adversary must change the underlying
+attack pattern, not just the surface phrasing, to evade the trained model.
+
+The seven-track gateway runs both in parallel. Rules provide speed, explainability, and
+zero false positives on known patterns. ML classifiers provide coverage, generalisation, and
+detection of novel variants. Neither is sufficient alone. A gateway with only Sigma rules
+has a fixed coverage ceiling. A gateway with only ML classifiers has an explainability
+deficit and a cold-start problem: no labelled data, no trained model, no detection. Chapter
+11 built the Sigma layer. Chapter 12 trains the ML layer. Together they constitute a
+defence-in-depth detection system.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Five ML Detection Families</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Five ML detection families are relevant to LLM API security. They differ in three
+dimensions that determine when each is the right choice: labelled data requirement,
+latency profile, and explainability.
+
+Unsupervised anomaly detection requires no labelled attack data. Isolation Forest and
+One-Class SVM (Section 12.03) learn what normal API traffic looks like and flag statistical
+outliers. This is the correct family to deploy on day one of any new LLM integration
+because there are no labelled attacks yet. The trade-off is precision: anomaly detectors
+cannot distinguish attack families, cannot explain which specific feature drove the alert,
+and produce a higher false positive rate than supervised classifiers at matched recall.
+Their operational value extends beyond detection: every anomaly alert that an analyst
+confirms as a true positive becomes a labelled training example for the supervised
+classifiers that follow.
+
+Supervised classification requires labelled data but produces higher precision once
+sufficient examples are available. Random Forest and XGBoost (Section 12.05) train on
+labelled attack and benign examples and learn explicit feature boundaries. At 500+ labelled
+examples per class, supervised classifiers typically outperform anomaly detectors in
+precision at matched recall. They are fully explainable via feature importance and SHAP
+values: each alert comes with a ranked list of the features that drove it, readable by
+any analyst in under a minute.
+
+Sequence modelling extends classification into the temporal dimension. LSTM and GRU
+networks (Section 12.06) analyse the full conversation history -- not just the current
+turn. Multi-turn attacks fragment a jailbreak payload across turns, each innocuous in
+isolation but collectively constituting an attack. A single-turn classifier misses this
+pattern entirely because it sees each turn independently. The GRU reads the conversation
+as a sequence and detects the escalation arc. Sequence models require conversation-level
+labelled datasets, which are harder to collect than single-turn examples, and add
+inference complexity. They are the right choice when multi-turn attack patterns are
+documented in the threat model.
+
+Embedding-based detection addresses the paraphrase evasion problem. An adversary who
+knows the Sigma rules rewrites the payload to avoid every keyword. An adversary who
+knows the feature set rewrites the payload to minimise the flagged features. Neither
+rewrite strategy works against a Sentence Transformer (Section 12.07): semantic
+similarity is measured in a 768-dimensional embedding space, and a paraphrase that
+preserves attack intent lands near the original embedding regardless of surface token
+changes. Embedding detectors use cosine distance from known attack cluster centroids
+as the detection signal. They require pre-computed attack cluster centroids rather than
+traditional labelled datasets and add 2-4ms of embedding inference latency per request.
+
+Neural classification is the highest-accuracy and highest-cost family. A fine-tuned
+DistilBERT (Section 12.08) reaches 95%+ accuracy on prompt injection classification
+with 2,000+ labelled examples, outperforming Random Forest by 5-10 percentage points
+in precision at matched recall. The costs are real: 2,000+ labelled examples to train,
+15ms inference latency before quantisation, and post-hoc explainability only via
+attention visualisation. Neural classifiers are the right choice when the highest
+possible accuracy on a well-defined, stable attack class is the primary requirement
+and the data and latency budget are available.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Gateway Track Mapping: Which Family Goes Where</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The Chapter 11 seven-track gateway has seven detection tracks. Chapter 12 adds ML
+detectors to Tracks 1 to 6 and adds one output-side stage, the PII scanner, which sits
+outside the seven tracks in the response path. Track 7 keeps the Chapter 10 adversarial
+detection primitives.
+
+Track 1 (prompt injection, OWASP LLM01) runs two ML detectors in parallel: an embedding
+similarity detector and an XGBoost supervised classifier. The embedding detector catches
+paraphrase variants of known injection templates that the Sigma rules miss. The XGBoost
+classifier catches structurally similar injections with 90%+ precision once the labelled
+dataset reaches 500+ examples. Both detectors receive the same feature vector from the
+shared feature pipeline (Section 12.02) and their scores are combined by the Section 12.15
+ensemble.
+
+Tracks 2 through 5 (jailbreak detection, OWASP LLM01) use a two-layer ML architecture:
+the GRU sequence detector for multi-turn escalation patterns and the DistilBERT neural
+classifier for single-turn high-precision jailbreak detection. The GRU fires on conversation-
+level patterns that span multiple turns. The DistilBERT fires on single-turn inputs with
+high attack confidence. Either can trigger the gateway independently; the ensemble weights
+determine the combined alert tier.
+
+The output-side PII stage (OWASP LLM06) uses the PII scanner (Section 12.09) on model
+outputs rather than inputs. Like the Section 9.12 output watermark, it is not one of the
+seven tracks: it scans the LLM&#x27;s response before it reaches the client. The PII scanner
+runs after the main model inference, not before, and is therefore not subject to the
+pre-inference latency budget that constrains the input-side tracks.
+
+Track 6 (API abuse and extraction, OWASP LLM10) uses the Isolation Forest anomaly
+detector on API usage features: request rate, sequence length distribution, OOD score
+distribution across sessions. This is the zero-label detector that requires only normal
+traffic to train and is therefore deployable immediately on a new integration.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Deployment Sequencing: Which Family First</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The correct deployment sequence follows the labelled data availability curve. On day one
+of a new LLM integration, there are no labelled attack examples. The only correct choice
+is unsupervised anomaly detection: deploy Isolation Forest on API usage features to
+establish a statistical baseline and begin collecting anomaly alerts for analyst review.
+
+Over the first two to four weeks of operation, analyst-reviewed anomaly alerts accumulate.
+Each confirmed true positive is a labelled attack example. Each confirmed false positive is
+a labelled benign example near the anomaly decision boundary. By week four, a typical LLM
+API will have accumulated 100-300 labelled examples from production traffic and red team
+exercises combined.
+
+At 200+ labelled examples per class, deploy a Random Forest classifier as the first
+supervised detector. It trains in seconds, produces feature importance immediately, and
+gives analysts explainable alerts to review. Run the anomaly detector and the Random Forest
+in parallel: the anomaly detector continues to surface novel attack variants; the Random
+Forest provides precision on the known attack patterns in the labelled set.
+
+At 500+ labelled examples per class, add the XGBoost classifier alongside the Random
+Forest. Add the embedding similarity detector with a cluster library seeded from the
+labelled positives. At this point, three ML detectors are running: Isolation Forest,
+Random Forest, and embedding similarity.
+
+At 2,000+ labelled examples per class and once the latency budget analysis from Section
+12.12 confirms headroom, begin fine-tuning DistilBERT. Neural classifier training takes
+hours, not seconds. Shadow-deploy it in parallel with the Random Forest before promoting
+it to the production track (Section 12.13 model registry).
+
+Add sequence modelling (GRU) when multi-turn attack patterns appear in the labelled
+dataset and when the conversation-level dataset (Section 12.04) has accumulated 500+
+conversation-level attack examples. This is typically the last ML family deployed because
+conversation-level labelled data takes the longest to accumulate.
+
+This sequence -- anomaly first, tree classifiers second, embeddings third, neural
+classifier fourth, sequence model last -- is not arbitrary. It maps exactly to the data
+availability curve of a production LLM integration. Each stage is deployable with the
+data available at that stage.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The ML Detection Maturity Ladder</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The Chapter 11 detection maturity model (Section 11.08) defined maturity levels for the
+overall detection framework. The ML detection maturity ladder extends that model
+specifically to the ML detector column, giving concrete criteria for each level.
+
+Level 1 (Statistical Anomaly) is achieved when an Isolation Forest or One-Class SVM is
+deployed on API usage features, producing alerts reviewed by an analyst. The criteria:
+a trained anomaly detector is running in production on live traffic; alerts are reviewed
+within 24 hours; true positive and false positive labels from review are stored for future
+supervised training. At L1 the detection system has no labelled data and no trained
+supervised classifiers. Coverage is broad but imprecise.
+
+Level 2 (Supervised Classification) is achieved when a Random Forest or XGBoost classifier
+is trained on 200+ labelled examples per class, deployed in production, and producing
+explainable alerts with per-feature SHAP values. The criteria: a supervised classifier
+is running alongside the anomaly detector; the labelled training dataset is versioned and
+stored; evaluation metrics (precision, recall, F1) are computed on a held-out temporal
+test set and documented; the model is in the registry with a model card. At L2 the
+detection system has precision on known attack families and explainability for analyst
+review.
+
+Level 3 (Calibrated Ensemble) is achieved when the full four-detector ensemble from
+Section 12.15 is deployed: anomaly detector, supervised classifier, embedding similarity
+detector, and either the GRU or DistilBERT depending on data availability and latency
+budget. The criteria: all detectors have calibrated probability outputs (Section 12.10);
+the ensemble has a weighted voting or stacking configuration validated on a production
+A/B test (Section 12.16); the model registry manages all four detector versions; the live
+dataset curation pipeline (Section 12.14) is collecting true positives and false positives
+from production traffic; retraining is automated and validated against stage transition
+gates (Section 12.13). At L3 the detection system is operationally sustainable: it
+continues to improve as the attack distribution shifts rather than degrading.
+
+Most production LLM deployments that have ML detection at all are at L1 or early L2.
+The gap between L2 and L3 is not technical -- the techniques are all available and
+documented in Chapters 12 through 17. The gap is operational: model registry discipline,
+live curation pipelines, calibrated probabilities, and A/B testing require sustained
+engineering investment beyond the initial model training.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Detection Family Taxonomy: Five Families Across Six Dimensions</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Complete taxonomy of ML detection families with data requirement, latency, explainability, gateway track, OWASP coverage, and ATLAS coverage</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Family</li><li>Min Labelled Data</li><li>Latency Profile</li><li>Explainability</li><li>Gateway Track</li><li>OWASP Coverage</li><li>ATLAS Coverage</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Anomaly Detection (IF, OCSVM)</li><li>Zero (normal traffic only)</li><li>1-3ms</li><li>Anomaly score; no per-feature</li><li>Track 6 (API abuse)</li><li>LLM10 (Model Theft)</li><li>AML.T0040</li></ul>
+<ul class="blist"><li>Supervised Classification (RF, XGB)</li><li>200+ per class</li><li>1-5ms</li><li>Full: SHAP per prediction</li><li>Tracks 1-5 (injection, jailbreak)</li><li>LLM01, LLM02</li><li>AML.T0051, AML.T0054</li></ul>
+<ul class="blist"><li>Sequence Models (LSTM, GRU)</li><li>500+ conversations</li><li>5-15ms</li><li>Attention weights over turns</li><li>Tracks 4-5 (multi-turn jailbreak)</li><li>LLM01 (multi-turn)</li><li>AML.T0051</li></ul>
+<ul class="blist"><li>Embedding Detection (Sentence Transformers)</li><li>Centroids from 50+ per cluster</li><li>2-4ms</li><li>Cosine distance from centroid</li><li>Track 1 (injection paraphrase)</li><li>LLM01, LLM02</li><li>AML.T0051</li></ul>
+<ul class="blist"><li>Neural Classification (DistilBERT)</li><li>2,000+ per class</li><li>5-15ms (7ms post-INT8)</li><li>Attention maps; post-hoc only</li><li>Tracks 1-5 (high accuracy)</li><li>LLM01, LLM02</li><li>AML.T0051, AML.T0054</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Rules vs ML: Strengths and Failure Modes</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Side-by-side comparison of rule-based and ML-based detection across seven operational dimensions</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Dimension</li><li>Rule-Based (Sigma)</li><li>ML-Based (Chapter 12)</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Known pattern detection</li><li>Near-perfect precision; zero false positives on exact match</li><li>High but not perfect; learned boundaries may have noise</li></ul>
+<ul class="blist"><li>Novel variant detection</li><li>Fails: rule does not exist yet</li><li>Generalises: learned features catch variants</li></ul>
+<ul class="blist"><li>Paraphrase evasion</li><li>Fails: different tokens bypass keyword rules</li><li>Embedding detector catches semantic equivalents</li></ul>
+<ul class="blist"><li>Multi-turn patterns</li><li>Fails: single-rule, single-turn scope</li><li>GRU sequence detector covers conversation arc</li></ul>
+<ul class="blist"><li>Explainability</li><li>Immediate: analyst reads the rule</li><li>Variable: SHAP for tree models; attention maps for neural</li></ul>
+<ul class="blist"><li>Cold start (no data)</li><li>Works: write rules from threat intel</li><li>Anomaly detection only; supervised requires labels</li></ul>
+<ul class="blist"><li>Adaptive adversary</li><li>Bypassed by surface rewrite</li><li>Requires changing underlying attack structure to evade</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Deployment Sequencing by Data Availability</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">When to deploy each ML family based on accumulated labelled examples and time in production</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Stage</li><li>Labelled Examples Available</li><li>Deploy</li><li>Expected Outcome</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Day 1</li><li>Zero</li><li>Isolation Forest on API features</li><li>Statistical baseline; anomaly alerts for analyst review</li></ul>
+<ul class="blist"><li>Week 2-4</li><li>50-200 per class (from anomaly reviews + red team)</li><li>Random Forest; keep Isolation Forest</li><li>90%+ precision on known attack families; SHAP alerts</li></ul>
+<ul class="blist"><li>Week 4-8</li><li>200-500 per class</li><li>XGBoost; embedding similarity with seeded centroids</li><li>Improved precision; paraphrase-resistant detection added</li></ul>
+<ul class="blist"><li>Month 2-3</li><li>500-2000 per class</li><li>Model calibration (Section 12.10); refine ensemble weights</li><li>Calibrated probabilities; three-detector ensemble running</li></ul>
+<ul class="blist"><li>Month 3+</li><li>2000+ per class; 500+ conversations</li><li>DistilBERT fine-tune (Section 12.08); GRU if multi-turn attacks confirmed</li><li>Full four-detector ensemble; L3 maturity achievable</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Detection Maturity Ladder</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Three maturity levels for ML detectors with concrete entry criteria and what capability each level provides</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Level</li><li>Name</li><li>Entry Criteria</li><li>Capability</li><li>Missing from Next Level</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>L1</li><li>Statistical Anomaly</li><li>Anomaly detector live on production traffic; alerts reviewed within 24h; TP/FP labels stored</li><li>Broad coverage; zero-label deployment; baseline established</li><li>Supervised classifier; labelled dataset; explainable alerts</li></ul>
+<ul class="blist"><li>L2</li><li>Supervised Classification</li><li>Supervised classifier trained on 200+ per class; temporal test set eval documented; model in registry with card</li><li>Precision on known attacks; explainable SHAP alerts; model versioning</li><li>Embedding detector; calibrated probabilities; ensemble; live curation</li></ul>
+<ul class="blist"><li>L3</li><li>Calibrated Ensemble</li><li>Four-detector ensemble with calibrated outputs; A/B test validated; live curation pipeline running; retraining automated</li><li>Full coverage across attack families; operationally sustainable; self-improving</li><li>Nothing within scope of Chapter 12 -- Chapter 13 adds behavioural analysis</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Detection Family Taxonomy Reference</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_detection_taxonomy.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Structured taxonomy of the five ML detection families with data requirements, latency profiles, explainability characteristics, gateway track assignments, and OWASP and ATLAS coverage. Provides the detection engineer with a reference for selecting the correct family for a given threat surface and data availability.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints as formatted tables</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># ml_detection_taxonomy.py
+# Section 12.01: ML Detection Family Taxonomy
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class MLDetectionFamily:
+    name: str
+    algorithms: List[str]
+    min_labelled_data: str
+    latency_ms_range: str
+    explainability: str
+    gateway_tracks: List[str]
+    owasp_coverage: List[str]
+    atlas_coverage: List[str]
+    chapter_12_section: str
+    deployment_stage: str
+    strengths: List[str]
+    failure_modes: List[str]
+
+
+ML_DETECTION_FAMILIES: List[MLDetectionFamily] = [
+    MLDetectionFamily(
+        name=&#x27;Anomaly Detection&#x27;,
+        algorithms=[&#x27;Isolation Forest&#x27;, &#x27;One-Class SVM&#x27;],
+        min_labelled_data=&#x27;Zero -- normal traffic only&#x27;,
+        latency_ms_range=&#x27;1-3ms&#x27;,
+        explainability=&#x27;Anomaly score; no per-feature attribution&#x27;,
+        gateway_tracks=[&#x27;Track 6 (API abuse and extraction)&#x27;],
+        owasp_coverage=[&#x27;LLM10 (Model Theft)&#x27;],
+        atlas_coverage=[&#x27;AML.T0040 (ML Model Inference API Access)&#x27;],
+        chapter_12_section=&#x27;Section 12.03&#x27;,
+        deployment_stage=&#x27;Day 1 -- no labelled data required&#x27;,
+        strengths=[
+            &#x27;Zero-label deployment on any new threat surface&#x27;,
+            &#x27;Establishes statistical baseline for supervised training&#x27;,
+            &#x27;Catches unknown attack variants without prior examples&#x27;,
+            &#x27;Fast inference -- suitable for high-throughput API gateways&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Cannot distinguish attack families -- all anomalies look the same&#x27;,
+            &#x27;High false positive rate relative to supervised classifiers&#x27;,
+            &#x27;No per-feature explanation for analyst review&#x27;,
+            &#x27;Degrades if attack traffic is majority of training window&#x27;,
+        ],
+    ),
+    MLDetectionFamily(
+        name=&#x27;Supervised Classification&#x27;,
+        algorithms=[&#x27;Random Forest&#x27;, &#x27;XGBoost&#x27;],
+        min_labelled_data=&#x27;200+ per class (reliable), 500+ (production quality)&#x27;,
+        latency_ms_range=&#x27;1-5ms&#x27;,
+        explainability=&#x27;Full: SHAP values per prediction, feature importance ranking&#x27;,
+        gateway_tracks=[&#x27;Track 1 (prompt injection)&#x27;, &#x27;Tracks 2-5 (jailbreak)&#x27;],
+        owasp_coverage=[&#x27;LLM01 (Prompt Injection)&#x27;, &#x27;LLM02 (Insecure Output Handling)&#x27;],
+        atlas_coverage=[&#x27;AML.T0051 (LLM Prompt Injection)&#x27;, &#x27;AML.T0054 (LLM Jailbreak)&#x27;],
+        chapter_12_section=&#x27;Section 12.05&#x27;,
+        deployment_stage=&#x27;Week 2-4 -- after anomaly alerts seed first labelled examples&#x27;,
+        strengths=[
+            &#x27;Fast inference -- never exceeds 5ms at production scale&#x27;,
+            &#x27;Full SHAP explainability: analyst reads per-feature contribution per alert&#x27;,
+            &#x27;Robust to noise -- ensemble of trees tolerates individual feature noise&#x27;,
+            &#x27;Trains in seconds on CPU -- fast iteration cycle&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Fixed feature set -- misses paraphrase variants not represented in features&#x27;,
+            &#x27;Requires 200+ labelled examples per class before reliable deployment&#x27;,
+            &#x27;Feature engineering bottleneck -- signal quality depends on feature design&#x27;,
+            &#x27;Imbalanced data degrades accuracy silently without treatment&#x27;,
+        ],
+    ),
+    MLDetectionFamily(
+        name=&#x27;Sequence Modelling&#x27;,
+        algorithms=[&#x27;LSTM&#x27;, &#x27;GRU&#x27;],
+        min_labelled_data=&#x27;500+ labelled conversations (not single turns)&#x27;,
+        latency_ms_range=&#x27;5-15ms&#x27;,
+        explainability=&#x27;Attention weights over turns -- which turns triggered the signal&#x27;,
+        gateway_tracks=[&#x27;Tracks 4-5 (multi-turn jailbreak)&#x27;],
+        owasp_coverage=[&#x27;LLM01 (Prompt Injection -- multi-turn variant)&#x27;],
+        atlas_coverage=[&#x27;AML.T0051 (LLM Prompt Injection -- conversation-level)&#x27;],
+        chapter_12_section=&#x27;Section 12.06&#x27;,
+        deployment_stage=&#x27;Month 3+ -- after conversation-level labelled data accumulates&#x27;,
+        strengths=[
+            &#x27;Detects multi-turn attack patterns invisible to single-turn classifiers&#x27;,
+            &#x27;Attention weights identify which turns carry the attack signal&#x27;,
+            &#x27;Captures temporal escalation: gradual boundary erosion across turns&#x27;,
+            &#x27;Covers payload splitting attacks fragmented across multiple turns&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Requires conversation-level labelled data -- harder and slower to collect&#x27;,
+            &#x27;Higher inference latency than tree classifiers -- 5-15ms per conversation&#x27;,
+            &#x27;Variable-length conversation handling adds inference complexity&#x27;,
+            &#x27;May miss single-turn attacks where the full payload is in one turn&#x27;,
+        ],
+    ),
+    MLDetectionFamily(
+        name=&#x27;Embedding-Based Detection&#x27;,
+        algorithms=[&#x27;Sentence Transformers&#x27;, &#x27;Cosine Similarity&#x27;, &#x27;HDBSCAN Clustering&#x27;],
+        min_labelled_data=&#x27;50+ per attack cluster (centroids, not per-example labels)&#x27;,
+        latency_ms_range=&#x27;2-4ms (MiniLM-L6 via ONNX Runtime)&#x27;,
+        explainability=&#x27;Cosine distance from named attack cluster centroid&#x27;,
+        gateway_tracks=[&#x27;Track 1 (injection paraphrase variants)&#x27;],
+        owasp_coverage=[&#x27;LLM01 (Prompt Injection)&#x27;, &#x27;LLM02 (Insecure Output Handling)&#x27;],
+        atlas_coverage=[&#x27;AML.T0051 (LLM Prompt Injection -- semantic variant)&#x27;],
+        chapter_12_section=&#x27;Section 12.07&#x27;,
+        deployment_stage=&#x27;Week 4-8 -- after 50+ confirmed positives seed cluster centroids&#x27;,
+        strengths=[
+            &#x27;Catches paraphrase variants that share no tokens with known examples&#x27;,
+            &#x27;Semantic coverage independent of surface token distribution&#x27;,
+            &#x27;Fast inference -- MiniLM-L6 via ONNX under 4ms&#x27;,
+            &#x27;Cluster-based: explainable as distance from a named attack family&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Requires pre-computed attack cluster centroids from confirmed positives&#x27;,
+            &#x27;High false positive rate for inputs semantically near but not equal to attacks&#x27;,
+            &#x27;Novel attack families with no existing cluster are not detected&#x27;,
+            &#x27;Embedding model must match deployment domain -- off-domain embeddings degrade&#x27;,
+        ],
+    ),
+    MLDetectionFamily(
+        name=&#x27;Neural Classification&#x27;,
+        algorithms=[&#x27;DistilBERT (fine-tuned)&#x27;, &#x27;Multi-layer Perceptron&#x27;],
+        min_labelled_data=&#x27;2,000+ per class for reliable fine-tuning&#x27;,
+        latency_ms_range=&#x27;15ms (FP32), 7ms (INT8 quantised)&#x27;,
+        explainability=&#x27;Attention maps (post-hoc); no SHAP equivalent at token level&#x27;,
+        gateway_tracks=[&#x27;Track 1 (injection -- highest accuracy)&#x27;, &#x27;Tracks 2-5 (jailbreak)&#x27;],
+        owasp_coverage=[&#x27;LLM01 (Prompt Injection)&#x27;, &#x27;LLM02 (Insecure Output Handling)&#x27;],
+        atlas_coverage=[&#x27;AML.T0051 (LLM Prompt Injection)&#x27;, &#x27;AML.T0054 (LLM Jailbreak)&#x27;],
+        chapter_12_section=&#x27;Section 12.08&#x27;,
+        deployment_stage=&#x27;Month 3+ -- after 2000+ labelled examples and latency budget confirmed&#x27;,
+        strengths=[
+            &#x27;95%+ accuracy on well-defined attack classes with 2000+ labelled examples&#x27;,
+            &#x27;Contextual token representation catches syntactic and semantic attack signals&#x27;,
+            &#x27;Transfer learning from pre-training -- language understanding is free&#x27;,
+            &#x27;Outperforms tree classifiers by 5-10 percentage points at matched recall&#x27;,
+        ],
+        failure_modes=[
+            &#x27;Requires 2000+ labelled examples -- highest data requirement of all families&#x27;,
+            &#x27;15ms FP32 inference -- must quantise to INT8 for 50ms gateway budget&#x27;,
+            &#x27;Post-hoc explainability only -- attention maps are not analyst-readable in real time&#x27;,
+            &#x27;Hours of fine-tuning per version -- slow iteration cycle relative to tree classifiers&#x27;,
+        ],
+    ),
+]
+
+
+def print_taxonomy_table(families: List[MLDetectionFamily]) -&gt; None:
+    print(&#x27;ML Detection Family Taxonomy&#x27;)
+    print(&#x27;=&#x27; * 60)
+    for f in families:
+        print(f&#x27;\n[{f.name}]&#x27;)
+        print(f&#x27;  Algorithms:    {&quot;, &quot;.join(f.algorithms)}&#x27;)
+        print(f&#x27;  Min data:      {f.min_labelled_data}&#x27;)
+        print(f&#x27;  Latency:       {f.latency_ms_range}&#x27;)
+        print(f&#x27;  Explainability:{f.explainability}&#x27;)
+        print(f&#x27;  Gateway:       {&quot;, &quot;.join(f.gateway_tracks)}&#x27;)
+        print(f&#x27;  OWASP:         {&quot;, &quot;.join(f.owasp_coverage)}&#x27;)
+        print(f&#x27;  ATLAS:         {&quot;, &quot;.join(f.atlas_coverage)}&#x27;)
+        print(f&#x27;  Deploy at:     {f.deployment_stage}&#x27;)
+        print(f&#x27;  Strengths:&#x27;)
+        for s in f.strengths:
+            print(f&#x27;    + {s}&#x27;)
+        print(f&#x27;  Failure modes:&#x27;)
+        for fm in f.failure_modes:
+            print(f&#x27;    - {fm}&#x27;)
+
+
+def rules_vs_ml_summary() -&gt; None:
+    print(&#x27;\nRules vs ML -- Complementarity Summary&#x27;)
+    print(&#x27;-&#x27; * 42)
+    dims = [
+        (&#x27;Known pattern&#x27;,     &#x27;Near-perfect precision&#x27;,          &#x27;High; generalises slightly&#x27;),
+        (&#x27;Novel variants&#x27;,    &#x27;FAIL -- rule does not exist&#x27;,     &#x27;Catches via learned features&#x27;),
+        (&#x27;Paraphrase evasion&#x27;,&#x27;FAIL -- different tokens bypass&#x27;,  &#x27;Embedding detector catches&#x27;),
+        (&#x27;Multi-turn attack&#x27;, &#x27;FAIL -- single-turn scope&#x27;,       &#x27;GRU covers conversation arc&#x27;),
+        (&#x27;Explainability&#x27;,    &#x27;Immediate -- read the rule&#x27;,      &#x27;SHAP (tree); attention (neural)&#x27;),
+        (&#x27;Cold start&#x27;,        &#x27;Works -- write from threat intel&#x27;, &#x27;Anomaly only; supervised needs labels&#x27;),
+        (&#x27;Adaptive adversary&#x27;,&#x27;Bypassed by surface rewrite&#x27;,     &#x27;Must change attack structure&#x27;),
+    ]
+    fmt = &#x27;{:&lt;22} {:&lt;38} {:&lt;42}&#x27;
+    print(fmt.format(&#x27;Dimension&#x27;, &#x27;Rule-Based (Sigma)&#x27;, &#x27;ML-Based (Chapter 12)&#x27;))
+    print(&#x27;-&#x27; * 102)
+    for dim, rule, ml in dims:
+        print(fmt.format(dim, rule, ml))
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_taxonomy_table(ML_DETECTION_FAMILIES)
+    rules_vs_ml_summary()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Deployment Sequencing Decision Tree</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_deployment_sequencer.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Decision tree that takes current labelled data availability and threat surface characteristics as input and returns the correct ML detection family and deployment action for the current stage. Implements the sequencing logic from Section 12.01 as a runnable tool.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># ml_deployment_sequencer.py
+# Section 12.01: ML Detection Deployment Sequencing Decision Tree
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List, Optional
+
+
+@dataclass
+class ThreatSurface:
+    name: str
+    labelled_examples_per_class: int
+    labelled_conversations: int
+    days_in_production: int
+    multi_turn_attacks_documented: bool
+    latency_budget_ms: int
+    paraphrase_evasion_observed: bool
+
+
+@dataclass
+class DeploymentAction:
+    stage: str
+    deploy_now: List[str]
+    keep_running: List[str]
+    next_milestone: str
+    section_reference: str
+
+
+def sequence_detectors(surface: ThreatSurface) -&gt; List[DeploymentAction]:
+    actions: List[DeploymentAction] = []
+
+    # Stage 1: always deploy anomaly detection first
+    actions.append(DeploymentAction(
+        stage=&#x27;Stage 1 -- Statistical Anomaly (deploy immediately)&#x27;,
+        deploy_now=[
+            &#x27;Isolation Forest on API usage features (Section 12.03)&#x27;,
+            &#x27;Feature pipeline: token, structural, contextual features (Section 12.02)&#x27;,
+        ],
+        keep_running=[],
+        next_milestone=&#x27;Accumulate 200+ analyst-reviewed TP labels from anomaly alerts&#x27;,
+        section_reference=&#x27;Section 12.03&#x27;,
+    ))
+
+    if surface.labelled_examples_per_class &lt; 200:
+        return actions
+
+    # Stage 2: supervised classification
+    actions.append(DeploymentAction(
+        stage=&#x27;Stage 2 -- Supervised Classification&#x27;,
+        deploy_now=[
+            &#x27;Random Forest classifier with SHAP explainability (Section 12.05)&#x27;,
+            &#x27;Dataset curation pipeline: temporal split, class imbalance handling (Section 12.04)&#x27;,
+        ],
+        keep_running=[&#x27;Isolation Forest (continue collecting anomaly alerts)&#x27;],
+        next_milestone=&#x27;Accumulate 500+ labelled examples per class; confirm paraphrase evasion&#x27;,
+        section_reference=&#x27;Section 12.05&#x27;,
+    ))
+
+    if surface.labelled_examples_per_class &lt; 500:
+        return actions
+
+    # Stage 3: add XGBoost and embedding detector
+    deploy_stage3 = [&#x27;XGBoost classifier with calibration (Section 12.05, 12.10)&#x27;]
+    if surface.paraphrase_evasion_observed:
+        deploy_stage3.append(&#x27;Embedding similarity detector with seeded centroids (Section 12.07)&#x27;)
+
+    actions.append(DeploymentAction(
+        stage=&#x27;Stage 3 -- Ensemble Foundation&#x27;,
+        deploy_now=deploy_stage3,
+        keep_running=[&#x27;Isolation Forest&#x27;, &#x27;Random Forest&#x27;],
+        next_milestone=&#x27;Accumulate 2000+ labelled examples; verify latency budget with three detectors&#x27;,
+        section_reference=&#x27;Sections 12.05, 12.07, 12.10&#x27;,
+    ))
+
+    if surface.labelled_examples_per_class &lt; 2000:
+        return actions
+
+    # Stage 4: neural classifier if latency permits
+    if surface.latency_budget_ms &gt;= 50:
+        actions.append(DeploymentAction(
+            stage=&#x27;Stage 4 -- Neural Classifier (if latency budget permits)&#x27;,
+            deploy_now=[
+                &#x27;DistilBERT fine-tune with INT8 quantisation (Sections 12.08, 12.12)&#x27;,
+                &#x27;Model registry with shadow-mode validation (Section 12.13)&#x27;,
+            ],
+            keep_running=[&#x27;Isolation Forest&#x27;, &#x27;Random Forest&#x27;, &#x27;XGBoost&#x27;, &#x27;Embedding detector&#x27;],
+            next_milestone=&#x27;Accumulate 500+ conversation-level labels if multi-turn attacks present&#x27;,
+            section_reference=&#x27;Sections 12.08, 12.12, 12.13&#x27;,
+        ))
+
+    # Stage 5: sequence model if multi-turn attacks documented
+    if surface.multi_turn_attacks_documented and surface.labelled_conversations &gt;= 500:
+        actions.append(DeploymentAction(
+            stage=&#x27;Stage 5 -- Sequence Modelling (multi-turn attack coverage)&#x27;,
+            deploy_now=[
+                &#x27;GRU conversation detector with attention weights (Section 12.06)&#x27;,
+                &#x27;Conversation-level dataset construction (Section 12.04)&#x27;,
+            ],
+            keep_running=[&#x27;All prior detectors&#x27;],
+            next_milestone=&#x27;Full four-detector ensemble assembled; begin A/B testing (Section 12.16)&#x27;,
+            section_reference=&#x27;Sections 12.06, 12.15, 12.16&#x27;,
+        ))
+
+    return actions
+
+
+def print_sequencing_plan(surface: ThreatSurface) -&gt; None:
+    print(f&#x27;Deployment Sequencing Plan: {surface.name}&#x27;)
+    print(f&#x27;  Current labelled examples per class: {surface.labelled_examples_per_class}&#x27;)
+    print(f&#x27;  Labelled conversations:              {surface.labelled_conversations}&#x27;)
+    print(f&#x27;  Days in production:                  {surface.days_in_production}&#x27;)
+    print(f&#x27;  Multi-turn attacks documented:       {surface.multi_turn_attacks_documented}&#x27;)
+    print(f&#x27;  Latency budget:                      {surface.latency_budget_ms}ms P99&#x27;)
+    print(f&#x27;  Paraphrase evasion observed:         {surface.paraphrase_evasion_observed}&#x27;)
+    print()
+    actions = sequence_detectors(surface)
+    for i, a in enumerate(actions, 1):
+        print(f&#x27;[{i}] {a.stage}&#x27;)
+        print(f&#x27;    Deploy now:&#x27;)
+        for d in a.deploy_now:
+            print(f&#x27;      + {d}&#x27;)
+        if a.keep_running:
+            print(f&#x27;    Keep running:&#x27;)
+            for k in a.keep_running:
+                print(f&#x27;      = {k}&#x27;)
+        print(f&#x27;    Next milestone: {a.next_milestone}&#x27;)
+        print(f&#x27;    Reference:      {a.section_reference}&#x27;)
+        print()
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # Example: new LLM integration, day 30, 350 labelled examples accumulated
+    surface = ThreatSurface(
+        name=&#x27;Production LLM API -- Month 1&#x27;,
+        labelled_examples_per_class=350,
+        labelled_conversations=0,
+        days_in_production=30,
+        multi_turn_attacks_documented=False,
+        latency_budget_ms=50,
+        paraphrase_evasion_observed=True,
+    )
+    print_sequencing_plan(surface)
+
+    print(&#x27;=&#x27; * 60)
+
+    # Example: mature deployment, 3000 labelled examples, multi-turn confirmed
+    surface_mature = ThreatSurface(
+        name=&#x27;Production LLM API -- Month 6&#x27;,
+        labelled_examples_per_class=3000,
+        labelled_conversations=600,
+        days_in_production=180,
+        multi_turn_attacks_documented=True,
+        latency_budget_ms=50,
+        paraphrase_evasion_observed=True,
+    )
+    print_sequencing_plan(surface_mature)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">ML Detection Maturity Scorer</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">ml_maturity_scorer.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Scores a given detection system against the ML detection maturity ladder (L1/L2/L3) and returns the specific gaps that prevent advancement to the next level. Implements the concrete criteria defined in Section 12.01.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># ml_maturity_scorer.py
+# Section 12.01: ML Detection Maturity Ladder Scorer
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class DetectionSystemState:
+    # L1 criteria
+    anomaly_detector_in_production: bool
+    alerts_reviewed_within_24h: bool
+    tp_fp_labels_stored: bool
+    # L2 criteria
+    supervised_classifier_in_production: bool
+    labelled_examples_per_class: int
+    temporal_test_set_evaluation_documented: bool
+    model_in_registry_with_card: bool
+    # L3 criteria
+    embedding_detector_running: bool
+    neural_or_gru_detector_running: bool
+    calibrated_probabilities: bool
+    ab_test_validated: bool
+    live_curation_pipeline_running: bool
+    retraining_automated: bool
+
+
+@dataclass
+class MaturityScore:
+    level: int
+    level_name: str
+    criteria_met: List[str]
+    gaps: List[str]
+    next_level_actions: List[str]
+
+
+L1_CRITERIA = [
+    (&#x27;anomaly_detector_in_production&#x27;, &#x27;Anomaly detector running on production traffic&#x27;),
+    (&#x27;alerts_reviewed_within_24h&#x27;, &#x27;Alerts reviewed within 24 hours&#x27;),
+    (&#x27;tp_fp_labels_stored&#x27;, &#x27;TP/FP labels from review stored for supervised training&#x27;),
+]
+
+L2_CRITERIA = [
+    (&#x27;supervised_classifier_in_production&#x27;, &#x27;Supervised classifier deployed in production&#x27;),
+    (&#x27;temporal_test_set_evaluation_documented&#x27;, &#x27;Temporal test set evaluation results documented&#x27;),
+    (&#x27;model_in_registry_with_card&#x27;, &#x27;Model in registry with model card&#x27;),
+]
+
+L2_DATA_THRESHOLD = 200
+
+L3_CRITERIA = [
+    (&#x27;embedding_detector_running&#x27;, &#x27;Embedding similarity detector running in ensemble&#x27;),
+    (&#x27;neural_or_gru_detector_running&#x27;, &#x27;Neural classifier or GRU sequence detector running&#x27;),
+    (&#x27;calibrated_probabilities&#x27;, &#x27;All detectors output calibrated probabilities (Section 12.10)&#x27;),
+    (&#x27;ab_test_validated&#x27;, &#x27;Ensemble validated on production A/B test (Section 12.16)&#x27;),
+    (&#x27;live_curation_pipeline_running&#x27;, &#x27;Live dataset curation pipeline collecting TP/FP (Section 12.14)&#x27;),
+    (&#x27;retraining_automated&#x27;, &#x27;Retraining automated with stage transition gate validation (Section 12.13)&#x27;),
+]
+
+
+def score_maturity(state: DetectionSystemState) -&gt; MaturityScore:
+    # Check L1
+    l1_met = []
+    l1_gaps = []
+    for attr, desc in L1_CRITERIA:
+        if getattr(state, attr):
+            l1_met.append(desc)
+        else:
+            l1_gaps.append(desc)
+
+    if l1_gaps:
+        return MaturityScore(
+            level=0,
+            level_name=&#x27;Below L1&#x27;,
+            criteria_met=l1_met,
+            gaps=l1_gaps,
+            next_level_actions=[f&#x27;Complete: {g}&#x27; for g in l1_gaps],
+        )
+
+    # L1 achieved -- check L2
+    l2_met = list(l1_met)
+    l2_gaps = []
+    for attr, desc in L2_CRITERIA:
+        if getattr(state, attr):
+            l2_met.append(desc)
+        else:
+            l2_gaps.append(desc)
+
+    if state.labelled_examples_per_class &lt; L2_DATA_THRESHOLD:
+        l2_gaps.append(
+            f&#x27;Labelled examples per class: {state.labelled_examples_per_class} &#x27;
+            f&#x27;(need {L2_DATA_THRESHOLD}+)&#x27;
+        )
+    else:
+        l2_met.append(f&#x27;Labelled examples per class: {state.labelled_examples_per_class} (&gt;= {L2_DATA_THRESHOLD})&#x27;)
+
+    if l2_gaps:
+        return MaturityScore(
+            level=1,
+            level_name=&#x27;L1 -- Statistical Anomaly&#x27;,
+            criteria_met=l2_met,
+            gaps=l2_gaps,
+            next_level_actions=[f&#x27;Complete for L2: {g}&#x27; for g in l2_gaps],
+        )
+
+    # L2 achieved -- check L3
+    l3_met = list(l2_met)
+    l3_gaps = []
+    for attr, desc in L3_CRITERIA:
+        if getattr(state, attr):
+            l3_met.append(desc)
+        else:
+            l3_gaps.append(desc)
+
+    if l3_gaps:
+        return MaturityScore(
+            level=2,
+            level_name=&#x27;L2 -- Supervised Classification&#x27;,
+            criteria_met=l3_met,
+            gaps=l3_gaps,
+            next_level_actions=[f&#x27;Complete for L3: {g}&#x27; for g in l3_gaps],
+        )
+
+    return MaturityScore(
+        level=3,
+        level_name=&#x27;L3 -- Calibrated Ensemble&#x27;,
+        criteria_met=l3_met,
+        gaps=[],
+        next_level_actions=[&#x27;Chapter 13: add behavioural analysis and drift detection&#x27;],
+    )
+
+
+def print_maturity_report(state: DetectionSystemState) -&gt; None:
+    score = score_maturity(state)
+    bar = &#x27;#&#x27; * score.level + &#x27;.&#x27; * (3 - score.level)
+    print(f&#x27;ML Detection Maturity: [{bar}] Level {score.level} -- {score.level_name}&#x27;)
+    print()
+    print(&#x27;Criteria met:&#x27;)
+    for c in score.criteria_met:
+        print(f&#x27;  [x] {c}&#x27;)
+    if score.gaps:
+        print()
+        print(&#x27;Gaps (not yet met):&#x27;)
+        for g in score.gaps:
+            print(f&#x27;  [ ] {g}&#x27;)
+    print()
+    print(&#x27;Next actions:&#x27;)
+    for a in score.next_level_actions:
+        print(f&#x27;  -&gt; {a}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    # Example: system at L1, anomaly running, some labelled data, no supervised yet
+    state_l1 = DetectionSystemState(
+        anomaly_detector_in_production=True,
+        alerts_reviewed_within_24h=True,
+        tp_fp_labels_stored=True,
+        supervised_classifier_in_production=False,
+        labelled_examples_per_class=120,
+        temporal_test_set_evaluation_documented=False,
+        model_in_registry_with_card=False,
+        embedding_detector_running=False,
+        neural_or_gru_detector_running=False,
+        calibrated_probabilities=False,
+        ab_test_validated=False,
+        live_curation_pipeline_running=False,
+        retraining_automated=False,
+    )
+    print(&#x27;--- System A (early L1) ---&#x27;)
+    print_maturity_report(state_l1)
+
+    print()
+    print(&#x27;--- System B (approaching L2) ---&#x27;)
+    state_l2 = DetectionSystemState(
+        anomaly_detector_in_production=True,
+        alerts_reviewed_within_24h=True,
+        tp_fp_labels_stored=True,
+        supervised_classifier_in_production=True,
+        labelled_examples_per_class=350,
+        temporal_test_set_evaluation_documented=True,
+        model_in_registry_with_card=True,
+        embedding_detector_running=False,
+        neural_or_gru_detector_running=False,
+        calibrated_probabilities=False,
+        ab_test_validated=False,
+        live_curation_pipeline_running=False,
+        retraining_automated=False,
+    )
+    print_maturity_report(state_l2)</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Chapter 12 Section-to-Deliverable Roadmap</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">chapter12_roadmap.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps each Chapter 12 section to its deliverable file, the ML family it implements, the gateway track it populates, and the deployment stage it enables. Provides the detection engineer with a single-file reference for navigating the chapter.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># chapter12_roadmap.py
+# Section 12.01: Chapter 12 Section-to-Deliverable Roadmap
+# 20260606 | AI Security Mastery -- Chapter 12 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass
+from typing import List
+
+
+@dataclass
+class ChapterSection:
+    number: str
+    title: str
+    ml_family: str
+    gateway_track: str
+    key_deliverable: str
+    deployment_stage: str
+    pages: int
+
+
+CHAPTER_12_ROADMAP: List[ChapterSection] = [
+    ChapterSection(&#x27;12.01&#x27;, &#x27;ML Detection Taxonomy&#x27;, &#x27;All families&#x27;, &#x27;All tracks&#x27;, &#x27;ml_detection_taxonomy.py&#x27;, &#x27;Before any deployment&#x27;, 6),
+    ChapterSection(&#x27;12.02&#x27;, &#x27;Security Feature Engineering&#x27;, &#x27;Shared pipeline&#x27;, &#x27;All tracks&#x27;, &#x27;security_feature_extractor.py&#x27;, &#x27;Before any ML detector&#x27;, 6),
+    ChapterSection(&#x27;12.03&#x27;, &#x27;Anomaly Detection&#x27;, &#x27;Unsupervised anomaly&#x27;, &#x27;Track 6&#x27;, &#x27;isolation_forest_detector.py&#x27;, &#x27;Day 1&#x27;, 7),
+    ChapterSection(&#x27;12.04&#x27;, &#x27;Dataset Curation (Build)&#x27;, &#x27;All supervised families&#x27;, &#x27;N/A&#x27;, &#x27;security_dataset_builder.py&#x27;, &#x27;Week 1-4&#x27;, 6),
+    ChapterSection(&#x27;12.05&#x27;, &#x27;Supervised Classification&#x27;, &#x27;RF + XGBoost&#x27;, &#x27;Tracks 1-5&#x27;, &#x27;random_forest_classifier.py&#x27;, &#x27;Week 2-4&#x27;, 7),
+    ChapterSection(&#x27;12.06&#x27;, &#x27;Sequence Models&#x27;, &#x27;LSTM + GRU&#x27;, &#x27;Tracks 4-5&#x27;, &#x27;gru_sequence_detector.py&#x27;, &#x27;Month 3+ (multi-turn)&#x27;, 7),
+    ChapterSection(&#x27;12.07&#x27;, &#x27;Embedding Detection&#x27;, &#x27;Sentence Transformers&#x27;, &#x27;Track 1&#x27;, &#x27;embedding_similarity_detector.py&#x27;, &#x27;Week 4-8&#x27;, 6),
+    ChapterSection(&#x27;12.08&#x27;, &#x27;Neural Classifier&#x27;, &#x27;DistilBERT&#x27;, &#x27;Tracks 1-5&#x27;, &#x27;neural_injection_classifier.py&#x27;, &#x27;Month 3+ (2000+ examples)&#x27;, 7),
+    ChapterSection(&#x27;12.09&#x27;, &#x27;PII Scanner&#x27;, &#x27;Regex + NER ensemble&#x27;, &#x27;Output stage&#x27;, &#x27;pii_scanner.py&#x27;, &#x27;Day 1 (output-side)&#x27;, 6),
+    ChapterSection(&#x27;12.10&#x27;, &#x27;Calibration + Threshold&#x27;, &#x27;All families&#x27;, &#x27;All tracks&#x27;, &#x27;model_calibrator.py&#x27;, &#x27;Before ensemble assembly&#x27;, 6),
+    ChapterSection(&#x27;12.11&#x27;, &#x27;Feature Pipeline (Production)&#x27;, &#x27;Shared pipeline&#x27;, &#x27;All tracks&#x27;, &#x27;feature_pipeline.py&#x27;, &#x27;Before production deployment&#x27;, 6),
+    ChapterSection(&#x27;12.12&#x27;, &#x27;Inference Optimisation&#x27;, &#x27;Neural + embedding&#x27;, &#x27;All tracks&#x27;, &#x27;inference_optimizer.py&#x27;, &#x27;Before production deployment&#x27;, 6),
+    ChapterSection(&#x27;12.13&#x27;, &#x27;Model Registry&#x27;, &#x27;All families&#x27;, &#x27;All tracks&#x27;, &#x27;model_registry.py&#x27;, &#x27;Before first model deployment&#x27;, 5),
+    ChapterSection(&#x27;12.14&#x27;, &#x27;Live Dataset Curation&#x27;, &#x27;All supervised families&#x27;, &#x27;All tracks&#x27;, &#x27;dataset_curator.py&#x27;, &#x27;After first production model&#x27;, 6),
+    ChapterSection(&#x27;12.15&#x27;, &#x27;Four-Detector Ensemble&#x27;, &#x27;All families&#x27;, &#x27;All tracks&#x27;, &#x27;detector_ensemble.py&#x27;, &#x27;Month 2-3&#x27;, 6),
+    ChapterSection(&#x27;12.16&#x27;, &#x27;Benchmarking + A/B Testing&#x27;, &#x27;All families&#x27;, &#x27;All tracks&#x27;, &#x27;ml_detection_benchmark.py&#x27;, &#x27;Ongoing&#x27;, 5),
+    ChapterSection(&#x27;12.17&#x27;, &#x27;Production ML Gateway Capstone&#x27;, &#x27;All families&#x27;, &#x27;All tracks&#x27;, &#x27;production_ml_gateway.py&#x27;, &#x27;Month 3+&#x27;, 8),
+    ChapterSection(&#x27;12.18&#x27;, &#x27;Chapter Summary&#x27;, &#x27;N/A&#x27;, &#x27;N/A&#x27;, &#x27;N/A&#x27;, &#x27;N/A&#x27;, 6),
+]
+
+
+def print_roadmap(sections: List[ChapterSection]) -&gt; None:
+    fmt = &#x27;{:&lt;6} {:&lt;42} {:&lt;26} {:&lt;14} {:&lt;38} {:&lt;4}&#x27;
+    print(fmt.format(&#x27;Sec&#x27;, &#x27;Title&#x27;, &#x27;ML Family&#x27;, &#x27;Track&#x27;, &#x27;Key Deliverable&#x27;, &#x27;Pg&#x27;))
+    print(&#x27;-&#x27; * 135)
+    for s in sections:
+        print(fmt.format(
+            s.number,
+            s.title[:41],
+            s.ml_family[:25],
+            s.gateway_track[:13],
+            s.key_deliverable[:37],
+            s.pages,
+        ))
+    total_pages = sum(s.pages for s in sections)
+    print(f&#x27;\nTotal: {len(sections)} sections, {total_pages} pages&#x27;)
+
+
+def sections_by_deployment_stage(sections: List[ChapterSection]) -&gt; None:
+    print(&#x27;\nDeployment Sequencing View:&#x27;)
+    stages = {}
+    for s in sections:
+        stages.setdefault(s.deployment_stage, []).append(s)
+    for stage, secs in stages.items():
+        print(f&#x27;\n  [{stage}]&#x27;)
+        for s in secs:
+            print(f&#x27;    Section {s.number}: {s.title} -- {s.key_deliverable}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print(&#x27;Chapter 12: ML-Based Detection Systems -- Section Roadmap&#x27;)
+    print(&#x27;=&#x27; * 60)
+    print_roadmap(CHAPTER_12_ROADMAP)
+    sections_by_deployment_stage(CHAPTER_12_ROADMAP)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Skipping anomaly detection and deploying a supervised classifier immediately on a new threat surface because it looks more sophisticated</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Supervised classifiers produce clean precision and recall metrics, SHAP plots, and ROC
+curves -- outputs that look professional in a detection report. Anomaly detectors produce
+anomaly scores and a contamination parameter. Engineers new to security ML associate
+rigour with supervised classifiers and treat anomaly detection as a primitive placeholder
+to skip.</p>
+<h3 class="sh3">Consequence</h3>
+<pre class="code"><code>Deploying a supervised classifier with no labelled data is impossible. Deploying with
+insufficient labelled data (under 50 per class) produces a model that learns the majority
+class (benign) and flags almost nothing. The detection system appears to be running --
+metrics look clean -- while missing the attacks it was deployed to catch. Meanwhile,
+the anomaly detector that was skipped would have been collecting the true positives
+needed to train the supervised classifier correctly.</code></pre>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Always deploy anomaly detection first on any new LLM integration, regardless of how
+quickly labelled data can be collected. The anomaly detector is both a detector and a
+data collection tool. Its alerts, when reviewed by an analyst, produce the labelled
+examples that train the supervised classifiers in Sections 12.05 and 12.08. Skipping
+it delays the supervised classifier by exactly the time it would have taken to collect
+its first labels from anomaly alerts.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating ML detection as a replacement for rule-based detection and removing Sigma rules when the ML classifier is deployed</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Once a Random Forest classifier reaches 90%+ accuracy on a test set, removing the Sigma
+rules that cover the same threat class feels like eliminating redundancy. The ML model
+is more general, handles novel variants, and has a single configuration file rather than
+a library of rule files to maintain.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The ML classifier has a cold-start failure mode: if the model fails (due to a deployment
+error, model regression, or latency SLO breach) and is taken offline, the Sigma rules
+that were removed provide no fallback coverage. Novel jailbreaks that the classifier
+handles with 90% recall still produce 10% misses; the Sigma rules for the known,
+high-confidence patterns covered that 10% with 100% precision. Removing both layers
+of coverage for a single layer degrades the defence-in-depth architecture Chapter 11 established.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Sigma rules and ML classifiers cover different detection surfaces. Keep both. Sigma rules
+cover known, stable, high-confidence patterns with full explainability and zero false
+positives on exact matches. ML classifiers cover novel variants, paraphrase-equivalent
+payloads, and structurally similar attacks with no exact token match. The detection
+engineering principle from Chapter 11 Section 11.03 is layered detection -- not layer
+replacement.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Evaluating ML detectors with accuracy on a random train/test split and reporting the number as a production readiness metric</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Scikit-learn&#x27;&#x27;s train_test_split defaults to a random shuffle. On a balanced dataset,
+a Random Forest trained on 80% and tested on 20% produces an accuracy metric that looks
+like a legitimate evaluation. The engineer reports 94% accuracy and proceeds to deployment.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A random split of a security dataset allows the test set to contain examples from the
+same time window as the training set. If an adversary sent the same jailbreak pattern
+ten times in one week and those ten examples are split randomly between training and
+test, the classifier memorises the pattern and appears to generalise. On production
+traffic from the following week with a different attack variant, accuracy drops to 70%.
+The 94% evaluation metric was an artefact of data leakage, not a measurement of
+generalisation.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Use temporal splits for all security ML evaluation. Sort the labelled dataset by
+collection timestamp and use the most recent 20% as the test set. The test set must
+contain only examples collected after all training examples. This is the only evaluation
+methodology that measures generalisation to future attack distribution rather than
+memorisation of historical examples. Section 12.04 implements this correctly.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Deploying DistilBERT as the first ML detector on a new threat surface because it is the highest accuracy model</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The DistilBERT fine-tuning pipeline is available from Section 12.08. Engineers who have
+followed the chapter and want the best accuracy naturally try to deploy the highest-performing
+model first. DistilBERT reaches 95%+ accuracy -- why start with anything less?</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">DistilBERT fine-tuning requires 2,000+ labelled examples. On a new LLM integration
+with no labelled data, fine-tuning DistilBERT is not possible. Even with 500 labelled
+examples, fine-tuning DistilBERT on a small security dataset produces significant
+overfitting and a model that generalises worse than a Random Forest trained on the same
+data. The engineer spends GPU time and labelling effort to produce an inferior model
+when the correct choice for that data availability level is a tree classifier.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Follow the deployment sequencing from Section 12.01 Table 3. Random Forest and XGBoost
+outperform DistilBERT below 2,000 labelled examples. Deploy the tree classifier first,
+collect more labels, and fine-tune DistilBERT when the dataset reaches the size at which
+it actually provides an accuracy advantage over the simpler models.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Reporting ML detection coverage using accuracy rather than per-attack-family recall and ATLAS technique coverage</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Accuracy is the default metric in every ML tutorial and is the number most stakeholders
+understand. An engineer presenting a 93% accurate jailbreak detector to a security leadership
+team uses accuracy because it is simple, high, and positive.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A 93% accurate jailbreak detector on an imbalanced dataset where 95% of traffic is benign
+may be a model that predicts benign for every request. Its accuracy is 95% by predicting
+nothing. Even a genuinely trained detector with 93% overall accuracy may have 40% recall
+on a specific jailbreak sub-family (many-shot jailbreaking, for example) while achieving
+99% recall on the DAN family that dominates the training set. The ATLAS coverage report
+for that detector has a critical gap that the overall accuracy metric completely obscures.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Report per-attack-family recall and the ATLAS technique coverage map alongside overall
+accuracy. The ATLAS heat map from Chapter 11 Section 11.05 is the correct format for
+communicating detection coverage to a security audience. Accuracy is a secondary metric
+for internal model comparison; ATLAS coverage and per-family recall are the metrics that
+matter operationally.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Chapter 12 trains the ML layer of the Chapter 11 seven-track gateway. Five ML detection
+families cover the threat surface: unsupervised anomaly detection (zero-label, deploys
+day one), supervised classification (200+ labels, SHAP explainability), sequence modelling
+(multi-turn escalation), embedding detection (paraphrase-resistant), and neural classification
+(highest accuracy, highest cost). The families are complements to rule-based Sigma detection,
+not replacements. Deployment sequencing follows the labelled data availability curve: anomaly
+first, tree classifiers second, embeddings third, neural classifier last. The ML detection
+maturity ladder defines three levels -- L1 statistical anomaly, L2 supervised classification,
+L3 calibrated ensemble -- with concrete entry criteria and gap analysis at each level.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>Rule-based and ML-based detection are complements: Sigma rules cover known patterns with perfect explainability; ML classifiers cover novel variants and paraphrase-equivalent payloads</li><li>Deploy anomaly detection first on every new threat surface -- it is the data collection tool that seeds the supervised classifiers that follow</li><li>The five ML families differ in three dimensions that drive selection: labelled data requirement, latency profile, and explainability</li><li>Sequence models are only necessary when multi-turn attack patterns are documented -- single-turn classifiers miss conversation-arc escalation, but sequence models add latency and data requirements that must be justified</li><li>Neural classifiers outperform tree classifiers only above 2,000 labelled examples -- below this threshold, Random Forest and XGBoost produce better generalisation</li><li>The ML detection maturity ladder (L1/L2/L3) provides concrete criteria for assessing current state and identifying specific gaps -- most production deployments are at L1 or early L2</li></ul>
+<h2 class="sh1">Preview Section 12 02</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Section 12.02: Security Feature Engineering -- Extracting Signal from API Requests</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 12.02 builds the feature extraction pipeline that all five ML detection families
+share. Security features are structurally different from standard NLP classification
+features: they are designed to capture adversarial intent rather than topic or sentiment.
+The pipeline extracts four feature groups: token-level features (sequence length, special
+character density, instruction keyword frequency, token entropy), structural features
+(role boundary markers, JSON or code block presence, bracket density), semantic features
+(embedding distance from known attack clusters, cosine similarity to jailbreak centroids),
+and contextual features (turn number, prior refusal count, session request rate). SHAP
+feature importance analysis on the first trained Random Forest identifies which engineered
+features carry signal and which are noise -- the fastest way to iterate on the feature
+design before investing in larger datasets and more complex models.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 1 Section 1.07: classification algorithms -- foundation for supervised ML families</li><li>Chapter 1 Section 1.11: evaluation metrics -- precision, recall, F1, ROC-AUC used throughout Chapter 12</li><li>Chapter 2 Section 2.17: LSTM and RNN basics -- background for sequence model family (Section 12.06)</li><li>Chapter 3 Section 3.03: word embeddings -- background for embedding detection family (Section 12.07)</li><li>Chapter 11 Section 11.02: detection-as-code principles -- framework Chapter 12 populates</li><li>Chapter 11 Section 11.03: layered detection (signature, heuristic, ML, behavioural) -- Chapter 12 is the ML layer</li><li>Chapter 11 Section 11.05: ATLAS coverage heat map -- gaps Chapter 12 fills</li><li>Chapter 11 Section 11.08: detection maturity model -- extended to ML detectors in this section</li><li>Chapter 11 Section 11.13: seven-track gateway architecture -- tracks Chapter 12 populates</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 12.02: security feature engineering -- the shared pipeline all five families use</li><li>Section 12.03: anomaly detection -- first family to deploy</li><li>Section 12.05: supervised classification -- second family, requires labelled data from 12.03 alerts</li><li>Section 12.15: four-detector ensemble -- combines all trained detectors from 12.03-12.09</li><li>Section 12.17: production ML gateway capstone -- integrates all families into the seven-track gateway</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>ml-detection-taxonomy</li><li>detection-families</li><li>anomaly-detection</li><li>supervised-classification</li><li>sequence-modelling</li><li>embedding-detection</li><li>neural-classification</li><li>deployment-sequencing</li><li>detection-maturity-ladder</li><li>rules-vs-ml</li><li>seven-track-gateway</li><li>owasp-llm01</li><li>owasp-llm10</li><li>atlas-aml-t0051</li><li>atlas-aml-t0051-001</li><li>chapter-12-anchor</li></ul>
+</article>

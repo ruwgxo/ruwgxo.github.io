@@ -1,0 +1,704 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 14 · Section 2 · ~7 pages</div>
+<h1>Architecture Patterns: API Gateway, Sidecar, and Inline</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The API gateway, sidecar, and inline patterns place detection at different points in the request path, trading latency against coupling, deployment independence, and blast radius; the pattern choice is the first production decision and it constrains every performance and resilience decision that follows.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">Section 14.01 named placement as the first deployment concern: where in the request path
+detection sits. This section answers it. Before latency can be budgeted, before failure
+policy can be set, before scaling can be planned, the detection system must be placed
+somewhere in the path between the client and the model service, and there are three
+canonical ways to do it. The API gateway pattern puts detection in a separate service in
+front of the model. The sidecar pattern co-locates detection beside the application as its
+own process. The inline pattern embeds detection directly in the application request path.
+Each places detection at a different point, and each trades the same four properties --
+latency, coupling, deployment independence, and blast radius -- against one another. This
+section works through the three patterns, the trade-offs, where each one puts the Chapter 13
+detection tiers, how to select a pattern by requirement, and how the patterns combine, so
+that the placement decision is made deliberately rather than inherited from whatever was
+easiest to wire up.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 14.02 is the first of the two placement sections (14.02-14.03) and the first response
+to a named deployment concern from the 14.01 taxonomy. It fixes where detection sits;
+Section 14.03 then fixes where in the request lifecycle each detector hooks in
+(pre-processing versus post-processing). Together they complete placement before the
+performance sections (14.04-14.05) engineer latency and scaling against the chosen pattern.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names placement as the first concern</li><li>Chapter 11 Section 11.13: the seven-track gateway and the sub-50ms P99 latency requirement</li><li>Chapter 13 Section 13.01: the state-latency coupling that defines the inline, near-real-time, and batch tiers</li><li>Chapter 13 Section 13.11: the behavioural monitoring gateway being placed in the request path</li><li>Working knowledge of request-path components: clients, gateways, application services, and backend model services</li><li>Familiarity with the difference between an in-process call, a loopback call, and a cross-network hop</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Placement Is the First Production Decision</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The taxonomy in Section 14.01 listed six deployment concerns and put placement first. The
+ordering was not incidental. You cannot budget the latency of a detector until you know
+where it runs, you cannot set its failure policy until you know what process it runs in,
+and you cannot plan its scaling until you know whether it scales with the application or
+apart from it. Every later decision in the chapter is made against a fixed placement, so
+placement is decided first.
+
+Placement is the question of where, in the path between the client and the model service,
+the detection system sits. The behavioural monitoring gateway of Chapter 13 is a logical
+object: it says a request is inspected by four detection layers across three tiers, but it
+does not say what process that inspection runs in or where in the network topology it
+happens. Turning that logical object into a running one means choosing a physical
+placement, and there are three canonical choices: a separate gateway service in front of
+the model, a sidecar process co-located with the application, or code embedded inline in
+the application request path.
+
+The three are not three flavours of the same thing. They place detection at genuinely
+different points, and that difference propagates through the rest of the system. The
+point at which detection sits determines how much latency it adds, how tightly it is
+coupled to the application, whether it can be deployed and scaled on its own, and how far
+a fault in a detector spreads. Those four properties -- latency, coupling, deployment
+independence, and blast radius -- are the axes on which the patterns trade against one
+another, and the rest of this section is about that trade.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The API Gateway Pattern: Detection as a Service in Front of the Model</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The API gateway pattern places detection in a separate service that sits in front of the
+model service. Every request from the client passes through the gateway, is inspected,
+and is either forwarded to the model or blocked; every response passes back through the
+gateway on its way out. Detection is a distinct deployable, with its own process, its own
+release cycle, and its own fleet.
+
+This placement has three properties that make it the default for a security team. First,
+it is a clear choke point: all traffic to the model crosses one place, so there is a
+single point at which every request is guaranteed to be inspected, with no way for a
+caller to reach the model while skipping detection. Second, it gives full deployment
+independence: the detection service is released without touching the application, so the
+security team can ship a new detector or tune a threshold on its own schedule. Third, it
+scales independently: the gateway fleet is sized to the detection workload, not to the
+application workload, so a heavy detector can be given more capacity without scaling the
+application.
+
+The cost of these properties is a network hop. Because the gateway is a separate service,
+the request and the response each cross the network to reach it and return, and that hop
+is added latency on the hot path that the inline detectors must fit within their budget.
+The gateway also becomes a component that must itself be made highly available, because a
+choke point that is down is a total outage. The gateway pattern is the right default when
+a separate team owns detection, independent deployment and scaling are wanted, and the
+latency budget can absorb the hop -- which is the common case for the sub-50ms inline
+budget, where a single well-engineered hop is affordable.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Sidecar Pattern: Detection Co-Located Beside the Application</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The sidecar pattern places detection in its own process, but co-located with the
+application rather than in a separate fleet. In a container platform the sidecar is a
+second container in the same pod as the application; the application calls it over
+loopback, and it inspects the request or enriches it before the application proceeds. The
+sidecar is a middle point between the gateway and the inline patterns, and it is
+deliberately positioned to keep some of the strengths of each.
+
+From the gateway pattern it keeps deployment independence. The sidecar is a separate
+image with its own release cycle, so detection is still deployed without editing and
+redeploying the application code -- the security team updates the sidecar image and the
+platform rolls it out beside the application. From the inline pattern it keeps a low
+latency floor. Because the sidecar is co-located, the call to it is a loopback call
+within the pod rather than a cross-network hop, so it avoids most of the latency the
+gateway pays while still running as a separate process.
+
+What the sidecar gives up is on the scaling and blast-radius axes. Because it lives in
+the application pod, it scales as the application scales: you cannot give the detection
+sidecar more replicas than the application without changing the pod model, so independent
+scaling is limited. And because it shares a host with the application, a misbehaving
+sidecar -- one that leaks memory or saturates CPU -- can affect the application instance
+it sits beside, though the blast radius is bounded to the pod rather than the whole
+fleet. The sidecar is the right choice when independent deployment is wanted but a full
+network hop is not tolerable, and when detection scaling can follow the application.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Inline Pattern: Detection Embedded in the Request Path</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The inline pattern embeds detection directly in the application request path as an
+in-process call. There is no separate service and no separate process: the application
+handler calls the detector as a function, gets a verdict, and proceeds. This is the
+placement with the lowest possible latency floor, because there is no hop and no loopback
+-- the detector runs in the same process, sharing the same memory, and the only cost is
+the compute of the detector itself.
+
+That latency floor is the reason to reach for inline. When the budget is so tight that it
+cannot absorb even a loopback call -- a detector that must run in single-digit
+milliseconds as part of a larger hot path -- inline is the only pattern that fits,
+because it adds no transport cost at all. For the cheapest, most latency-critical
+signature and heuristic checks of the inline tier, running them in-process is sometimes
+the only way to stay within budget.
+
+The price is paid on every other axis. Coupling is at its tightest: detection ships with
+the application, so a detector change means an application release, and the security team
+loses the ability to deploy on its own schedule. Deployment independence is gone
+entirely. And the blast radius is at its widest, because the detector runs inside the
+application process: a detector that throws, hangs, or leaks does so in the application
+itself, so a detector fault is an application fault. Inline trades away independence and
+isolation for raw latency, and it should be chosen only when the latency budget genuinely
+forces it, because the failure policy and circuit breaking of the later sections are
+harder to apply cleanly when detection and application share a process.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Trade-Off Space and Pattern Selection</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Laid side by side, the three patterns form a single trade-off space along one dominant
+axis: latency floor versus independence and isolation. Inline has the lowest latency
+floor and the least independence and isolation; the gateway has the most independence and
+isolation and the highest latency floor; the sidecar sits between them, buying most of
+the gateway independence while paying only a loopback. Moving toward lower latency moves
+toward tighter coupling and a wider blast radius, and the choice is where on that axis
+the system belongs.
+
+Three requirements drive the choice. The latency budget sets the floor: a budget that
+cannot absorb a network hop rules out the gateway, and a budget that cannot absorb even a
+loopback forces inline. Team ownership sets the coupling: when a separate security team
+owns detection and must deploy on its own schedule, the gateway or the sidecar is
+required, because inline binds detection to the application release. The scaling model
+sets the fleet: when detection must scale independently of the application -- a heavy ML
+detector that needs more capacity than the application does -- the gateway is required,
+because the sidecar scales with the pod and inline scales with the application.
+
+The selector deliverable for this section encodes exactly this logic: it takes the
+latency budget, the ownership model, the scaling requirement, and the network-hop
+tolerance, and returns a pattern with the reasoning and the cautions attached. The point
+of writing the selection down as a procedure is that the placement decision then has a
+stated rationale that later sections can rely on, rather than being an accident of which
+wiring was convenient on the day.</p>
+<h3 class="sh2">Part 6</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Combining Patterns and Placing the Chapter 13 Tiers</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The three patterns are not mutually exclusive, and a real production gateway usually
+combines them along the Chapter 13 tier boundaries. The reason is that the pattern choice
+matters most for the inline tier and barely at all for the others. The inline tier is on
+the hot path, so it pays the pattern latency floor on every request, and the choice
+between gateway, sidecar, and inline is felt directly. The near-real-time and batch tiers
+run off the hot path in every pattern: they consume events asynchronously, so they are
+placed the same way regardless of how the inline tier is placed. Placement is therefore
+primarily an inline-tier decision.
+
+That observation licenses the canonical combined architecture. Use an API gateway for the
+inline detection layer, so that the security team gets a central choke point, independent
+deployment, and independent scaling for the detectors that must block before the model
+call, paying one engineered network hop within the sub-50ms budget. Use a sidecar for
+near-real-time enrichment, co-located with the application to gather session context
+cheaply and forward it without a full hop. And run the batch tier entirely off-path as
+scheduled jobs over the event store, where no request-path pattern applies at all. Each
+tier gets the pattern that suits its latency and state profile.
+
+This combination also sets up the sections that follow. The pattern choice fixes the
+latency floor that Section 14.04 must budget against, fixes the process boundaries that
+Section 14.06 makes fail-open or fail-closed decisions across, and fixes the scaling
+model that Section 14.05 plans. Placement is the first production decision precisely
+because it is the one that constrains all the others, and with the pattern chosen and the
+tiers placed, Section 14.03 can turn to where in the request lifecycle each detector
+hooks in.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Three Architecture Patterns at a Glance</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The API gateway, sidecar, and inline patterns summarised by where detection runs, the transport cost it adds, and the one-line reason to choose it. This is the anchor table for the placement decision.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Pattern</li><li>Where detection runs</li><li>Transport cost added</li><li>Choose it when</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>API Gateway</li><li>Separate service in front of the model</li><li>One network hop each way</li><li>A separate team owns detection and needs independent deploy and scaling</li></ul>
+<ul class="blist"><li>Sidecar</li><li>Co-located process in the application pod</li><li>A loopback call (no cross-network hop)</li><li>Independent deploy is wanted but a full network hop is not tolerable</li></ul>
+<ul class="blist"><li>Inline</li><li>In-process call in the application handler</li><li>None (in-process function call)</li><li>The latency budget cannot absorb even a loopback</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Pattern Trade-Offs Across the Four Axes</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The three patterns compared on the four properties they trade -- latency floor, coupling, deployment independence, and blast radius. Moving toward a lower latency floor moves toward tighter coupling and a wider blast radius.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Axis</li><li>API Gateway</li><li>Sidecar</li><li>Inline</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Latency floor</li><li>Highest (network hop)</li><li>Medium (loopback)</li><li>Lowest (in-process)</li></ul>
+<ul class="blist"><li>Coupling</li><li>Loose (separate service)</li><li>Moderate (co-located process)</li><li>Tight (embedded in application)</li></ul>
+<ul class="blist"><li>Deployment independence</li><li>Full</li><li>High (independent image)</li><li>None (ships with application)</li></ul>
+<ul class="blist"><li>Blast radius</li><li>Contained (isolated process)</li><li>Bounded to the pod</li><li>Widest (application process)</li></ul>
+<ul class="blist"><li>Scaling</li><li>Independent of application</li><li>Coupled to the pod</li><li>Coupled to the application</li></ul>
+<ul class="blist"><li>Choke point</li><li>Single central point</li><li>Per-pod</li><li>In-code per handler</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Pattern-to-Tier Placement of the Chapter 13 Detection Tiers</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Where each Chapter 13 detection tier sits under each pattern. The pattern choice matters most for the inline tier on the hot path; the near-real-time and batch tiers run off the hot path in every pattern.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Tier</li><li>Under API Gateway</li><li>Under Sidecar</li><li>Under Inline</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Inline (hot path)</li><li>In the gateway process, in-path</li><li>In the sidecar over loopback</li><li>In-process in the application handler</li></ul>
+<ul class="blist"><li>Near-real-time</li><li>Async events to a separate service</li><li>Sidecar forwards to a shared service</li><li>Application emits events to a service</li></ul>
+<ul class="blist"><li>Batch</li><li>Off-path scheduled jobs</li><li>Off-path scheduled jobs</li><li>Off-path scheduled jobs</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Pattern Selection Drivers</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The three requirements that drive the pattern choice and how each one narrows the options. The latency budget sets the floor, team ownership sets the coupling, and the scaling model sets the fleet.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Driver</li><li>If it points one way</li><li>The pattern it favours</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Latency budget</li><li>Cannot absorb a network hop</li><li>Sidecar or inline</li></ul>
+<ul class="blist"><li>Latency budget</li><li>Cannot absorb even a loopback</li><li>Inline only</li></ul>
+<ul class="blist"><li>Team ownership</li><li>A separate security team owns detection</li><li>Gateway or sidecar (not inline)</li></ul>
+<ul class="blist"><li>Scaling model</li><li>Detection must scale apart from the application</li><li>Gateway only</li></ul>
+<ul class="blist"><li>Network-hop tolerance</li><li>A hop is tolerable and centralisation helps</li><li>Gateway as the default</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Architecture Pattern Selector</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">architecture_pattern_selector.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Selects the API gateway, sidecar, or inline pattern from a requirements record -- latency budget, whether detection deploys independently, whether a separate team owns it, whether it scales separately, and whether a network hop is tolerable -- and returns the recommended pattern with its rationale and cautions. Runs a set of worked scenarios.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the recommended pattern with reasons and cautions per scenario.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># architecture_pattern_selector.py
+# Section 14.02: Architecture Pattern Selector
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+
+@dataclass
+class PatternRequirements:
+    latency_budget_ms: float
+    deploy_detection_independently: bool
+    owned_by_separate_team: bool
+    scale_detection_separately: bool
+    tolerate_extra_network_hop: bool
+
+
+@dataclass
+class PatternRecommendation:
+    pattern: str
+    rationale: List[str]
+    cautions: List[str]
+
+
+def select_pattern(req: PatternRequirements) -&gt; PatternRecommendation:
+    rationale: List[str] = []
+    cautions: List[str] = []
+
+    # Inline is the only pattern with no added network hop, so a very tight
+    # latency budget that cannot absorb a hop forces inline.
+    if req.latency_budget_ms &lt; 10 and not req.tolerate_extra_network_hop:
+        rationale.append(&#x27;Latency budget under 10ms cannot absorb a network hop, so detection must run in-process&#x27;)
+        if req.deploy_detection_independently:
+            cautions.append(&#x27;Inline couples detection to the application release cycle; independent deploy is lost&#x27;)
+        if req.owned_by_separate_team:
+            cautions.append(&#x27;Inline embeds detection in application code; a separate security team loses ownership isolation&#x27;)
+        return PatternRecommendation(&#x27;inline&#x27;, rationale, cautions)
+
+    # A separate team plus independent deploy plus a clear choke point favours
+    # the API gateway, at the cost of a hop.
+    if req.owned_by_separate_team and req.deploy_detection_independently and req.scale_detection_separately:
+        rationale.append(&#x27;Separate ownership, independent deploy, and separate scaling all favour a centralised gateway&#x27;)
+        rationale.append(&#x27;The gateway is a single choke point in front of the model service&#x27;)
+        if not req.tolerate_extra_network_hop:
+            cautions.append(&#x27;The gateway adds a network hop; verify the latency budget absorbs it&#x27;)
+        return PatternRecommendation(&#x27;api_gateway&#x27;, rationale, cautions)
+
+    # Independent deploy without wanting a full extra hop favours the sidecar:
+    # co-located, so the hop is loopback, but still deployed independently.
+    if req.deploy_detection_independently and not req.tolerate_extra_network_hop:
+        rationale.append(&#x27;Independent deploy wanted but a full network hop is not tolerable&#x27;)
+        rationale.append(&#x27;The sidecar co-locates detection with the application over loopback while deploying independently&#x27;)
+        if req.scale_detection_separately:
+            cautions.append(&#x27;The sidecar scales with the application pod; independent scaling is limited&#x27;)
+        return PatternRecommendation(&#x27;sidecar&#x27;, rationale, cautions)
+
+    # Default: gateway when a hop is tolerable, otherwise sidecar.
+    if req.tolerate_extra_network_hop:
+        rationale.append(&#x27;A network hop is tolerable and centralisation simplifies operation, so the gateway is the default&#x27;)
+        return PatternRecommendation(&#x27;api_gateway&#x27;, rationale, cautions)
+    rationale.append(&#x27;No tight in-process constraint but a hop is not tolerable, so the sidecar balances the trade-offs&#x27;)
+    return PatternRecommendation(&#x27;sidecar&#x27;, rationale, cautions)
+
+
+SCENARIOS = [
+    (&#x27;Tight inline classifier&#x27;, PatternRequirements(5.0, False, False, False, False)),
+    (&#x27;Central security gateway&#x27;, PatternRequirements(40.0, True, True, True, True)),
+    (&#x27;Independent deploy, no hop&#x27;, PatternRequirements(30.0, True, False, False, False)),
+    (&#x27;Relaxed budget, hop ok&#x27;, PatternRequirements(80.0, False, False, False, True)),
+]
+
+
+def run_scenarios() -&gt; None:
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;ARCHITECTURE PATTERN SELECTOR&#x27;)
+    print(&#x27;Selects API gateway, sidecar, or inline by latency, ownership, and scaling&#x27;)
+    print(&#x27;=&#x27; * 78)
+    for name, req in SCENARIOS:
+        rec = select_pattern(req)
+        print()
+        print(f&#x27;SCENARIO: {name}&#x27;)
+        print(f&#x27;  Budget {req.latency_budget_ms}ms | indep_deploy={req.deploy_detection_independently} &#x27;
+              f&#x27;| sep_team={req.owned_by_separate_team} | sep_scale={req.scale_detection_separately} &#x27;
+              f&#x27;| hop_ok={req.tolerate_extra_network_hop}&#x27;)
+        print(f&#x27;  -&gt; PATTERN: {rec.pattern}&#x27;)
+        for r in rec.rationale:
+            print(f&#x27;     reason : {r}&#x27;)
+        for c in rec.cautions:
+            print(f&#x27;     caution: {c}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    run_scenarios()</code></pre>
+<h3 class="sh2">Deliverable 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Architecture Pattern Comparison</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">architecture_pattern_comparison.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Encodes each pattern profile across the four trade-off axes -- added latency, coupling, deployment independence, and blast radius -- plus choke point and scaling, prints the full comparison, and renders the fixed latency-floor ranking that follows from the transport mechanism rather than from the detectors.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the per-pattern comparison and the latency-floor ranking.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># architecture_pattern_comparison.py
+# Section 14.02: Architecture Pattern Comparison
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class PatternProfile:
+    name: str
+    added_latency: str
+    coupling: str
+    deployment_independence: str
+    blast_radius: str
+    choke_point: str
+    scaling: str
+
+
+PROFILES: List[PatternProfile] = [
+    PatternProfile(
+        name=&#x27;API Gateway&#x27;,
+        added_latency=&#x27;One network hop (request and response cross the gateway)&#x27;,
+        coupling=&#x27;Loose -- detection is a separate service in front of the model&#x27;,
+        deployment_independence=&#x27;Full -- deploy detection without touching the application&#x27;,
+        blast_radius=&#x27;Contained -- a gateway fault is isolated from the application process&#x27;,
+        choke_point=&#x27;Yes -- single central point where all traffic is inspected&#x27;,
+        scaling=&#x27;Independent -- scale the gateway fleet separately from the application&#x27;,
+    ),
+    PatternProfile(
+        name=&#x27;Sidecar&#x27;,
+        added_latency=&#x27;Loopback call (co-located, no cross-network hop)&#x27;,
+        coupling=&#x27;Moderate -- co-located with the application but a separate process&#x27;,
+        deployment_independence=&#x27;High -- deploy the sidecar image independently of application code&#x27;,
+        blast_radius=&#x27;Shared host -- a sidecar fault can affect its pod but not the fleet&#x27;,
+        choke_point=&#x27;Per-pod -- inspection happens beside each application instance&#x27;,
+        scaling=&#x27;Coupled to the pod -- the sidecar scales as the application scales&#x27;,
+    ),
+    PatternProfile(
+        name=&#x27;Inline&#x27;,
+        added_latency=&#x27;In-process function call (no hop, lowest latency floor)&#x27;,
+        coupling=&#x27;Tight -- detection is embedded in the application request path&#x27;,
+        deployment_independence=&#x27;None -- detection ships with the application release&#x27;,
+        blast_radius=&#x27;Widest -- a detector fault runs in the application process itself&#x27;,
+        choke_point=&#x27;In-code -- inspection is a call in the application handler&#x27;,
+        scaling=&#x27;Coupled to the application -- no separate scaling of detection&#x27;,
+    ),
+]
+
+
+def print_comparison(profiles: List[PatternProfile]) -&gt; None:
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;ARCHITECTURE PATTERN COMPARISON&#x27;)
+    print(&#x27;Latency, coupling, deployment independence, and blast radius per pattern&#x27;)
+    print(&#x27;=&#x27; * 78)
+    for p in profiles:
+        print()
+        print(f&#x27;PATTERN: {p.name}&#x27;)
+        print(f&#x27;  Added latency         : {p.added_latency}&#x27;)
+        print(f&#x27;  Coupling              : {p.coupling}&#x27;)
+        print(f&#x27;  Deployment independence: {p.deployment_independence}&#x27;)
+        print(f&#x27;  Blast radius          : {p.blast_radius}&#x27;)
+        print(f&#x27;  Choke point           : {p.choke_point}&#x27;)
+        print(f&#x27;  Scaling               : {p.scaling}&#x27;)
+
+
+def latency_ranking(profiles: List[PatternProfile]) -&gt; None:
+    # The latency floor ordering is fixed by the mechanism: in-process &lt; loopback &lt; network hop.
+    order = [&#x27;Inline&#x27;, &#x27;Sidecar&#x27;, &#x27;API Gateway&#x27;]
+    print()
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;LATENCY FLOOR RANKING (lowest first)&#x27;)
+    print(&#x27;=&#x27; * 78)
+    for i, name in enumerate(order, start=1):
+        print(f&#x27;  {i}. {name}&#x27;)
+    print()
+    print(&#x27;The ordering is a property of the transport, not of the detectors.&#x27;)
+    print(&#x27;Inline pays no hop, the sidecar pays a loopback, the gateway pays a network hop.&#x27;)
+    print(&#x27;Lower latency is bought with tighter coupling and a wider blast radius.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_comparison(PROFILES)
+    latency_ranking(PROFILES)</code></pre>
+<h3 class="sh2">Deliverable 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Pattern-to-Tier Mapping</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">pattern_to_tier_mapping.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Maps each Chapter 13 detection tier -- inline, near-real-time, and batch -- onto its placement under each of the three patterns, and prints the key observation that the pattern choice matters most for the inline tier because the off-path tiers consume events asynchronously in every pattern.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the tier placements per pattern and the inline-tier observation.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># pattern_to_tier_mapping.py
+# Section 14.02: Where Each Chapter 13 Detection Tier Sits in Each Pattern
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import Dict, List
+
+
+@dataclass
+class TierPlacement:
+    tier: str
+    api_gateway: str
+    sidecar: str
+    inline: str
+
+
+PLACEMENTS: List[TierPlacement] = [
+    TierPlacement(
+        tier=&#x27;Inline (hot path, sub-50ms)&#x27;,
+        api_gateway=&#x27;Runs in the gateway process, in the request path through the gateway&#x27;,
+        sidecar=&#x27;Runs in the sidecar over loopback, lower latency floor than the gateway&#x27;,
+        inline=&#x27;Runs as an in-process call in the application handler, lowest floor&#x27;,
+    ),
+    TierPlacement(
+        tier=&#x27;Near-real-time (seconds, off hot path)&#x27;,
+        api_gateway=&#x27;Gateway emits events to a separate near-real-time service asynchronously&#x27;,
+        sidecar=&#x27;Sidecar forwards enrichment events to a shared near-real-time service&#x27;,
+        inline=&#x27;Application emits events to a near-real-time service; not run in-process&#x27;,
+    ),
+    TierPlacement(
+        tier=&#x27;Batch (minutes to hours, async)&#x27;,
+        api_gateway=&#x27;Runs entirely off-path as scheduled jobs over the event and log store&#x27;,
+        sidecar=&#x27;Runs entirely off-path as scheduled jobs over the event and log store&#x27;,
+        inline=&#x27;Runs entirely off-path as scheduled jobs over the event and log store&#x27;,
+    ),
+]
+
+
+def print_placements(placements: List[TierPlacement]) -&gt; None:
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;PATTERN-TO-TIER MAPPING&#x27;)
+    print(&#x27;Where each Chapter 13 detection tier sits in each architecture pattern&#x27;)
+    print(&#x27;=&#x27; * 78)
+    for p in placements:
+        print()
+        print(f&#x27;TIER: {p.tier}&#x27;)
+        print(f&#x27;  API Gateway: {p.api_gateway}&#x27;)
+        print(f&#x27;  Sidecar    : {p.sidecar}&#x27;)
+        print(f&#x27;  Inline     : {p.inline}&#x27;)
+
+
+def key_observation() -&gt; None:
+    print()
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;KEY OBSERVATION&#x27;)
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;The pattern choice matters most for the INLINE tier, because that tier is on&#x27;)
+    print(&#x27;the hot path and pays the pattern latency floor on every request.&#x27;)
+    print(&#x27;The NEAR-REAL-TIME and BATCH tiers run off the hot path in every pattern, so&#x27;)
+    print(&#x27;the pattern choice barely affects them -- they consume events asynchronously&#x27;)
+    print(&#x27;regardless of how the inline tier is placed.&#x27;)
+    print(&#x27;This is why placement is an inline-tier decision first and foremost.&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_placements(PLACEMENTS)
+    key_observation()</code></pre>
+<h3 class="sh2">Deliverable 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Combined-Pattern Reference Architecture</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">combined_pattern_architecture.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Defines the canonical combined architecture -- an API gateway for inline detection, a sidecar for near-real-time enrichment, and off-path jobs for batch -- and validates the combination, checking that the inline hot path is served and that all three Chapter 13 tiers have a dedicated component.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, no external dependencies, prints the reference architecture components and a combination validation report.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># combined_pattern_architecture.py
+# Section 14.02: Combined-Pattern Reference Architecture
+# 20260121 | AI Security Mastery -- Chapter 14 by Raghav Dinesh
+# Single quotes throughout per book convention
+
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class ArchitectureComponent:
+    name: str
+    pattern: str
+    tier_served: str
+    reason: str
+
+
+REFERENCE_ARCHITECTURE: List[ArchitectureComponent] = [
+    ArchitectureComponent(
+        name=&#x27;API gateway with inline detectors&#x27;,
+        pattern=&#x27;api_gateway&#x27;,
+        tier_served=&#x27;Inline (hot path)&#x27;,
+        reason=&#x27;Central choke point, independent deploy and scaling for the security team, blocking verdict before the model call&#x27;,
+    ),
+    ArchitectureComponent(
+        name=&#x27;Sidecar enrichment collector&#x27;,
+        pattern=&#x27;sidecar&#x27;,
+        tier_served=&#x27;Near-real-time&#x27;,
+        reason=&#x27;Co-located with the application to gather session context cheaply and forward it without a full network hop&#x27;,
+    ),
+    ArchitectureComponent(
+        name=&#x27;Batch analytics jobs&#x27;,
+        pattern=&#x27;off_path&#x27;,
+        tier_served=&#x27;Batch&#x27;,
+        reason=&#x27;Large-state coordinated-network and population analysis run asynchronously over the event store, off the hot path&#x27;,
+    ),
+]
+
+
+def validate_combination(components: List[ArchitectureComponent]) -&gt; List[str]:
+    findings: List[str] = []
+    patterns_used = {c.pattern for c in components}
+    tiers_served = {c.tier_served for c in components}
+
+    if &#x27;api_gateway&#x27; in patterns_used and &#x27;sidecar&#x27; in patterns_used:
+        findings.append(&#x27;Gateway plus sidecar is a valid combination: gateway for blocking inline detection, sidecar for near-real-time enrichment&#x27;)
+    if &#x27;Inline (hot path)&#x27; not in tiers_served:
+        findings.append(&#x27;WARNING: no component serves the inline hot path; blocking detection is missing&#x27;)
+    if len(tiers_served) &lt; 3:
+        findings.append(&#x27;NOTE: not all three Chapter 13 tiers are served by a dedicated component&#x27;)
+    else:
+        findings.append(&#x27;All three Chapter 13 tiers (inline, near-real-time, batch) are served&#x27;)
+    return findings
+
+
+def print_reference(components: List[ArchitectureComponent]) -&gt; None:
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;COMBINED-PATTERN REFERENCE ARCHITECTURE&#x27;)
+    print(&#x27;Patterns are not mutually exclusive; a real gateway combines them by tier&#x27;)
+    print(&#x27;=&#x27; * 78)
+    for c in components:
+        print()
+        print(f&#x27;COMPONENT: {c.name}&#x27;)
+        print(f&#x27;  Pattern     : {c.pattern}&#x27;)
+        print(f&#x27;  Tier served : {c.tier_served}&#x27;)
+        print(f&#x27;  Reason      : {c.reason}&#x27;)
+    print()
+    print(&#x27;=&#x27; * 78)
+    print(&#x27;COMBINATION VALIDATION&#x27;)
+    print(&#x27;=&#x27; * 78)
+    for f in validate_combination(components):
+        print(f&#x27;  - {f}&#x27;)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    print_reference(REFERENCE_ARCHITECTURE)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Choosing the inline pattern for its low latency without accounting for the loss of deployment independence and the widened blast radius</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Inline has the lowest latency floor and is the simplest to wire up -- a function call in
+the handler -- so it looks like the obvious choice when latency is the visible concern
+and the coupling costs are not yet felt.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Every detector change becomes an application release, the security team loses its own deploy schedule, and a detector that throws or hangs takes the application process down with it, because detection and application share a process.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Reach for inline only when the latency budget genuinely cannot absorb even a loopback call, and prefer the sidecar or gateway otherwise so that detection keeps independent deployment and its fault stays isolated from the application.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Defaulting to the API gateway everywhere without checking that the latency budget can absorb the network hop</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The gateway is the cleanest pattern to reason about -- one central choke point,
+independent deploy and scaling -- so it is adopted as a blanket default without measuring
+the hop against the specific budget of the hot path it sits on.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The added network hop consumes a large share of the sub-50ms inline budget, leaving too little for the detectors themselves, and the gateway is later blamed for latency that the placement decision caused.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Confirm the latency budget can absorb one engineered network hop before choosing the gateway, and if it cannot, drop to a sidecar for the loopback saving or inline for the tightest budgets.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating the three patterns as mutually exclusive and forcing every detection tier into one pattern</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A single uniform pattern is simpler to describe and operate, and the tiers are easy to
+treat as an internal detail rather than as the natural seam along which patterns should
+be combined.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The batch tier is awkwardly forced through a request-path gateway it does not need, or the inline tier is denied the gateway choke point it does need, and the architecture fights the tier structure instead of using it.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Combine patterns along the Chapter 13 tier boundaries: a gateway for the inline hot path, a sidecar for near-real-time enrichment, and off-path jobs for batch, because the pattern choice matters most for the inline tier and barely affects the off-path tiers.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Assuming the pattern choice affects all three detection tiers equally</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The pattern is described as a property of the whole detection system, so it is natural to
+assume it applies uniformly, without noticing that only the inline tier is actually on
+the hot path where the pattern latency floor is paid.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Effort is spent optimising the pattern placement of the near-real-time and batch tiers, which consume events asynchronously in every pattern, while the real leverage on the inline tier is under-analysed.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Recognise that placement is primarily an inline-tier decision: analyse the pattern choice hardest for the inline tier on the hot path, and place the off-path tiers the same way regardless of the inline pattern.</p>
+<h3 class="sh2">Mistake 5</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Making the placement decision implicitly, by whatever wiring was easiest, rather than against a stated rationale</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">Placement often falls out of the existing deployment topology -- detection is added
+wherever there was a convenient hook -- so the pattern is inherited rather than chosen,
+and no rationale is recorded.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The later sections that depend on the placement -- latency budgeting, failure policy, scaling -- have no stated basis to build on, and when the placement turns out to constrain them badly there is no record of why it was chosen or what to revisit.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Make the placement decision explicitly against the latency budget, ownership, and scaling drivers, using the pattern selector so that the choice carries a documented rationale the performance and resilience sections can rely on.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">The API gateway, sidecar, and inline patterns place detection at different points in the
+request path and trade the same four properties -- latency floor, coupling, deployment
+independence, and blast radius -- against one another. The gateway runs detection as a
+separate service in front of the model, giving a central choke point, independent deploy,
+and independent scaling at the cost of a network hop. The sidecar co-locates detection as
+its own process, keeping independent deployment and a loopback latency floor but scaling
+with the pod. Inline embeds detection in the application handler for the lowest latency
+floor at the cost of the tightest coupling and the widest blast radius. Moving toward lower
+latency moves toward tighter coupling and wider blast radius, so the choice is a trade-off
+driven by three requirements: the latency budget sets the floor, team ownership sets the
+coupling, and the scaling model sets the fleet. The patterns are not mutually exclusive; a
+real gateway combines them along the Chapter 13 tier boundaries -- a gateway for inline
+detection, a sidecar for near-real-time enrichment, off-path jobs for batch -- because the
+pattern choice matters most for the inline tier on the hot path and barely affects the
+off-path tiers. Placement is the first production decision because it fixes the latency
+floor, process boundaries, and scaling model that every later section engineers against.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>The API gateway, sidecar, and inline patterns place detection at different points in the request path and trade latency floor against coupling, deployment independence, and blast radius</li><li>The gateway gives a central choke point with independent deploy and scaling at the cost of a network hop; the sidecar keeps independent deploy over a loopback but scales with the pod; inline gives the lowest latency floor at the cost of the tightest coupling and widest blast radius</li><li>Lower latency is bought with tighter coupling and a wider blast radius, so the pattern choice is a deliberate trade-off, not an optimisation</li><li>The choice is driven by three requirements: the latency budget sets the floor, team ownership sets the coupling, and the scaling model sets the fleet</li><li>Placement is primarily an inline-tier decision because the near-real-time and batch tiers consume events asynchronously in every pattern</li><li>The patterns combine along the Chapter 13 tier boundaries -- a gateway for inline detection, a sidecar for near-real-time enrichment, off-path jobs for batch -- and this placement constrains the latency, failure, and scaling engineering of later sections</li></ul>
+<h2 class="sh1">Preview Section 14 03</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Integration Points: Pre-Processing and Post-Processing Detection</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">With the architecture pattern chosen and the detection tiers placed, Section 14.03 fixes
+the second half of placement: where in the request lifecycle each detector hooks in. It
+distinguishes pre-processing detection, which scores the request before the model call,
+from post-processing detection, which scores the response after it, states which detectors
+belong at each point, and builds detection_integration_points.py to place each detector at
+the correct hook. It completes the placement concern that this section began.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Section 14.01: the production deployment concern taxonomy that names placement as the first concern</li><li>Chapter 11 Section 11.13: the seven-track gateway and the sub-50ms P99 latency requirement the pattern latency floor must fit within</li><li>Chapter 13 Section 13.01: the state-latency coupling that defines the inline, near-real-time, and batch tiers placed here</li><li>Chapter 13 Section 13.11: the behavioural monitoring gateway placed in the request path by the chosen pattern</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 14.03: integration points -- where in the request lifecycle each detector hooks in, completing placement</li><li>Section 14.04: latency engineering -- budgeting against the latency floor the pattern choice fixes</li><li>Section 14.05: throughput and scaling -- planning against the scaling model the pattern choice fixes</li><li>Section 14.06: failure modes -- the fail-open/fail-closed policy across the process boundaries the pattern fixes</li><li>Section 14.11: the production gateway capstone -- the combined-pattern architecture assembled into one running service</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>architecture-patterns</li><li>api-gateway</li><li>sidecar-pattern</li><li>inline-detection</li><li>placement</li><li>latency-floor</li><li>coupling</li><li>deployment-independence</li><li>blast-radius</li><li>pattern-selection</li><li>combined-patterns</li><li>state-latency-tiers</li><li>production-deployment</li><li>part-3-chapter-4</li></ul>
+</article>

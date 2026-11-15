@@ -1,0 +1,395 @@
+<article>
+<header class="sec-header">
+<div class="badge">Chapter 17 · Section 4 · ~8 pages</div>
+<h1>Dataset Curation: Collecting True and False Positives</h1>
+</header>
+<h2 class="sh1">Section Overview</h2>
+<h3 class="sh2">One Line Summary</h3>
+<p class="prose">The stage where the feedback loop closes at the analyst: dataset curation turns a stream of analyst dispositions of SIEM alerts into a labelled, quality-gated dataset fit to retrain on -- which means far more than collecting labels, because it must resolve conflicting dispositions of the same detection into one trustworthy label, handle the class imbalance that makes benign traffic swamp the rare real attacks, and refuse to emit a dataset whose label quality is too low to train on safely, since retraining on bad labels degrades the very detectors it was meant to improve.</p>
+<h3 class="sh2">Why This Section Exists</h3>
+<p class="prose">The measurement stage (17.02-17.03) told the suite where it is weak. The improvement stage has to do something about it, and everything downstream -- retraining, A/B testing -- depends on one input: labelled data that reflects how the detectors are actually performing on live traffic. This section produces that input, and it exists because producing it well is much harder than it first appears. The naive view is that curation is collection: gather the detections analysts marked true or false and hand them to the trainer. The real work is everything that makes those collected labels trustworthy enough to retrain on, because a detector retrained on bad labels does not stay the same -- it gets worse, confidently, in the direction the bad labels point.
+
+This is where the feedback loop of the whole chapter physically closes. A detection fires, becomes a SIEM alert through the Chapter 16 integration, and reaches an analyst who dispositions it -- true positive, this was a real attack; false positive, this was benign. That disposition is a label on the original detection, and the accumulation of dispositions is the training signal that flows from operations back to detection. The section builds the pipeline that carries that signal, and it confronts the three problems that make a raw disposition stream unfit to train on directly. First, analysts disagree: the same alert can be dispositioned differently by different reviewers, and the conflict must be resolved into a single label with a confidence that reflects the disagreement. Second, attacks are rare, so the labelled set is overwhelmingly false positives, and training on it as-is teaches a detector that nothing is an attack. Third, some labels are simply too weak to use -- low agreement, all-unknown dispositions -- and a dataset with too few trustworthy examples or too few real attacks must be refused rather than passed on. Curation is the discipline that turns a noisy disposition stream into a dataset that improves detectors instead of poisoning them. It extends the Chapter 12 Section 12.14 live curation with exactly the disposition feedback the Chapter 16 SIEM integration made available.</p>
+<h3 class="sh2">Position In Chapter</h3>
+<p class="prose">Section 17.04 opens the improvement half of the loop, converting the measurement of 17.02-17.03 into the labelled data that retraining consumes. It is where the feedback loop closes at the analyst, turning the Chapter 16 alert dispositions into training labels. It extends the Chapter 12 Section 12.14 dataset curation and model registry, and its curated, quality-gated output is the direct input to the retraining of Section 17.05, whose validation exists precisely because curation cannot guarantee perfect labels.</p>
+<h2 class="sh1">Prerequisites</h2>
+<ul class="blist"><li>Chapter 17 Section 17.01: the improvement loop and the feedback that closes at the analyst</li><li>Chapter 17 Section 17.02: the detection metrics whose labels these dispositions provide</li><li>Chapter 16 Section 16.06: the SIEM alert dispositions that are the label source</li><li>Chapter 12 Section 12.14: the live dataset curation and model registry this extends</li><li>Familiarity with class imbalance, label noise, and inter-annotator agreement</li></ul>
+<h2 class="sh1">Prose Content</h2>
+<h3 class="sh2">Part 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Where the Feedback Loop Closes</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Every chapter of Part 4 has been building toward a loop that runs from operations back to detection, and this is the section where that loop physically closes. Trace the path. A detector in the Chapter 15 suite fires on a request. The Chapter 16 integration delivers that detection to the SIEM as an alert, enriched with context and a recommended response. An analyst opens the alert, investigates, and reaches a verdict on it: this was a real attack, or this was a false alarm. That verdict -- the analyst&#x27;s disposition -- is not just the resolution of one alert. It is a label on the detection that produced it, ground truth about whether the detector was right, established by a human who examined the actual case. And when those dispositions accumulate, they are a labelled dataset describing exactly how the detectors are performing on the live traffic they currently face.
+
+That is the feedback signal the whole improvement loop runs on, and it is why the loop could only be assembled after the SIEM integration. Before Chapter 16, detections had nowhere to go and no one to label them; the detectors ran open-loop, improvable only by whatever offline data happened to be available. With detections flowing to analysts and analysts dispositioning them, the loop has a label supply that is live, real, and self-refreshing -- every alert an analyst resolves adds a labelled example describing the current threat and traffic. The analyst, in dispositioning alerts, is doing double duty: resolving the immediate incident and, at the same time, generating the training data that will improve the detector that raised it. This section builds the pipeline that captures that second output. But a disposition stream is not a training set as it stands, and the rest of the section is about the three things that have to happen before it becomes one.</p>
+<h3 class="sh2">Part 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Resolving Conflicting Dispositions</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The first problem is that analysts disagree. The same alert, reviewed by two analysts, can be dispositioned two ways: a senior reviewer with full context calls it a true positive, while a junior triaging quickly calls it a false positive, or the reverse. Sometimes the disagreement reflects genuine ambiguity in the case; sometimes it reflects a difference in skill or attention. Either way, the curation pipeline receives conflicting labels for one detection and cannot simply keep both -- a training example needs one label. The naive resolutions are all bad: taking the last disposition is arbitrary, discarding any detection with a conflict throws away exactly the hard cases most worth learning from, and majority vote ignores that not all reviewers are equally reliable.
+
+The pipeline resolves conflicts by confidence-weighted vote. Each disposition carries a confidence -- a weight reflecting how much that analyst&#x27;s call should count, which a deployment can set from seniority, from the reviewer&#x27;s historical accuracy, or from how much time they spent on the case. The resolution sums the confidence behind each verdict and takes the heavier side, so a senior reviewer&#x27;s high-confidence true-positive outweighs a junior&#x27;s low-confidence false-positive. Crucially, the resolution does not just pick a winner; it carries the strength of agreement forward as the label&#x27;s own confidence. A detection where all reviewers agreed produces a label with confidence near 1.0; a contested detection where the winning side barely outweighed the other produces a label with a confidence near 0.5, marking it as a weak label. That per-label confidence is what the quality gate later reads to decide which labels are trustworthy enough to keep. Conflict is not noise to be discarded -- it is information about label reliability, preserved rather than thrown away.</p>
+<h3 class="sh2">Part 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Class-Imbalance Problem</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The second problem is arithmetic and unavoidable: attacks are rare, so a curated set drawn from live traffic is overwhelmingly false positives. This follows directly from the base-rate problem of 17.02 -- if attacks are one in a thousand and the detector alerts on them plus a small fraction of benign traffic, the alerts the analyst dispositions are mostly benign, and the labels that result are mostly false positives. A curated set might be ten or twenty false positives for every true positive. That imbalance is real and must not be hidden, but it also cannot be fed to a trainer as-is, because a model trained on data that is 95% one class learns the cheapest possible rule: predict that class always. A detector retrained on a benign-dominated set learns to call everything benign -- it drives its own false-positive rate to zero by refusing to alert at all, which is catastrophic, because it also drives its true-positive rate to zero.
+
+The pipeline handles this by separating two things that are often conflated: the dataset that records the true distribution and the view used for training. The curated set keeps every label, in its real, imbalanced proportion, because that is the honest record of what the detectors saw and it is what evaluation must run against -- measuring a candidate on a rebalanced set would give a precision number that lies, exactly the base-rate lie of 17.02 in reverse. But the training view is rebalanced: it keeps every one of the rare attack examples, because those are precious and few, and caps the benign examples at a bounded ratio to the attacks, so the trainer sees a distribution it can actually learn a boundary from. The cap keeps the majority class from swamping the signal without discarding the minority, and it selects the benign examples to keep by label confidence, so the training view is built from the most trustworthy negatives. The full set remains for evaluation; the rebalanced view is only for training. Keeping those two separate is what lets curation handle imbalance without either lying about the distribution or teaching the detector to give up.</p>
+<h3 class="sh2">Part 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Quality Gate: Refusing a Dataset</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">The third problem is the one that most distinguishes curation from collection: sometimes the right output is no dataset at all. Retraining on a bad dataset is not a no-op that wastes some compute -- it actively degrades the detector, replacing a working model with one trained on noise, too few examples, or too few real attacks to learn anything useful. A curation pipeline that always emits a dataset, however thin or noisy, is a pipeline that will eventually poison the suite. So the pipeline ends in a gate that can refuse, and refusal is a first-class, correct outcome, not an error.
+
+The gate applies several checks. Labels below a minimum confidence -- the weak, contested labels from part two -- are dropped before anything else, because a label the reviewers barely agreed on is more likely to mislabel than to inform. Then the surviving set is checked for sufficiency: a dataset with too few trustworthy examples overall cannot support retraining, and -- more importantly given the imbalance -- a dataset with too few real attack examples cannot teach a detector what attacks look like, no matter how many benign examples it has. A set of two hundred benign labels and three attack labels is not a training set; it is a way to make a detector forget what attacks are. When the checks fail, the pipeline reports the dataset as untrainable, with the specific reasons, and the loop does not retrain this cycle -- it waits for more dispositions to accumulate and tries again next cycle. This is the curation analogue of the drift-routing discipline in Chapter 13: just as a drift signal on too little data should not trigger action, a curated set on too few trustworthy labels should not trigger retraining. The ability to say &#x27;not yet, not enough&#x27; is what makes the whole improvement loop safe, because it is the last checkpoint before data becomes a model.</p>
+<h3 class="sh2">Part 5</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Extending Chapter 12, and Feeding Retraining</p>
+<h3 class="sh3">Body</h3>
+<p class="prose">Curation did not begin in this chapter. Chapter 12 Section 12.14 built live dataset curation and the model registry for the detectors&#x27; original training -- the machinery for collecting, labelling, and versioning training data. What Section 17.04 adds is the feedback source that only exists once the suite is deployed and integrated: the analyst dispositions of live SIEM alerts. Chapter 12&#x27;s curation drew on whatever labelled data was available at build time; this section extends it with a continuous, operational label stream that describes the current live distribution, captured through the Chapter 16 integration. The curation discipline is the same -- collect, label, quality-check, version -- but the label source is new, and it is what makes the curation a feedback loop rather than a one-time build.
+
+The curated, quality-gated dataset this section produces is the direct input to the retraining of Section 17.05, and the handoff between them is deliberately designed around the fact that curation cannot guarantee perfect labels. Even after conflict resolution, imbalance handling, and the quality gate, a curated set can carry residual label noise, and it could in principle be adversarially poisoned -- an attacker who understands the loop might try to shape analyst dispositions to corrupt the training data. Curation does what it can: it resolves conflicts, weights by confidence, refuses insufficient sets. But it hands off to a retraining stage that validates every candidate before deployment precisely because the label quality upstream is good, not perfect. The two stages are a defence in depth: curation makes the data as trustworthy as it can, and retraining refuses to trust it blindly, validating the result against the quality bar before anything reaches production. With the labelled data curated and gated, Section 17.05 turns it into a retrained candidate -- when, and only when, the drift signal and the label supply say it is time.</p>
+<h2 class="sh1">Reference Materials</h2>
+<h3 class="sh2">Table 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">From Alert Disposition to Training Label</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The feedback loop closes at the analyst. Each step turns operational work into training signal.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Step</li><li>Actor</li><li>Produces</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Detector fires</li><li>Chapter 15 suite</li><li>A detection</li></ul>
+<ul class="blist"><li>Detection delivered as alert</li><li>Chapter 16 integration</li><li>An enriched SIEM alert</li></ul>
+<ul class="blist"><li>Alert dispositioned</li><li>Security analyst</li><li>A true/false-positive verdict</li></ul>
+<ul class="blist"><li>Disposition captured</li><li>This curator</li><li>A label on the original detection</li></ul>
+<ul class="blist"><li>Labels accumulate</li><li>This curator</li><li>A labelled dataset of live performance</li></ul>
+<h3 class="sh2">Table 2</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Resolving Conflicting Dispositions</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Conflict is resolved by confidence-weighted vote, and the strength of agreement becomes the label&#x27;s confidence -- preserved as information, not discarded.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Situation</li><li>Resolution</li><li>Label confidence</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>All reviewers agree</li><li>The agreed verdict</li><li>Near 1.0 -- strong label</li></ul>
+<ul class="blist"><li>Senior TP (0.9) vs junior FP (0.4)</li><li>True positive (heavier side wins)</li><li>~0.69 -- usable but weaker</li></ul>
+<ul class="blist"><li>Even split (0.5 vs 0.5)</li><li>Nominal winner</li><li>~0.5 -- dropped by the gate</li></ul>
+<ul class="blist"><li>All dispositions unknown</li><li>No label</li><li>None -- contributes nothing</li></ul>
+<h3 class="sh2">Table 3</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">Class Imbalance: Full Set versus Training View</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">The full set records the true, imbalanced distribution for evaluation; the training view is rebalanced so a trainer can learn a boundary. Keeping them separate is the point.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Property</li><li>Full curated set</li><li>Training view</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Purpose</li><li>Honest record; evaluation</li><li>Retraining input</li></ul>
+<ul class="blist"><li>Attack examples</li><li>All kept</li><li>All kept (precious, few)</li></ul>
+<ul class="blist"><li>Benign examples</li><li>All kept (real proportion)</li><li>Capped at N:1 to attacks</li></ul>
+<ul class="blist"><li>Distribution</li><li>True (benign-dominated)</li><li>Learnable (bounded imbalance)</li></ul>
+<ul class="blist"><li>Used for</li><li>Measuring real precision</li><li>Teaching the boundary</li></ul>
+<h3 class="sh2">Table 4</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Quality Gate: When Curation Says No</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Refusal is a correct outcome. Each check guards against a way bad data degrades a retrained detector.</p>
+<h3 class="sh3">Columns</h3>
+<ul class="blist"><li>Check</li><li>Fails when</li><li>Guards against</li></ul>
+<h3 class="sh3">Rows</h3>
+<ul class="blist"><li>Label confidence</li><li>Agreement below the minimum</li><li>Contested, likely-wrong labels</li></ul>
+<ul class="blist"><li>Minimum examples</li><li>Too few trustworthy labels total</li><li>Retraining on insufficient data</li></ul>
+<ul class="blist"><li>Minimum attacks</li><li>Too few real attack labels</li><li>Teaching the detector attacks are rare-to-nonexistent</li></ul>
+<ul class="blist"><li>Outcome on failure</li><li>Dataset marked untrainable, with reasons</li><li>Poisoning the suite; loop waits and retries</li></ul>
+<h2 class="sh1">Deliverables</h2>
+<h3 class="sh2">Deliverable 1</h3>
+<h3 class="sh3">Title</h3>
+<p class="prose">The Dataset Curator</p>
+<h3 class="sh3">Filename</h3>
+<p class="prose">dataset_curator.py</p>
+<h3 class="sh3">Description</h3>
+<p class="prose">Turns a stream of analyst dispositions into a curated, quality-gated labelled dataset. AlertDisposition captures one analyst&#x27;s verdict on one detection with a confidence; resolve_disposition combines conflicting dispositions of the same detection by confidence-weighted vote into a single LabelledExample whose confidence reflects the agreement; ClassBalance measures the imbalance; CuratedDataset.training_view produces the rebalanced training subset while the full set is retained for evaluation; and DatasetCurator applies the quality gate, reporting the dataset as trainable or refusing it with reasons.</p>
+<h3 class="sh3">Implementation Notes</h3>
+<p class="prose">Python 3.12, single quotes throughout per book convention, standard-library collections, dataclasses, enum, and typing only. Dispositions are keyed by detection_id so multiple analysts&#x27; calls on one detection are grouped and resolved together; UNKNOWN dispositions contribute no label. The training view keeps every attack and caps benign at max_imbalance x attacks, selecting the highest-confidence negatives, so the full distribution is preserved for evaluation while training sees a learnable one. The __main__ block exercises unanimous labels, a contested senior-vs-junior detection (resolves to attack at ~0.69 confidence), an even split (dropped by the gate), and an all-unknown detection (no label), then verifies the imbalance handling and the trainable gate.</p>
+<h3 class="sh3">Code</h3>
+<pre class="code"><code># dataset_curator.py
+# Section 17.04: Dataset Curation -- Collecting True and False Positives
+# 20260121 | AI Security Mastery -- Chapter 17 by Raghav Dinesh
+# Single quotes throughout per book convention
+#
+# The feedback loop closes here. A detector fires, the detection becomes a SIEM
+# alert (Chapter 16), an analyst dispositions that alert as a true or false
+# positive, and that disposition is a label on the original detection. This
+# module turns a stream of dispositions into a curated, labelled dataset fit to
+# retrain on -- which means three things beyond just collecting them: resolving
+# conflicting dispositions of the same detection into one trustworthy label,
+# handling the class imbalance that makes benign traffic swamp real attacks, and
+# refusing to emit a dataset whose label quality is too low to train on safely.
+# It extends the Chapter 12 Section 12.14 live curation with the analyst-
+# disposition feedback the Chapter 16 SIEM integration makes available.
+
+from collections import Counter, defaultdict
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Dict, List, Optional, Tuple
+
+
+class Disposition(Enum):
+    TRUE_POSITIVE = &#x27;true_positive&#x27;          # analyst confirms it was a real attack
+    FALSE_POSITIVE = &#x27;false_positive&#x27;        # analyst confirms it was benign
+    UNKNOWN = &#x27;unknown&#x27;                       # analyst could not decide -- not a label
+
+
+# --- One analyst disposition of one alert -----------------------------------
+# detection_id ties the disposition back to the detection it labels. Multiple
+# analysts may disposition the same alert; confidence lets a senior review
+# outweigh a rushed triage.
+
+@dataclass
+class AlertDisposition:
+    detection_id: str
+    detector: str
+    surface: str                             # &#x27;input&#x27; | &#x27;output&#x27;
+    payload_ref: str                         # opaque reference to the detection payload
+    disposition: Disposition
+    analyst_id: str
+    confidence: float = 1.0                  # 0..1 weight for this analyst&#x27;s call
+
+
+# --- A finalised label on a detection ---------------------------------------
+
+@dataclass
+class LabelledExample:
+    detection_id: str
+    detector: str
+    surface: str
+    payload_ref: str
+    is_attack: bool
+    label_confidence: float                  # agreement-weighted confidence in the label
+
+
+# --- Resolving conflicting dispositions -------------------------------------
+# Two analysts can disposition the same alert differently. Discarding conflicts
+# loses data; taking the last one is arbitrary. Resolve by confidence-weighted
+# vote, and carry the resulting agreement forward as the label&#x27;s confidence, so
+# a contested label is later trusted less than a unanimous one.
+
+def resolve_disposition(group: List[AlertDisposition]) -&gt; Optional[LabelledExample]:
+    weight = {Disposition.TRUE_POSITIVE: 0.0, Disposition.FALSE_POSITIVE: 0.0}
+    for d in group:
+        if d.disposition in weight:
+            weight[d.disposition] += d.confidence
+    tp_w, fp_w = weight[Disposition.TRUE_POSITIVE], weight[Disposition.FALSE_POSITIVE]
+    total = tp_w + fp_w
+    if total == 0:
+        return None                          # only UNKNOWN dispositions -- no label
+    is_attack = tp_w &gt;= fp_w
+    winning = tp_w if is_attack else fp_w
+    first = group[0]
+    return LabelledExample(first.detection_id, first.detector, first.surface,
+                           first.payload_ref, is_attack, round(winning / total, 4))
+
+
+# --- Class imbalance --------------------------------------------------------
+# Attacks are rare, so a raw curated set is mostly false positives. Training on
+# it as-is teaches the detector that everything is benign. The curator reports
+# the imbalance and can produce a rebalanced view -- capping the majority class
+# to a target ratio -- without discarding the minority, so retraining sees a
+# learnable distribution while the full set is retained for evaluation.
+
+@dataclass
+class ClassBalance:
+    attacks: int
+    benign: int
+
+    @property
+    def total(self) -&gt; int:
+        return self.attacks + self.benign
+
+    @property
+    def attack_fraction(self) -&gt; float:
+        return self.attacks / self.total if self.total else 0.0
+
+    @property
+    def imbalance_ratio(self) -&gt; float:
+        &#x27;&#x27;&#x27;Majority : minority. 1.0 is balanced; large means benign-dominated.&#x27;&#x27;&#x27;
+        if self.attacks == 0:
+            return float(&#x27;inf&#x27;) if self.benign else 0.0
+        return max(self.attacks, self.benign) / min(self.attacks, self.benign)
+
+
+@dataclass
+class CurationQualityConfig:
+    min_label_confidence: float = 0.6        # drop labels below this agreement
+    min_examples: int = 20                   # refuse to emit a dataset smaller than this
+    min_attacks: int = 5                     # refuse if too few positives to learn from
+    max_imbalance_for_training: float = 10.0 # cap majority:minority in the training view
+
+
+@dataclass
+class CuratedDataset:
+    examples: List[LabelledExample]
+    balance: ClassBalance
+    dropped_low_confidence: int
+    trainable: bool
+    reasons: List[str] = field(default_factory=list)
+
+    def training_view(self, cfg: CurationQualityConfig) -&gt; List[LabelledExample]:
+        &#x27;&#x27;&#x27;A rebalanced subset for retraining: keep every attack, cap benign at
+        max_imbalance x attacks. The full self.examples stays intact for
+        evaluation, which must see the true distribution.&#x27;&#x27;&#x27;
+        attacks = [e for e in self.examples if e.is_attack]
+        benign = [e for e in self.examples if not e.is_attack]
+        if not attacks:
+            return list(attacks)
+        cap = int(len(attacks) * cfg.max_imbalance_for_training)
+        # keep the highest-confidence benign examples up to the cap -- deterministic
+        benign_sorted = sorted(benign, key=lambda e: e.label_confidence, reverse=True)
+        return attacks + benign_sorted[:cap]
+
+
+class DatasetCurator:
+    &#x27;&#x27;&#x27;Turns a stream of analyst dispositions into a curated, quality-gated
+    labelled dataset. The gate is the point: an unsafe-to-train-on dataset is
+    reported as untrainable rather than silently handed to retraining, because
+    retraining on bad labels degrades the detector (17.05).&#x27;&#x27;&#x27;
+
+    def __init__(self, config: Optional[CurationQualityConfig] = None) -&gt; None:
+        self._cfg = config if config is not None else CurationQualityConfig()
+        self._by_detection: Dict[str, List[AlertDisposition]] = defaultdict(list)
+
+    def ingest(self, disposition: AlertDisposition) -&gt; None:
+        self._by_detection[disposition.detection_id].append(disposition)
+
+    def curate(self) -&gt; CuratedDataset:
+        resolved: List[LabelledExample] = []
+        for group in self._by_detection.values():
+            label = resolve_disposition(group)
+            if label is not None:
+                resolved.append(label)
+
+        kept = [e for e in resolved if e.label_confidence &gt;= self._cfg.min_label_confidence]
+        dropped = len(resolved) - len(kept)
+
+        attacks = sum(1 for e in kept if e.is_attack)
+        benign = len(kept) - attacks
+        balance = ClassBalance(attacks, benign)
+
+        reasons: List[str] = []
+        if len(kept) &lt; self._cfg.min_examples:
+            reasons.append(f&#x27;too few examples ({len(kept)} &lt; {self._cfg.min_examples})&#x27;)
+        if attacks &lt; self._cfg.min_attacks:
+            reasons.append(f&#x27;too few attacks ({attacks} &lt; {self._cfg.min_attacks})&#x27;)
+        trainable = not reasons
+
+        return CuratedDataset(kept, balance, dropped, trainable, reasons)
+
+
+if __name__ == &#x27;__main__&#x27;:
+    cfg = CurationQualityConfig()
+    curator = DatasetCurator(cfg)
+
+    # 8 real attacks, unanimously dispositioned as true positives.
+    for i in range(8):
+        curator.ingest(AlertDisposition(f&#x27;atk-{i}&#x27;, &#x27;prompt_injection&#x27;, &#x27;input&#x27;,
+                                        f&#x27;ref-atk-{i}&#x27;, Disposition.TRUE_POSITIVE, &#x27;ana-1&#x27;))
+    # 60 false positives -- benign traffic an analyst cleared.
+    for i in range(60):
+        curator.ingest(AlertDisposition(f&#x27;ben-{i}&#x27;, &#x27;prompt_injection&#x27;, &#x27;input&#x27;,
+                                        f&#x27;ref-ben-{i}&#x27;, Disposition.FALSE_POSITIVE, &#x27;ana-2&#x27;))
+    # One contested detection: senior (0.9) says TP, junior (0.4) says FP -&gt; TP but lower confidence.
+    curator.ingest(AlertDisposition(&#x27;contested&#x27;, &#x27;pii_scanner&#x27;, &#x27;output&#x27;, &#x27;ref-c&#x27;,
+                                    Disposition.TRUE_POSITIVE, &#x27;senior&#x27;, confidence=0.9))
+    curator.ingest(AlertDisposition(&#x27;contested&#x27;, &#x27;pii_scanner&#x27;, &#x27;output&#x27;, &#x27;ref-c&#x27;,
+                                    Disposition.FALSE_POSITIVE, &#x27;junior&#x27;, confidence=0.4))
+    # One all-unknown detection: contributes no label.
+    curator.ingest(AlertDisposition(&#x27;murky&#x27;, &#x27;toxicity&#x27;, &#x27;output&#x27;, &#x27;ref-m&#x27;,
+                                    Disposition.UNKNOWN, &#x27;ana-3&#x27;))
+    # One low-agreement 50/50 split: dropped by the confidence gate.
+    curator.ingest(AlertDisposition(&#x27;split&#x27;, &#x27;jailbreak&#x27;, &#x27;input&#x27;, &#x27;ref-s&#x27;,
+                                    Disposition.TRUE_POSITIVE, &#x27;a&#x27;, confidence=0.5))
+    curator.ingest(AlertDisposition(&#x27;split&#x27;, &#x27;jailbreak&#x27;, &#x27;input&#x27;, &#x27;ref-s&#x27;,
+                                    Disposition.FALSE_POSITIVE, &#x27;b&#x27;, confidence=0.5))
+
+    ds = curator.curate()
+    print(f&#x27;labelled examples : {len(ds.examples)}&#x27;)
+    print(f&#x27;  attacks / benign: {ds.balance.attacks} / {ds.balance.benign}&#x27;)
+    print(f&#x27;  imbalance ratio : {ds.balance.imbalance_ratio:.1f} : 1&#x27;)
+    print(f&#x27;  attack fraction : {ds.balance.attack_fraction:.3f}&#x27;)
+    print(f&#x27;  dropped (low-conf): {ds.dropped_low_confidence}&#x27;)
+    print(f&#x27;  trainable       : {ds.trainable}  {ds.reasons}&#x27;)
+
+    tv = ds.training_view(cfg)
+    tv_attacks = sum(1 for e in tv if e.is_attack)
+    tv_benign = len(tv) - tv_attacks
+    print(f&#x27;training view     : {len(tv)} examples &#x27;
+          f&#x27;({tv_attacks} attacks / {tv_benign} benign, capped at {cfg.max_imbalance_for_training:.0f}:1)&#x27;)
+
+    # The contested label resolved to attack (senior outweighs junior) with reduced confidence.
+    contested = [e for e in ds.examples if e.detection_id == &#x27;contested&#x27;]
+    assert contested and contested[0].is_attack
+    assert abs(contested[0].label_confidence - 0.9/1.3) &lt; 1e-3
+    # The 50/50 split was dropped by the confidence gate.
+    assert not any(e.detection_id == &#x27;split&#x27; for e in ds.examples)
+    # The all-unknown detection contributed nothing.
+    assert not any(e.detection_id == &#x27;murky&#x27; for e in ds.examples)
+    # Full set is benign-heavy; the training view respects the 10:1 cap.
+    assert ds.balance.imbalance_ratio &gt; 5
+    assert tv_benign &lt;= tv_attacks * cfg.max_imbalance_for_training
+    assert ds.trainable
+    print(&#x27;\ndataset curation: conflict resolution, imbalance handling, quality gate: ok&#x27;)</code></pre>
+<h2 class="sh1">Common Mistakes</h2>
+<h3 class="sh2">Mistake 1</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Treating curation as collection -- passing the raw disposition stream straight to retraining</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The dispositions are already labels, so it seems the work is done once they are gathered.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Conflicting, weak, and wildly imbalanced labels reach the trainer unfiltered, and the retrained detector is degraded by the noise and imbalance the raw stream carries.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Resolve conflicts, weight by confidence, rebalance for training, and gate on quality before any data reaches retraining -- curation is the discipline that makes the stream trainable.</p>
+<h3 class="sh2">Mistake 2</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Discarding every detection that analysts dispositioned inconsistently</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">A conflict looks like bad data, and dropping it is the simplest way to get clean, unanimous labels.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">The contested cases -- often the hardest and most informative -- are thrown away, and the resulting dataset is biased toward the easy detections the detector already handles well.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Resolve conflicts by confidence-weighted vote and carry the agreement forward as the label&#x27;s confidence, keeping the hard cases with a weight that reflects their reliability.</p>
+<h3 class="sh2">Mistake 3</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Training on the curated set in its true, benign-dominated proportion</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The curated set is the honest record of live traffic, so it seems right to train on exactly what was seen.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">A model trained on data that is overwhelmingly one class learns to predict that class always -- the detector learns to call everything benign, zeroing both its false-positive and its true-positive rate.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Train on a rebalanced view that keeps every attack and caps the benign class, while retaining the full imbalanced set for evaluation so measured precision stays honest.</p>
+<h3 class="sh2">Mistake 4</h3>
+<h3 class="sh3">Description</h3>
+<p class="prose">Always emitting a dataset, even when the labels are too few or too weak</p>
+<h3 class="sh3">Why It Happens</h3>
+<p class="prose">The pipeline&#x27;s job seems to be to produce data, so producing something feels better than producing nothing.</p>
+<h3 class="sh3">Consequence</h3>
+<p class="prose">Retraining runs on an insufficient or noisy set and degrades the detector, replacing a working model with one trained on almost nothing or on unreliable labels.</p>
+<h3 class="sh3">Correct Approach</h3>
+<p class="prose">Gate on label confidence, minimum examples, and minimum attacks, and refuse the dataset as untrainable when the checks fail, so the loop waits for more dispositions rather than poisoning the suite.</p>
+<h2 class="sh1">Section Summary</h2>
+<h3 class="sh2">Compact</h3>
+<p class="prose">Section 17.04 opens the improvement half of the loop at the point where the feedback physically closes: the analyst. A detection fires, becomes a SIEM alert through the Chapter 16 integration, and reaches an analyst whose disposition -- true positive or false positive -- is a label on that detection, and the accumulation of dispositions is a labelled dataset describing how the detectors perform on current live traffic. This label supply is why the loop could only be assembled after the SIEM integration. But a disposition stream is not a training set, and curation is the discipline that makes it one by solving three problems. Analysts disagree, so conflicting dispositions of the same detection are resolved by confidence-weighted vote into a single label whose confidence reflects the strength of agreement -- conflict preserved as reliability information, not discarded. Attacks are rare, so the curated set is overwhelmingly false positives, and training on it raw teaches a detector to call everything benign; the pipeline separates the full set, which keeps the true imbalanced distribution for honest evaluation, from a rebalanced training view that keeps every precious attack example and caps the benign class so a trainer can learn a boundary. And some labels are too weak to use, so the pipeline ends in a quality gate that drops low-confidence labels and refuses -- as a correct, first-class outcome -- any dataset with too few trustworthy examples or too few real attacks, because retraining on bad data degrades the detector rather than improving it. Curation extends the Chapter 12 live curation with the new operational label source, and its gated output feeds the retraining of 17.05, which validates every candidate precisely because curation makes the labels trustworthy but not perfect.</p>
+<h3 class="sh2">Key Takeaways</h3>
+<ul class="blist"><li>The feedback loop closes at the analyst: a disposition of a SIEM alert is a label on the detection that produced it</li><li>Conflicting dispositions are resolved by confidence-weighted vote, and the agreement becomes the label&#x27;s own confidence</li><li>The curated set keeps the true imbalanced distribution for evaluation; a separate rebalanced view is used for training</li><li>Training on a benign-dominated set teaches a detector to call everything benign, so the majority class must be capped</li><li>A quality gate refuses datasets with too few trustworthy examples or too few attacks -- refusal is a correct outcome</li><li>Curation extends the Chapter 12 machinery with the Chapter 16 disposition feedback, making it a loop rather than a one-time build</li></ul>
+<h2 class="sh1">Preview Section 17 05</h2>
+<h3 class="sh2">Title</h3>
+<p class="prose">Model Retraining: When, How Often, and Validation</p>
+<h3 class="sh2">Summary</h3>
+<p class="prose">Section 17.05 turns the curated dataset into a refreshed detector. It retrains on the curated data, triggered not by a fixed schedule but by the Chapter 13 drift signal and the accumulation of curated labels, so the detectors are refreshed when the data has actually moved. Every retrained candidate is validated against the quality bar and current traffic and promoted through the Chapter 12 model registry with a rollback path, and the stage guards against retraining on transient noise or an adversarially-poisoned dataset -- because a retrained detector can be worse than the one it replaces.</p>
+<h2 class="sh1">Metadata</h2>
+<h3 class="sh2">Cross Chapter References</h3>
+<ul class="blist"><li>Chapter 17 Section 17.01: the improvement loop and the feedback that closes at the analyst</li><li>Chapter 16 Section 16.06: the SIEM alert dispositions that are the label source</li><li>Chapter 12 Section 12.14: the live dataset curation and model registry this extends</li><li>Chapter 13 Section 13.05: the drift signal that, with the label supply, triggers retraining in 17.05</li></ul>
+<h3 class="sh2">Forward References</h3>
+<ul class="blist"><li>Section 17.05: retraining, which consumes this curated dataset and validates the candidate</li><li>Section 17.06: A/B testing, which evaluates the retrained candidate against the incumbent</li><li>Section 17.07: the synthesis, where curation is the stage that closes the loop at the analyst</li></ul>
+<h3 class="sh2">Tags</h3>
+<ul class="blist"><li>dataset-curation</li><li>analyst-disposition</li><li>feedback-loop</li><li>true-positive</li><li>false-positive</li><li>label-conflict-resolution</li><li>class-imbalance</li><li>training-view</li><li>quality-gate</li><li>label-confidence</li><li>model-registry</li><li>live-curation</li><li>part-4-chapter-3</li></ul>
+</article>
